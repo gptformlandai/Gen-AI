@@ -4,12 +4,22 @@ This document is the master roadmap for your GenAI journey.
 
 It is intentionally focused on GenAI itself and excludes general software topics for now such as Python, TypeScript, Redis, Docker, Cloud Run, CI/CD, and frontend frameworks. Those matter later, but this canon is for mastering the GenAI core deeply enough that you stand out in the market.
 
+## Linked Documents
+
+- [GenAI Document Index](./GENAI_DOC_INDEX.md)
+- [GenAI 10-12 Hour Weekly Execution Plan](./GENAI_10_12H_WEEKLY_EXECUTION_PLAN.md)
+- [GenAI Mini-Project Specifications](./GENAI_MINI_PROJECT_SPECS.md)
+
 ## How To Use This Canon
 
 - Treat each module as a serious study block, not a checklist.
 - The time estimates include first-pass learning, note making, and one recap pass.
 - If you build while learning, add 25% to 40% more time.
+- Use the market-ready track first if your goal is faster career impact. Use the full canon if your goal is deep mastery.
+- Every two modules, ship something. This canon is only valuable if it becomes visible skill.
 - Do not skip evaluation, safety, or retrieval engineering. Those are what separate toy demos from real systems.
+- Track cost, latency, and failure modes from the beginning, not after the system becomes expensive or brittle.
+- In every module, ask two questions: should this use GenAI at all, and if yes, what is the cheapest reliable version?
 - The goal is not to memorize framework APIs. The goal is to understand the concepts strongly enough to choose, justify, and build the right GenAI system.
 
 ## What This Canon Covers
@@ -25,24 +35,52 @@ It is intentionally focused on GenAI itself and excludes general software topics
 - Agents, tool use, memory, and planning
 - LangChain, LangGraph, MCP, LlamaIndex, ADK, and OpenAI Agents SDK
 - Multi-agent systems, multimodal systems, voice, realtime, DSPy, and model adaptation
+- Cost engineering and product tradeoff thinking
+- Debugging playbooks across model, retrieval, prompt, tool, and orchestration layers
+- Portfolio packaging that converts projects into hiring signals
 - Capstones that prove real mastery
+
+## Execution Modes
+
+- Market-ready acceleration track: Focus on Modules 1, 3, 4, 5, 6, 8, 20, 7, 9, 10, 11, 12, 13, and 21. This is the highest-ROI path for standing out quickly.
+- Hiring-ready track: Complete the market-ready acceleration track, ship at least one capstone slice from Module 19, and complete Module 22.
+- Full mastery track: Complete all modules with the build cadence and weekly loops.
 
 ## Time Model
 
-- Core employable track: Modules 1-13, about 397 hours
-- Full mastery track: Modules 1-19, about 627 hours
-- At 10-12 hours per week, full mastery is roughly 12 to 14 months
-- At 18-20 hours per week, full mastery is roughly 7 to 8 months
+- Original foundation plus framework track: Modules 1-13, about 397 hours
+- Market-ready acceleration track: selected modules, about 413 hours
+- Hiring-ready track with one packaged capstone: about 449 hours
+- Full mastery canon: Modules 1-22, about 689 hours
+- At 10-12 hours per week, the hiring-ready track is roughly 9 to 11 months
+- At 10-12 hours per week, the full mastery canon is roughly 13 to 16 months
+- At 15-18 hours per week, the hiring-ready track is roughly 6 to 7 months
+- At 15-18 hours per week, the full mastery canon is roughly 10 to 11 months
+
+## Mandatory Build Cadence
+
+These builds are part of the roadmap, not optional extras.
+
+- After [Module 1](#module-1-genai-landscape-and-mental-models) and [Module 3](#module-3-prompting-and-structured-generation): Build [Project 1: Structured Output Assistant](./GENAI_MINI_PROJECT_SPECS.md#project-1-structured-output-assistant).
+- After [Module 4](#module-4-embeddings-and-semantic-representations) and [Module 5](#module-5-vector-search-and-vector-datastores): Build [Project 2: Semantic Search Lab](./GENAI_MINI_PROJECT_SPECS.md#project-2-semantic-search-lab).
+- After [Module 6](#module-6-rag-foundations) and [Module 8](#module-8-evaluation-observability-and-experimentation): Build [Project 3: Baseline RAG Assistant With Citations](./GENAI_MINI_PROJECT_SPECS.md#project-3-baseline-rag-assistant-with-citations).
+- After [Module 7](#module-7-advanced-retrieval-engineering) and [Module 9](#module-9-safety-guardrails-and-reliability): Build [Project 4: Advanced RAG With Reranking And Guardrails](./GENAI_MINI_PROJECT_SPECS.md#project-4-advanced-rag-with-reranking-and-guardrails).
+- After [Module 10](#module-10-agent-fundamentals) and [Module 12](#module-12-langgraph-mastery): Build [Project 5: LangGraph Workflow Agent](./GENAI_MINI_PROJECT_SPECS.md#project-5-langgraph-workflow-agent).
+- After [Module 13](#module-13-model-context-protocol-mcp) and [Module 20](#module-20-cost-engineering-and-product-tradeoffs-for-genai): Build [Project 6: MCP-Enabled Workflow With Cost And Latency Budget](./GENAI_MINI_PROJECT_SPECS.md#project-6-mcp-enabled-workflow-with-cost-and-latency-budget).
+- After [Module 14](#module-14-llamaindex-and-data-centric-genai-systems) and [Module 15](#module-15-adk-and-openai-agents-sdk): Build [Project 7: Data-Heavy Assistant And Framework Selection Memo](./GENAI_MINI_PROJECT_SPECS.md#project-7-data-heavy-assistant-and-framework-selection-memo).
+- After [Module 16](#module-16-multi-agent-human-in-the-loop-and-long-lived-systems) and [Module 17](#module-17-multimodal-voice-and-realtime-genai): Build [Project 8: Long-Lived Multimodal Or Human-In-The-Loop System](./GENAI_MINI_PROJECT_SPECS.md#project-8-long-lived-multimodal-or-human-in-the-loop-system).
+- After [Module 18](#module-18-dspy-fine-tuning-distillation-and-optimization) and [Module 21](#module-21-genai-debugging-playbook): Build [Project 9: Optimization Or Debugging Case Study](./GENAI_MINI_PROJECT_SPECS.md#project-9-optimization-or-debugging-case-study).
+- After [Module 19](#module-19-capstones-and-mastery-loops) and [Module 22](#module-22-portfolio-packaging-and-hiring-signal-design): Build [Project 10: Hiring-Grade Capstone Asset Pack](./GENAI_MINI_PROJECT_SPECS.md#project-10-hiring-grade-capstone-asset-pack).
 
 ## Phase Map
 
 | Phase | Modules | Focus | Total Time |
 |---|---|---|---:|
-| Phase I | 1-4 | Foundations, prompting, embeddings | 100h |
-| Phase II | 5-8 | Retrieval systems and evaluation | 138h |
-| Phase III | 9-13 | Agents, orchestration, MCP | 159h |
+| Phase I | 1-5 | Foundations, prompting, embeddings, vector search | 128h |
+| Phase II | 6-9 | RAG, evaluation, safety, and reliability | 138h |
+| Phase III | 10-13 | Agents, LangChain, LangGraph, MCP | 131h |
 | Phase IV | 14-18 | Data-heavy systems, runtimes, multimodal, optimization | 158h |
-| Phase V | 19 | Capstones and mastery loops | 72h |
+| Phase V | 19-22 | Capstones, cost, debugging, and portfolio packaging | 134h |
 
 ## Recommended Market-Strong Stack Hidden Inside This Canon
 
@@ -55,7 +93,8 @@ By the end of this roadmap, the strongest GenAI identity you should be able to c
 - LangChain for integration speed
 - LlamaIndex for data-heavy and document-heavy systems
 - ADK and OpenAI Agents SDK as important modern runtimes to compare and understand
-- Strong evaluation, safety, and reliability discipline
+- Strong evaluation, safety, reliability, and cost discipline
+- A repeatable debugging mindset across every GenAI layer
 
 ---
 
@@ -828,7 +867,7 @@ By the end of this roadmap, the strongest GenAI identity you should be able to c
 - Use-case scoping and modality selection - 5h
 - Retrieval or understanding pipeline design - 8h
 - Evaluation rubric and failure-mode mapping - 7h
-- Portfolio packaging, demo narrative, and system defense - 8h
+- Architecture evidence collection, demo narrative, and system defense - 8h
 
 **Module checkpoint:**
 
@@ -838,14 +877,139 @@ By the end of this roadmap, the strongest GenAI identity you should be able to c
 
 ---
 
+## Module 20: Cost Engineering And Product Tradeoffs For GenAI
+
+**Module time:** 24h
+
+**Why this module matters:** Strong GenAI engineers do not just make systems work. They make them affordable, fast enough, and worth deploying.
+
+### Topic 20.1: Token economics and usage analysis
+
+**Topic time:** 8h
+
+- Prompt token accounting and token growth across turns - 2h
+- Retrieval context expansion and tool output explosion - 2h
+- Cost per request, cost per session, and cost per successful task - 2h
+- Logging and reviewing token consumption by system layer - 2h
+
+### Topic 20.2: Latency budgeting and pipeline design
+
+**Topic time:** 8h
+
+- End-to-end latency decomposition across retrieval, reranking, tools, and generation - 2h
+- Streaming, batching, concurrency, and timeout budgets - 2h
+- Should you rerank or increase top-k: tradeoff reasoning - 2h
+- Should you compress context or use a larger model: tradeoff reasoning - 2h
+
+### Topic 20.3: Cost-quality-product decision frameworks
+
+**Topic time:** 8h
+
+- When GenAI is justified vs when deterministic logic is better - 2h
+- Model routing, fallback tiers, and dynamic quality tiers - 2h
+- Retrieval cost vs generation cost vs engineering cost - 2h
+- ROI framing for product, platform, and enterprise systems - 2h
+
+**Module checkpoint:**
+
+- Explain token, retrieval, and reranking costs as one system budget.
+- Defend whether to rerank, increase top-k, compress context, or route to a different model.
+- Explain when the right product decision is to use less GenAI, not more.
+
+---
+
+## Module 21: GenAI Debugging Playbook
+
+**Module time:** 22h
+
+**Why this module matters:** Senior engineers are judged by how they debug messy failures across layers, not by how confidently they talk about tools.
+
+### Topic 21.1: Failure taxonomy and triage
+
+**Topic time:** 6h
+
+- Retrieval issue vs prompt issue vs model limitation vs tool issue vs orchestration failure - 1.5h
+- Symptom-based diagnosis patterns - 1.5h
+- Reproducibility, fixtures, and failure isolation - 1.5h
+- Building a first-pass triage checklist - 1.5h
+
+### Topic 21.2: Layer-by-layer debugging workflow
+
+**Topic time:** 8h
+
+- Inspecting retrieval candidates, chunk quality, and missing evidence - 2h
+- Auditing prompts, context order, and schema constraints - 2h
+- Tracing tool calls, agent trajectories, and graph state - 2h
+- Distinguishing model limitations from orchestration mistakes - 2h
+
+### Topic 21.3: Interview-grade diagnosis and incident reviews
+
+**Topic time:** 8h
+
+- Writing root-cause summaries and remediation plans - 2h
+- Designing targeted experiments to disconfirm a hypothesis - 2h
+- Rollback decisions, fallback paths, and safe mitigations - 2h
+- Explaining a failure clearly in interviews and design reviews - 2h
+
+**Module checkpoint:**
+
+- Diagnose whether a failure is caused by retrieval, prompt, model, tool, or orchestration.
+- Use traces and controlled experiments instead of guesswork.
+- Explain a GenAI incident with senior-level clarity and concrete remediation steps.
+
+---
+
+## Module 22: Portfolio Packaging And Hiring Signal Design
+
+**Module time:** 16h
+
+**Why this module matters:** Good projects do not automatically become strong hiring signals. Packaging is what turns work into evidence.
+
+### Topic 22.1: Architecture storytelling assets
+
+**Topic time:** 5h
+
+- Architecture diagrams that show system layers clearly - 1.5h
+- README structure for GenAI projects - 1h
+- Demo script design and narrative discipline - 1.5h
+- What to show first to recruiters, hiring managers, and engineers - 1h
+
+### Topic 22.2: Failure analysis and tradeoff documents
+
+**Topic time:** 5h
+
+- Failure analysis writeups and postmortem-lite documents - 1.25h
+- Tradeoff justification: why this model, retrieval strategy, and workflow - 1.25h
+- Evaluation reports that show before-vs-after improvement - 1.25h
+- Rejected alternatives and why they lost - 1.25h
+
+### Topic 22.3: Hiring-facing packaging
+
+**Topic time:** 6h
+
+- Resume bullets grounded in measurable system outcomes - 1.5h
+- Project case-study pages and portfolio summaries - 1.5h
+- Interview walkthroughs for architecture, failures, and tradeoffs - 1.5h
+- Open-source hygiene, visuals, and presentation quality - 1.5h
+
+**Module checkpoint:**
+
+- Package each serious project with an architecture diagram, failure analysis document, and tradeoff justification.
+- Present your work as systems engineering evidence, not feature hype.
+- Make one capstone interview-ready without relying on live explanation alone.
+
+---
+
 ## Permanent Weekly Loops To Run Alongside The Modules
 
 These are not included in the module hour counts. Run them continuously.
 
 - Paper digestion and note synthesis - 2h per week
 - Eval journal: write down one failure and its probable root cause - 1h per week
+- Cost and latency review: inspect one expensive or slow path and propose one fix - 45m per week
 - Framework change log review for LangGraph, MCP, LlamaIndex, ADK, and OpenAI Agents SDK - 1h per week
 - Retrieval quality review: inspect at least five bad retrieval cases - 1h per week
+- Debugging drill: classify one failure by system layer and write the shortest reproducible explanation - 45m per week
 - Explain-one-concept-out-loud drill - 30m per week
 
 ## Completion Definition For True Mastery
@@ -858,41 +1022,51 @@ You can say you have real GenAI mastery when you can do all of the following wit
 - Use LangChain as a helper, LangGraph as an orchestrator, and MCP as a protocol layer.
 - Explain when LlamaIndex, ADK, or OpenAI Agents SDK is the better fit.
 - Build evaluation into the system from day one.
+- Budget token usage, latency, retrieval cost, and generation cost with intent.
+- Diagnose failures by layer using a repeatable debugging playbook.
 - Treat safety, permissions, and approvals as architecture, not add-ons.
 - Discuss multimodal, realtime, and optimization paths with technical maturity.
+- Package at least one project with architecture, failure analysis, and tradeoff evidence.
 
 ## What We Cover First When We Start Executing This Canon
 
 Recommended order of execution:
 
 1. Module 1
-2. Module 2
-3. Module 3
-4. Module 4
-5. Module 5
-6. Module 6
-7. Module 8
+2. Module 3
+3. Module 4
+4. Module 5
+5. Module 6
+6. Module 8
+7. Module 20
 8. Module 7
 9. Module 9
 10. Module 10
 11. Module 11
 12. Module 12
 13. Module 13
-14. Module 14
-15. Module 15
-16. Module 16
-17. Module 17
-18. Module 18
-19. Module 19
+14. Module 21
+15. Module 2
+16. Module 14
+17. Module 15
+18. Module 16
+19. Module 17
+20. Module 18
+21. Module 19
+22. Module 22
 
 Note on the sequence:
 
-- Module 8 is intentionally pulled slightly ahead of the full advanced retrieval module because evaluation habits should start earlier than most people think.
+- Module 2 is still important, but it is intentionally delayed after the first market-critical build layers so you gain systems leverage early without skipping theory forever.
+- Module 8 is intentionally pulled ahead of the full advanced retrieval module because evaluation habits should start earlier than most people think.
+- Module 20 is pulled forward because cost and latency decisions should be learned before systems become expensive and slow.
+- Module 21 is pulled forward because debugging maturity is a major senior-level differentiator.
 - LangGraph and MCP are treated as the core differentiators of the modern stack.
 - Chroma is learned as part of the vector ecosystem, but not treated as the final answer for every production system.
+- Module 22 is last in the list but should run in parallel once the first serious project exists.
 
 ## Final Outcome
 
 If you complete this canon properly, your market identity should be:
 
-**A GenAI systems engineer who understands retrieval, orchestration, evaluation, safety, and modern agent runtimes deeply enough to design real-world systems rather than demo apps.**
+**A GenAI systems engineer who understands retrieval, orchestration, evaluation, safety, cost, debugging, and modern agent runtimes deeply enough to design, defend, and package real-world systems rather than demo apps.**
