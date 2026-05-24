@@ -60,10 +60,12 @@ For substantial topics, cover 2-3 mistakes. For compressed topics, cover the 2 h
 
 6) Active Recall (Spaced Repetition)
 - Provide 3-5 short recall questions (gradually increasing difficulty), or 3 for compressed topics
+- Provide short answer keys below the recall questions so I can self-check quickly
 
 7) Practice
 - 1 mini-exercise (quick hands-on thinking)
 - Add 1 capstone-style system design question when it materially adds value
+- Provide suggested answers or an answer outline below each practice item so I can compare my thinking
 
 8) Production Reality Check (Mandatory Ending)
 Always end with:

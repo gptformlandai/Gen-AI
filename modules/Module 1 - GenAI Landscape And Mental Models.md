@@ -245,6 +245,23 @@ Classify the following tasks by default model need: foundation-style base capabi
 
 For each one, write one sentence explaining why.
 
+#### Mini-exercise Answers
+
+- summarize a leave policy -> instruct-first
+  Why: the task is mostly about following a user request clearly, staying grounded, and producing a readable answer.
+
+- extract invoice fields into JSON -> instruct-first
+  Why: this is mainly structured extraction and instruction-following, not deep multi-step reasoning.
+
+- compare three outage hypotheses using logs and retrieved runbooks -> reasoning-oriented-first
+  Why: the task requires comparing alternatives, holding intermediate conclusions, and making a better multi-step judgment.
+
+- answer a simple FAQ from a company handbook -> instruct-first
+  Why: this is a straightforward retrieval-plus-response task where stable instruction following matters more than deeper reasoning.
+
+- decide a sequence of actions for a support escalation workflow -> reasoning-oriented-first
+  Why: the system must plan over multiple steps and choose a sensible next action path rather than return one direct answer.
+
 #### Capstone-style system design question
 
 You are designing a support platform with two user flows:
@@ -253,6 +270,17 @@ You are designing a support platform with two user flows:
 - Flow B: investigate recurring incidents by inspecting logs, proposing hypotheses, and escalating the right next action
 
 Which flow should default to an instruct model, which might justify a reasoning-oriented model, and why would a raw foundation model usually stay behind the scenes rather than face the user directly?
+
+#### Capstone-style Answer Outline
+
+- Flow A should default to an instruct model.
+  Why: answering common support questions is mainly about clear task following, helpful formatting, grounded retrieval use, and predictable user-facing behavior.
+
+- Flow B may justify a reasoning-oriented model.
+  Why: incident investigation requires comparing evidence, maintaining a multi-step hypothesis chain, possibly using tools, and deciding a next action rather than just producing a direct answer.
+
+- A raw foundation model usually stays behind the scenes because end-user systems need alignment, safe behavior, and reliable instruction following.
+  The foundation model still matters as the base capability layer underneath tuned instruct or reasoning-oriented variants.
 
 ### 8) Production Reality Check (Mandatory Ending)
 
