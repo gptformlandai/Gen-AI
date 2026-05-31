@@ -6,6 +6,7 @@ Covered so far:
 
 - Topic 1.1.a: Foundation model vs instruct model vs reasoning-oriented model
 - Topic 1.1.b: Assistant vs copilot vs workflow vs agent
+- Topic 1.1.c: Hosted vs open-weight vs self-hosted model ecosystems
 
 ---
 
@@ -535,3 +536,232 @@ Many failures here happen because the system is doing the wrong kind of job, for
 Now the system roles are clearer, but there is still another layer of confusion people run into.
 
 Even after you know whether you are building an assistant, workflow, or agent, you still need to decide how you want to run the model itself: hosted, open-weight, or self-hosted. That deployment choice changes cost, control, privacy, and operational complexity.
+
+---
+
+## Subtopic 1.1.c: Hosted vs Open-Weight vs Self-Hosted Model Ecosystems
+
+### 1) The Intuition (Plain English)
+
+These three labels answer a very practical question: who owns and runs the model layer?
+
+- Hosted means a model provider runs the inference infrastructure and you call it through an API.
+- Open-weight means the model weights are available for you to obtain and run, subject to the model's license.
+- Self-hosted means you run the model infrastructure yourself, usually on your own cloud account, cluster, or hardware.
+
+The key thing people miss is this:
+
+- hosted is a deployment choice
+- open-weight is an availability and licensing characteristic
+- self-hosted is an operational choice
+
+So open-weight does not automatically mean self-hosted, and self-hosted usually relies on open-weight models.
+
+Analogy:
+
+Think of food service.
+
+- Hosted is ordering from a restaurant delivery app. Someone else runs the kitchen.
+- Open-weight is getting the recipe and ingredients list.
+- Self-hosted is cooking in your own kitchen and managing the whole process yourself.
+
+The more control you want, the more operational responsibility you accept.
+
+#### Clarification: Why do people confuse open-weight with open-source?
+
+Because many people hear "open" and assume full freedom.
+
+But open-weight usually means the model parameters are accessible, not that every training detail, dataset, codebase, or commercial usage right is fully open.
+
+As a systems engineer, you should separate these questions:
+
+- Can I access the weights?
+- Can I commercially use them under the license?
+- Can I fine-tune and redistribute?
+- Do I have the infra and operational skill to serve them reliably?
+
+### 2) Real-World Industry Scenarios
+
+#### Scenario A: Startup building a customer support copilot fast
+
+- Product context: a small team wants to launch quickly, validate product value, and avoid infrastructure complexity.
+- Constraints: low engineering bandwidth, fast iteration, acceptable vendor dependency, moderate privacy requirements.
+- What good looks like in production: the team uses hosted models first, ships quickly, measures value, and delays heavy infra decisions until they are justified.
+
+Why this matters here:
+
+- Hosted wins when speed matters more than deep control.
+- Most early-stage teams should not start by running model infra themselves.
+
+#### Scenario B: Enterprise document intelligence with tighter governance
+
+- Product context: sensitive documents, compliance controls, approval-heavy environments, and stronger data residency requirements.
+- Constraints: privacy, auditability, policy review, possible restrictions on external API exposure.
+- What good looks like in production: the team evaluates open-weight and possibly self-hosted deployment to get stronger control over data handling and platform behavior.
+
+Why this matters here:
+
+- Control and compliance can justify more operational complexity.
+- The right answer may still be hybrid rather than fully self-hosted.
+
+#### Scenario C: High-volume retrieval and extraction platform
+
+- Product context: millions of repetitive requests, cost pressure, predictable task shape, and strong optimization incentives.
+- Constraints: inference cost, throughput, batching efficiency, latency SLOs.
+- What good looks like in production: the team may adopt open-weight models and eventually self-host parts of the stack if traffic scale makes the economics favorable.
+
+Why this matters here:
+
+- At higher scale, per-request cost and infrastructure efficiency become first-class design concerns.
+
+### 3) System View (Think like a systems engineer)
+
+#### Inputs -> Transformations -> Outputs
+
+- Inputs: product requirements, privacy constraints, latency targets, cost targets, traffic patterns, model quality needs, licensing limits, infra capability.
+- Transformations:
+  - choose whether model access is hosted, open-weight, self-hosted, or hybrid
+  - route requests through provider APIs or internal inference infrastructure
+  - apply fallback logic, observability, caching, and cost controls
+  - monitor performance, quality, and operational risk
+- Outputs: reliable model responses under the chosen control, cost, and compliance envelope.
+
+#### Observability
+
+What we log and inspect:
+
+- provider, model, and deployment mode per request
+- latency by stage: network, queue, inference, post-processing
+- token usage and cost per request
+- rate-limit events and provider errors
+- GPU utilization, queue depth, and throughput for self-hosted paths
+- fallback frequency across models or providers
+- model version and rollout history
+
+#### Failure points
+
+- Hosted path: provider outage, quota exhaustion, rate limits, regional unavailability, sudden pricing changes.
+- Open-weight path: licensing misunderstandings, poor model benchmarking, underestimated serving complexity.
+- Self-hosted path: GPU instability, bad autoscaling, memory pressure, cold starts, weak observability, operational overload.
+
+### 4) System Design Flavor (practical and concise)
+
+#### Key design question
+
+Who should own the inference layer for this product right now?
+
+That question is usually more important than asking which model brand is best.
+
+#### Tradeoffs
+
+- Hosted vs self-hosted: hosted gives speed and simplicity, while self-hosted gives deeper control at the cost of much more operational burden.
+- Hosted vs open-weight: hosted is easier to start with, while open-weight gives more portability and tuning freedom if the license and infra support it.
+- Single provider vs hybrid: one provider is simpler, but multi-provider or hybrid setups improve resilience and negotiation power.
+
+#### One scaling consideration
+
+At 10x traffic, the bottleneck changes.
+
+- Hosted systems start feeling provider cost, rate limits, and vendor concentration risk.
+- Self-hosted systems start feeling GPU scheduling, batching strategy, observability depth, and capacity planning pressure.
+
+### 5) Common Mistakes + Debugging
+
+#### Mistake 1
+
+- Symptom: the team assumes an open-weight model automatically means cheap and easy deployment.
+- Likely cause: they confused model access with production serving complexity.
+- First debugging step: separate model-license questions from inference-infrastructure questions and estimate the full serving path realistically.
+
+#### Mistake 2
+
+- Symptom: a team self-hosts too early and spends more time on infra than on product quality.
+- Likely cause: self-hosting was chosen for prestige or perceived control rather than a measured business need.
+- First debugging step: compare current quality, latency, and cost goals against a hosted baseline and calculate whether self-hosting is actually justified.
+
+#### Mistake 3
+
+- Symptom: a hosted deployment later becomes blocked by privacy, compliance, or residency constraints.
+- Likely cause: data-handling requirements were not evaluated early enough.
+- First debugging step: map the exact data path, including prompts, retrieved context, logs, and provider retention behavior.
+
+### 6) Active Recall (Spaced Repetition)
+
+1. What is the simplest difference between hosted and self-hosted model usage?
+2. Why does open-weight not automatically mean self-hosted?
+3. What kind of team usually benefits most from starting with hosted models?
+4. What usually becomes more important at higher traffic volume: raw model branding or inference economics?
+5. What is the first question you should ask before choosing between hosted and self-hosted?
+
+#### Active Recall Answers
+
+1. Hosted means a provider runs the inference stack for you, while self-hosted means you run the inference infrastructure yourself.
+2. Because open-weight describes model availability and licensing, while self-hosted describes where and by whom the model is actually served.
+3. A team that needs fast iteration, low operational burden, and quick time to market usually benefits most from hosted models first.
+4. Inference economics, operational reliability, and control boundaries usually become more important at scale than model branding alone.
+5. Ask: who should own the inference layer for this product right now, given our privacy, cost, latency, and operational constraints?
+
+### 7) Practice
+
+#### Mini-exercise
+
+Choose the best default deployment approach for each use case: hosted, open-weight with managed serving, self-hosted, or hybrid.
+
+- early-stage startup building a support assistant and validating product-market fit
+- enterprise legal document assistant with strict data governance and region restrictions
+- high-volume classification pipeline where request cost is starting to dominate margins
+- internal research team experimenting with many models and benchmarking options quickly
+- production system that needs a primary provider plus a fallback path during outages
+
+For each one, explain why the choice fits better than the others.
+
+#### Mini-exercise Answers
+
+- early-stage startup building a support assistant and validating product-market fit -> hosted
+  Why: the team should optimize for shipping speed, lower ops burden, and fast iteration before taking on inference infrastructure complexity.
+
+- enterprise legal document assistant with strict data governance and region restrictions -> open-weight with managed serving or self-hosted, depending compliance depth
+  Why: stronger control over data handling may be required, but the exact answer depends on whether the organization can operate the infra safely itself.
+
+- high-volume classification pipeline where request cost is starting to dominate margins -> open-weight with managed serving or self-hosted
+  Why: once traffic is large and task shape is stable, controlling inference economics becomes more valuable and can justify more operational ownership.
+
+- internal research team experimenting with many models and benchmarking options quickly -> hosted or hybrid
+  Why: broad experimentation is usually faster with hosted access, though hybrid setups may help if some open-weight models need side-by-side evaluation.
+
+- production system that needs a primary provider plus a fallback path during outages -> hybrid
+  Why: resilience improves when the system is not completely dependent on one serving path or one vendor.
+
+#### Capstone-style system design question
+
+You are designing an enterprise GenAI platform for three workloads: a general knowledge assistant, a sensitive contract-analysis system, and a high-volume document extraction service. For each workload, decide whether hosted, open-weight, self-hosted, or a hybrid approach is the best starting point, and explain how privacy, cost, and operational maturity change the answer.
+
+#### Capstone-style Answer Outline
+
+- The general knowledge assistant usually starts hosted.
+  Why: speed, simplicity, and broad capability matter more than deep infrastructure control at the start.
+
+- The sensitive contract-analysis system may justify open-weight plus stronger control, possibly self-hosted if compliance and residency needs are strict enough.
+  Why: privacy and governance can outweigh the simplicity advantage of hosted APIs.
+
+- The high-volume document extraction service may move toward open-weight or self-hosted serving as traffic grows.
+  Why: predictable workloads and sustained volume make cost and throughput optimization more important.
+
+- A hybrid platform is often the most realistic answer.
+  Why: different workloads have different risk, cost, and control needs, so one deployment model is rarely optimal for everything.
+
+### 8) Production Reality Check (Mandatory Ending)
+
+If this fails in prod, what is the first thing we inspect?
+
+We inspect the inference ownership boundary and the actual request path.
+
+Why:
+
+Many production failures here come from misunderstanding where the model is really running, what dependencies are in the request path, and which privacy, rate-limit, or infrastructure bottleneck is actually in control.
+
+### 9) Curiosity Bridge (Mandatory Ending)
+
+Now the deployment ecosystem is clearer, but one more layer still decides whether the product feels viable in the real world.
+
+Even a great hosted or self-hosted setup can fail if you do not understand token usage, context limits, latency, throughput, and cost. That is the next subtopic because those mechanics drive real production tradeoffs every day.
