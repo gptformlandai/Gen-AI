@@ -7,6 +7,7 @@ Covered so far:
 - Topic 1.1.a: Foundation model vs instruct model vs reasoning-oriented model
 - Topic 1.1.b: Assistant vs copilot vs workflow vs agent
 - Topic 1.1.c: Hosted vs open-weight vs self-hosted model ecosystems
+- Topic 1.1.d: Tokens, context windows, latency, throughput, and cost basics
 
 ---
 
@@ -580,6 +581,53 @@ As a systems engineer, you should separate these questions:
 - Can I fine-tune and redistribute?
 - Do I have the infra and operational skill to serve them reliably?
 
+#### Clarification: Open-weight is not the same as temperature, top-p, or top-k controls
+
+No. Open-weight does not mean the provider is giving you sampling controls like temperature, top-p, or top-k.
+
+Those are inference-time decoding parameters.
+They control how the model generates an answer for a specific request.
+
+Open-weight refers to something deeper: access to the model's learned parameters themselves, which are the large numerical tensors produced during training.
+
+Simple separation:
+
+- model weights = what the model has learned
+- temperature, top-p, top-k = how you ask the serving system to generate from that model at runtime
+- model selection = which model endpoint or checkpoint you choose to call
+
+So these are different layers of the stack.
+
+| Layer | What it means | Example |
+|---|---|---|
+| Model artifact | The actual trained model parameters | Llama weights, Mistral weights |
+| Serving / inference controls | Runtime generation knobs | temperature, top-p, top-k, max tokens |
+| API routing choice | Which model or endpoint you invoke | choose GPT-4.1 vs a Llama deployment |
+
+Why this distinction matters:
+
+- A closed hosted API can still expose temperature and top-p even though the weights are not available to you.
+- An open-weight model may be served through a simple endpoint that exposes only a few runtime controls.
+- Self-hosting an open-weight model often gives you more flexibility over inference settings, batching, quantization, and serving stack design, but that flexibility comes from owning the serving layer, not from the phrase open-weight by itself.
+
+Another way to think about it:
+
+- open-weight answers: "Do I have access to the trained model itself?"
+- temperature/top-p/top-k answer: "How should decoding behave for this request?"
+- self-hosted answers: "Who runs the inference system?"
+
+Example:
+
+- If you call a hosted API for a closed model and set temperature to 0.2, you are controlling decoding, not accessing weights.
+- If you download an open-weight model and run it on your own GPU, you have access to the weights.
+- If you then expose an API on top of that model with temperature and top-p controls, those controls are part of your serving interface, not the definition of open-weight.
+
+This is the clean mental model to keep:
+
+- Open-weight is about model access.
+- Hosted vs self-hosted is about deployment ownership.
+- Temperature, top-p, and top-k are about output generation behavior at inference time.
+
 ### 2) Real-World Industry Scenarios
 
 #### Scenario A: Startup building a customer support copilot fast
@@ -765,3 +813,207 @@ Many production failures here come from misunderstanding where the model is real
 Now the deployment ecosystem is clearer, but one more layer still decides whether the product feels viable in the real world.
 
 Even a great hosted or self-hosted setup can fail if you do not understand token usage, context limits, latency, throughput, and cost. That is the next subtopic because those mechanics drive real production tradeoffs every day.
+
+---
+
+## Subtopic 1.1.d: Tokens, Context Windows, Latency, Throughput, and Cost Basics
+
+### 1) The Intuition (Plain English)
+
+This is the operations physics of GenAI systems.
+
+- Tokens are the billable and computational units.
+- Context window is the total token budget the model can consider in one request.
+- Latency is how long one request takes.
+- Throughput is how many requests (or tokens) the system can handle over time.
+- Cost is the money spent to process input and output tokens, plus infrastructure overhead.
+
+If model quality is your engine, these metrics are your fuel, road width, speed, traffic flow, and toll cost.
+
+Analogy:
+
+Think of a highway toll system.
+
+- Tokens = number of vehicles passing through.
+- Context window = maximum vehicles allowed in one lane segment.
+- Latency = time one vehicle takes from entry to exit.
+- Throughput = vehicles processed per minute.
+- Cost = toll paid per vehicle.
+
+You cannot optimize only one of these forever. If you push one too hard, another gets worse.
+
+#### Core formulas you should remember
+
+- total_tokens = input_tokens + output_tokens
+- estimated_cost_per_request = (input_tokens * input_price_per_token) + (output_tokens * output_price_per_token)
+- throughput_rps = completed_requests / second
+- p95_latency = 95th percentile response time
+
+### 2) Real-World Industry Scenarios
+
+#### Scenario A: Customer support assistant spikes during business hours
+
+- Product context: many short user queries, moderate answers, occasional retrieval augmentation.
+- Constraints: low p95 latency target, stable UX, budget limits, spiky traffic.
+- What good looks like in production: bounded prompts, cached context, predictable token usage, and autoscaling that keeps p95 within SLA.
+
+Why this matters:
+
+- Small token savings multiplied across high volume create major cost and latency improvements.
+
+#### Scenario B: Legal document analysis with long context
+
+- Product context: large contracts, clause comparison, citation-heavy outputs.
+- Constraints: large context demand, slower responses acceptable, high accuracy and traceability required.
+- What good looks like in production: chunking and retrieval reduce unnecessary full-context calls, while output length is constrained to control cost.
+
+Why this matters:
+
+- Large context windows solve some problems, but unbounded context growth can destroy cost and latency.
+
+#### Scenario C: Internal analytics copilot serving many teams
+
+- Product context: mixed workload from small queries to deep analysis requests.
+- Constraints: shared quota, noisy-neighbor effects, variable output lengths.
+- What good looks like in production: request classes with different limits, queue management, and cost guardrails per tenant.
+
+Why this matters:
+
+- Throughput and fairness become architecture concerns, not just model concerns.
+
+### 3) System View (Think like a systems engineer)
+
+#### Inputs -> Transformations -> Outputs
+
+- Inputs: request text, retrieved context, system prompt, user tier, target model, output format needs.
+- Transformations:
+  - tokenize input
+  - enforce context limits and trim or compress context
+  - run inference with decoding limits
+  - stream or return output
+  - record token counts, latency, and cost metadata
+- Outputs: generated response plus observability and billing signals.
+
+#### Observability
+
+What we must track per request:
+
+- input_tokens, output_tokens, total_tokens
+- p50, p95, p99 latency
+- time-to-first-token for streaming systems
+- model, prompt version, retrieval payload size
+- queue wait time vs inference time
+- estimated and realized cost by request, user, and feature
+- rate-limit errors, truncation events, timeout events
+
+#### Failure points
+
+- Context overflow: prompt + retrieved chunks exceed window and force truncation.
+- Latency blow-up: oversized prompts or long outputs degrade p95.
+- Throughput collapse: queue growth during spikes causes cascading timeouts.
+- Cost drift: output length or retrieval payload silently grows over time.
+
+### 4) System Design Flavor (practical and concise)
+
+#### Key design question
+
+What token budget and latency budget does each request class get?
+
+Without class-based budgets, systems over-serve simple tasks and under-serve complex tasks.
+
+#### Tradeoffs
+
+- Larger context vs lower latency: more context can improve grounding but increases compute time.
+- Longer outputs vs lower cost: richer answers cost more and can slow UX.
+- Higher throughput vs tighter quality controls: aggressive concurrency helps capacity but can stress retrieval and guardrail checks.
+
+#### One scaling consideration
+
+At 10x traffic, global defaults fail.
+
+You need per-route budgets, tenant-aware throttling, and degradation policies (for example, shorter outputs or smaller retrieval sets during peak load).
+
+### 5) Common Mistakes + Debugging
+
+#### Mistake 1
+
+- Symptom: p95 latency rises gradually over weeks.
+- Likely cause: prompt or retrieval payload bloat increased average input tokens.
+- First debugging step: compare token histograms by prompt version and retrieval chunk count before and after regression.
+
+#### Mistake 2
+
+- Symptom: monthly spend exceeds forecast even though request volume is stable.
+- Likely cause: output token growth from verbose prompting or missing output caps.
+- First debugging step: inspect output token distribution and enforce max output tokens per route.
+
+#### Mistake 3
+
+- Symptom: intermittent failures during peak traffic.
+- Likely cause: throughput bottleneck in queueing, model concurrency, or shared rate limits.
+- First debugging step: separate queue wait time from inference time to identify where saturation begins.
+
+### 6) Active Recall (Spaced Repetition)
+
+1. What is the simplest formula for total tokens in one request?
+2. Why can increasing context window usage hurt latency and cost?
+3. What does p95 latency tell you that average latency can hide?
+4. Why should teams measure queue wait time separately from inference time?
+5. What is one common reason cost rises even when request count is flat?
+
+#### Active Recall Answers
+
+1. total_tokens = input_tokens + output_tokens.
+2. More tokens require more compute and memory, which usually increases response time and token charges.
+3. p95 shows tail behavior for slower requests, which better reflects real user pain than averages.
+4. Because queue delay and model compute delay have different root causes and require different fixes.
+5. Output tokens or retrieval payload size can grow silently, increasing per-request cost.
+
+### 7) Practice
+
+#### Mini-exercise
+
+A support feature handles 1,000,000 requests per month.
+
+- Current average per request: input 1,200 tokens, output 500 tokens
+- New prompt design would reduce input by 20 percent but increase output by 10 percent
+
+1. Compute old total tokens per request.
+2. Compute new total tokens per request.
+3. Decide whether this change is likely to help or hurt cost, assuming equal price per token for quick estimation.
+4. Name one latency risk and one mitigation.
+
+#### Mini-exercise Answers
+
+1. Old total = 1,200 + 500 = 1,700 tokens.
+2. New input = 1,200 * 0.8 = 960 tokens. New output = 500 * 1.1 = 550 tokens. New total = 960 + 550 = 1,510 tokens.
+3. Likely helps cost in this simplified estimate because total tokens drop from 1,700 to 1,510 per request.
+4. Latency risk: longer outputs can still increase generation time for some requests. Mitigation: set output caps and monitor p95 with route-level alerts.
+
+#### Capstone-style system design question
+
+Design token and latency guardrails for a three-tier GenAI product (free, pro, enterprise) where all tiers share the same base model but have different SLA and cost expectations. Define per-tier limits, what you will monitor, and what degradation strategy you apply under overload.
+
+#### Capstone-style Answer Outline
+
+- Free tier: strict token caps, smaller retrieval payload, relaxed latency SLA.
+- Pro tier: moderate token caps, better retrieval depth, tighter latency SLA.
+- Enterprise tier: highest limits with dedicated quotas and stronger isolation controls.
+- Monitor: token distributions, p95 latency, queue depth, timeout rate, per-tenant spend.
+- Overload strategy: reduce retrieval depth, reduce max output tokens, prioritize higher SLA tiers, and shed non-critical traffic gracefully.
+
+### 8) Production Reality Check (Mandatory Ending)
+
+If this fails in prod, what is the first thing we inspect?
+
+We inspect per-route token distributions and the split between queue wait time and inference time.
+
+Why:
+
+Most real failures here come from budget drift (token growth) or saturation (queue and concurrency pressure), and those two signals identify root cause fastest.
+
+### 9) Curiosity Bridge (Mandatory Ending)
+
+Now you can reason about the core operating metrics of any GenAI call.
+
+The next step is to connect these metrics to architecture choices in the full GenAI application anatomy: model layer, prompt layer, tool layer, and retrieval layer. That is where optimization becomes system design, not only prompt tuning.
