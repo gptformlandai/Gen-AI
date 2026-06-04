@@ -849,6 +849,34 @@ You cannot optimize only one of these forever. If you push one too hard, another
 - throughput_rps = completed_requests / second
 - p95_latency = 95th percentile response time
 
+#### Clarification: Throughput vs context window (they both involve tokens, but they are not the same)
+
+They are different dimensions.
+
+- Context window is a per-request limit.
+  It answers: how many tokens can fit into one model call.
+- Throughput is a rate over time.
+  It answers: how much work the system can process per second or per minute.
+
+Both can be measured using tokens, but units are different:
+
+- context window -> tokens per request (capacity per call)
+- throughput -> tokens per second or requests per second (flow over time)
+
+Quick example:
+
+- A model may support a 128k-token context window.
+- Your service may still process only 2,000 tokens per second at peak.
+
+So a large context window does not automatically mean high throughput.
+
+### Practical mental model
+
+- Context window is bucket size.
+- Throughput is water flow rate.
+
+Big bucket with slow pipe is still slow. Fast pipe with tiny bucket still cannot hold large requests.
+
 ### 2) Real-World Industry Scenarios
 
 #### Scenario A: Customer support assistant spikes during business hours
@@ -920,6 +948,48 @@ What we must track per request:
 What token budget and latency budget does each request class get?
 
 Without class-based budgets, systems over-serve simple tasks and under-serve complex tasks.
+
+#### Clarification: What class-based budgets are, where we use them, and why they help
+
+Class-based budgets means assigning different limits and targets to different request types instead of using one global default.
+
+Typical classes:
+
+- FAQ lookup
+- summarization
+- long-form analysis
+- agent/tool-heavy workflows
+- premium tier vs free tier traffic
+
+What we usually budget per class:
+
+- max input tokens
+- max output tokens
+- retrieval depth or number of chunks
+- latency target (for example p95 SLA)
+- concurrency quota and rate limit
+- cost ceiling per request or per user/day
+
+Where we use class-based budgets:
+
+- multi-feature products where tasks have very different complexity
+- multi-tenant systems where one tenant can otherwise consume shared capacity
+- tiered products (free/pro/enterprise)
+- systems with strict SLA and cost constraints
+
+Why class-based budgets are helpful:
+
+- prevent expensive tasks from starving simple high-volume flows
+- improve predictability of p95 latency and monthly spend
+- make throttling and graceful degradation smarter during traffic spikes
+- align business priorities with technical resource allocation
+
+Concrete example:
+
+- FAQ class: 2k input cap, 300 output cap, 2 retrieval chunks, tight p95 latency target.
+- Deep-analysis class: 16k input cap, 1k output cap, 8 retrieval chunks, relaxed latency target.
+
+If everything used deep-analysis limits, cost and latency would explode for common FAQ requests.
 
 #### Tradeoffs
 
