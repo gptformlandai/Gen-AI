@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trend-video-agent"
+version = "0.1.0"
+description = "Learning-first skeleton for a trend-aware short video editing agent."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "langgraph>=0.2.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.3.0",
+    "uvicorn[standard]>=0.30.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "httpx>=0.27.0",
+    "pytest>=8.2.0"
+]
+media = [
+    "faster-whisper>=1.0.0",
+    "moviepy>=1.0.3",
+    "opencv-python>=4.10.0.0",
+    "scenedetect[opencv]>=0.6.4"
+]
+rag = [
+    "chromadb>=0.5.0",
+    "sentence-transformers>=3.0.0"
+]
+mcp = [
+    "mcp>=1.0.0"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

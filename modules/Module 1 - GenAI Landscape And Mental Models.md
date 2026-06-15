@@ -8,6 +8,7 @@ Covered so far:
 - Topic 1.1.b: Assistant vs copilot vs workflow vs agent
 - Topic 1.1.c: Hosted vs open-weight vs self-hosted model ecosystems
 - Topic 1.1.d: Tokens, context windows, latency, throughput, and cost basics
+- Topic 1.2.a: Model layer, prompt layer, tool layer, retrieval layer
 
 ---
 
@@ -1087,3 +1088,232 @@ Most real failures here come from budget drift (token growth) or saturation (que
 Now you can reason about the core operating metrics of any GenAI call.
 
 The next step is to connect these metrics to architecture choices in the full GenAI application anatomy: model layer, prompt layer, tool layer, and retrieval layer. That is where optimization becomes system design, not only prompt tuning.
+
+---
+
+## Topic 1.2: Anatomy of a GenAI Application
+
+**Topic time:** 6h
+
+Subtopics in this topic:
+
+- 1.2.a Model layer, prompt layer, tool layer, retrieval layer - 90m
+- 1.2.b Memory, knowledge grounding, and feedback loops - 90m
+- 1.2.c Evaluation, tracing, and safety as system components - 90m
+- 1.2.d Reliability, latency, and cost as product constraints - 90m
+
+---
+
+## Subtopic 1.2.a: Model Layer, Prompt Layer, Tool Layer, Retrieval Layer
+
+### 1) The Intuition (Plain English)
+
+Most weak GenAI designs treat the model as the whole system.
+Strong designs split behavior into layers so each problem has a clear owner.
+
+- Model layer decides raw reasoning and generation capability.
+- Prompt layer decides task framing, constraints, and output behavior.
+- Tool layer gives action ability (APIs, DB calls, calculators, workflows).
+- Retrieval layer supplies relevant external knowledge at runtime.
+
+Simple mental model:
+
+- Model = brain capacity
+- Prompt = instructions and role framing
+- Tools = hands and instruments
+- Retrieval = reference library
+
+Analogy:
+
+Think of a consultant solving a client problem.
+
+- Model layer is the consultant's raw skill level.
+- Prompt layer is the brief and success criteria.
+- Retrieval layer is the project documents and evidence.
+- Tool layer is spreadsheets, SQL, ticketing systems, and internal APIs.
+
+If the answer is wrong, you must know which layer failed.
+Otherwise teams keep changing prompts for problems caused by missing retrieval, broken tools, or wrong model routing.
+
+### 2) Real-World Industry Scenarios
+
+#### Scenario A: Policy assistant with citations
+
+- Product context: employees ask policy questions and expect grounded answers with references.
+- Constraints: low hallucination tolerance, high trust requirement, moderate latency SLA.
+- What good looks like in production: retrieval fetches the right policy chunks, prompt enforces citation format, model stays concise, and tool layer logs citation provenance.
+
+Why this matters:
+
+- If retrieval is weak, no prompt magic can reliably fix factual grounding.
+
+#### Scenario B: Support copilot with action buttons
+
+- Product context: support agents receive draft replies and can trigger actions like ticket updates or refunds.
+- Constraints: action safety, auditability, role-based permissions, human approval.
+- What good looks like in production: tool layer has strict permission boundaries, prompt policy forbids unsafe actions, and model only calls tools when justified.
+
+Why this matters:
+
+- Many incidents come from tool-layer permission design, not model intelligence.
+
+#### Scenario C: Incident diagnosis assistant
+
+- Product context: system investigates errors using logs, runbooks, and service metrics.
+- Constraints: noisy data, time pressure, mixed tool reliability.
+- What good looks like in production: retrieval ranks relevant evidence, tools fetch current telemetry, prompt enforces structured reasoning output, and model routing picks stronger reasoning capacity for hard cases.
+
+Why this matters:
+
+- Real performance depends on layer coordination, not any single layer in isolation.
+
+### 3) System View (Think like a systems engineer)
+
+#### Inputs -> Transformations -> Outputs
+
+- Inputs: user request, user role, session context, available tools, indexed knowledge, model options.
+- Transformations:
+  - classify task type and risk
+  - retrieve relevant context
+  - construct prompt with policies and formatting rules
+  - select model and call tools if needed
+  - validate and format response
+- Outputs: response text, structured payload, citations, action results, and trace metadata.
+
+#### Layer ownership map
+
+- Model layer owns capability, latency profile, and cost-per-token characteristics.
+- Prompt layer owns instruction quality, output structure, and behavioral guardrails.
+- Retrieval layer owns freshness, relevance, and grounding quality.
+- Tool layer owns external actions, data writes, permission controls, and side effects.
+
+#### Observability
+
+What we log per request:
+
+- model selected and model latency
+- prompt template/version and token budget
+- retrieval query, retrieved chunks, and relevance scores
+- tool calls attempted, succeeded, failed, and blocked
+- final answer quality signals and safety checks
+
+#### Failure points
+
+- Model-layer mismatch: cheap model routed to hard reasoning task.
+- Prompt-layer brittleness: format failures after small input variation.
+- Retrieval-layer miss: relevant data not found or poorly ranked.
+- Tool-layer failure: permission denial, timeout, or side-effect error.
+
+### 4) System Design Flavor (practical and concise)
+
+#### Key design question
+
+Which layer should own this failure mode?
+
+If ownership is vague, teams debug blindly and ship unstable behavior.
+
+#### Tradeoffs
+
+- Stronger model vs stronger retrieval: stronger models help reasoning, but retrieval usually improves factual reliability faster per dollar.
+- More prompt constraints vs flexibility: strict templates improve consistency, but can reduce adaptability for edge cases.
+- More tool access vs safety risk: richer tool access increases capability, but multiplies security and approval complexity.
+
+#### One scaling consideration
+
+At 10x usage, layer contracts become critical.
+
+Define stable interfaces between retrieval, prompting, and tool invocation so each layer can evolve independently without breaking the whole pipeline.
+
+### 5) Common Mistakes + Debugging
+
+#### Mistake 1
+
+- Symptom: hallucinations persist despite heavy prompt edits.
+- Likely cause: retrieval layer is weak (bad indexing, chunking, or ranking), not prompt quality.
+- First debugging step: inspect retrieval hit quality and compare returned chunks against expected ground truth.
+
+#### Mistake 2
+
+- Symptom: dangerous tool actions happen unexpectedly.
+- Likely cause: tool permissions are broad and prompt-only safety is used as the primary control.
+- First debugging step: enforce tool-side authorization and explicit approval gates independent of prompt instructions.
+
+#### Mistake 3
+
+- Symptom: latency spikes with complex requests.
+- Likely cause: all requests follow the same expensive path (heavy retrieval + tool calls + large model) without routing.
+- First debugging step: add request classification and route simple vs complex tasks to different layer budgets.
+
+### 6) Active Recall (Spaced Repetition)
+
+1. What does each of the four layers primarily own?
+2. Why can prompt engineering not fully fix retrieval failures?
+3. Where should action safety primarily live: prompt text or tool layer controls?
+4. What is a common symptom of model-layer routing mismatch?
+5. What is the first debugging question when output quality drops suddenly?
+
+#### Active Recall Answers
+
+1. Model owns capability, prompt owns instruction behavior, retrieval owns grounding, and tools own actions/side effects.
+2. Because prompts cannot supply missing facts that were never retrieved; they only frame how the model uses available context.
+3. Tool layer controls, with prompt constraints as secondary guidance.
+4. Hard tasks get shallow or inconsistent answers because an underpowered model was selected.
+5. Ask which layer changed: model version, prompt template, retrieval pipeline, or tool behavior.
+
+### 7) Practice
+
+#### Mini-exercise
+
+A finance assistant gives incorrect reimbursement answers and sometimes triggers the wrong workflow action.
+
+1. Map likely issues across the four layers.
+2. For each layer, list one metric or log you would inspect first.
+3. Propose one immediate containment step and one durable fix.
+
+#### Mini-exercise Answers
+
+1. Likely issues by layer:
+   - model layer: wrong model routed for policy interpretation edge cases
+   - prompt layer: ambiguous policy instructions and weak output constraints
+   - retrieval layer: stale policy documents or poor ranking
+   - tool layer: weak action authorization and missing approval checks
+2. First metric/log by layer:
+   - model: route decisions and error rate by model
+   - prompt: prompt template version vs failure clusters
+   - retrieval: top-k hit relevance and document freshness timestamps
+   - tool: blocked vs allowed action audit logs
+3. Immediate containment: disable high-risk automated actions and require approval.
+   Durable fix: tighten retrieval quality checks, add model routing rules, harden tool authorization, and regression-test prompt templates.
+
+#### Capstone-style system design question
+
+Design a GenAI support platform where the same user request may need retrieval, tool execution, and model generation. Define the interface contracts between model, prompt, retrieval, and tool layers, and explain how you will isolate and debug failures per layer in production.
+
+#### Capstone-style Answer Outline
+
+- Contracts:
+  - retrieval returns ranked chunks with provenance metadata
+  - prompt builder consumes user intent + retrieved context + policy rules and emits a versioned prompt package
+  - model runtime accepts prompt package and returns structured output schema
+  - tool orchestrator executes only approved actions with role-based checks and full audit logs
+- Isolation strategy:
+  - per-layer tracing IDs
+  - layer-specific metrics dashboards
+  - replay harness for prompt/retrieval/model combinations
+  - kill switches for risky tools and fallback responses
+
+### 8) Production Reality Check (Mandatory Ending)
+
+If this fails in prod, what is the first thing we inspect?
+
+We inspect per-layer traces for the failing request class, starting with retrieval output quality and tool-call authorization outcomes.
+
+Why:
+
+Most critical incidents come from layer mismatch: bad grounding, unsafe tool boundaries, or wrong routing. Layer-level traces identify root cause faster than prompt-only debugging.
+
+### 9) Curiosity Bridge (Mandatory Ending)
+
+Now the core four-layer anatomy is clear, but real systems still need state over time.
+
+That leads to the next subtopic: memory, knowledge grounding, and feedback loops, where we separate short-term conversational state from durable product memory and show how systems learn from usage without drifting into unsafe behavior.
