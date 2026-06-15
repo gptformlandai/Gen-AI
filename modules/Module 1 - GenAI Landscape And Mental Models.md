@@ -2,6 +2,13 @@
 
 This is the evolving knowledge base for Module 1.
 
+## Quick Topic Index
+
+- [Topic 1.1: GenAI System Taxonomy and Vocabulary](#topic-11-genai-system-taxonomy-and-vocabulary)
+- [Topic 1.2: Anatomy of a GenAI Application](#topic-12-anatomy-of-a-genai-application)
+- [Subtopic 1.2.a: Model Layer, Prompt Layer, Tool Layer, Retrieval Layer](#subtopic-12a-model-layer-prompt-layer-tool-layer-retrieval-layer)
+- [Subtopic 1.2.b: Memory, Knowledge Grounding, and Feedback Loops](#subtopic-12b-memory-knowledge-grounding-and-feedback-loops)
+
 Covered so far:
 
 - Topic 1.1.a: Foundation model vs instruct model vs reasoning-oriented model
@@ -9,6 +16,7 @@ Covered so far:
 - Topic 1.1.c: Hosted vs open-weight vs self-hosted model ecosystems
 - Topic 1.1.d: Tokens, context windows, latency, throughput, and cost basics
 - Topic 1.2.a: Model layer, prompt layer, tool layer, retrieval layer
+- Topic 1.2.b: Memory, knowledge grounding, and feedback loops
 
 ---
 
@@ -1317,3 +1325,221 @@ Most critical incidents come from layer mismatch: bad grounding, unsafe tool bou
 Now the core four-layer anatomy is clear, but real systems still need state over time.
 
 That leads to the next subtopic: memory, knowledge grounding, and feedback loops, where we separate short-term conversational state from durable product memory and show how systems learn from usage without drifting into unsafe behavior.
+
+---
+
+## Subtopic 1.2.b: Memory, Knowledge Grounding, and Feedback Loops
+
+### 1) The Intuition (Plain English)
+
+A GenAI system is useful only when it stays consistent over time and stays tied to real evidence.
+
+- Memory decides what the system remembers across turns, sessions, or users.
+- Knowledge grounding decides what evidence the system should trust for this answer.
+- Feedback loops decide how the system improves from usage without repeating mistakes.
+
+Simple mental model:
+
+- Memory = state over time
+- Grounding = truth anchor
+- Feedback loop = learning control system
+
+Analogy:
+
+Think of a high-performing support engineer.
+
+- Memory is their case history and prior context.
+- Grounding is their habit of checking current runbooks and source-of-truth docs.
+- Feedback loop is the post-incident review that updates playbooks.
+
+Without memory, each conversation restarts from zero.
+Without grounding, memory can amplify errors.
+Without feedback loops, the same failure repeats at scale.
+
+### 2) Real-World Industry Scenarios
+
+#### Scenario A: Customer support assistant with returning users
+
+- Product context: users reopen old issues and expect continuity.
+- Constraints: privacy boundaries, stale-context risk, consistent identity mapping.
+- What good looks like in production: short-term conversation state is preserved, long-term user profile memory is scoped and permissioned, and answers are grounded to latest docs before acting on old memory.
+
+Why this matters:
+
+- Memory improves UX, but stale memory without grounding creates confident errors.
+
+#### Scenario B: Enterprise policy assistant
+
+- Product context: employees ask compliance and HR policy questions.
+- Constraints: policy updates are frequent, old answers can become invalid.
+- What good looks like in production: retrieval grounding always checks current policy versions, and feedback from policy reviewers updates ranking and answer templates.
+
+Why this matters:
+
+- In regulated domains, freshness and provenance are more important than fluent answers.
+
+#### Scenario C: Product analytics copilot
+
+- Product context: analysts use repeated workflows and tool queries.
+- Constraints: noisy user feedback, changing schema, multi-tenant data access.
+- What good looks like in production: memory captures reusable preferences, grounding validates data-source freshness, and feedback loops improve prompt/tool routing from measured outcomes.
+
+Why this matters:
+
+- Real value comes from learning safely from repeated usage patterns.
+
+### 3) System View (Think like a systems engineer)
+
+#### Inputs -> Transformations -> Outputs
+
+- Inputs: user request, session history, user profile memory, retrieved documents, tool outputs, feedback events.
+- Transformations:
+  - select relevant memory slice (session, user, org)
+  - retrieve authoritative external evidence
+  - build grounded prompt with citations/provenance
+  - generate response and capture feedback signals
+  - decide whether and what to write back to memory
+- Outputs: grounded response, citation trail, memory updates, feedback events for improvement pipelines.
+
+#### Memory layers (practical split)
+
+- Working memory: current turn/session context, high volatility, short TTL.
+- Episodic memory: user/task history, medium retention, strict privacy controls.
+- Semantic memory: distilled facts/preferences learned over time, high governance and validation requirements.
+
+#### Observability
+
+What we log and inspect:
+
+- which memory store contributed context
+- memory hit rate vs retrieval grounding hit rate
+- provenance coverage (what percent of answers cite current sources)
+- stale-memory incidents and memory-write rejection rate
+- feedback type distribution (thumbs down, correction, escalation)
+- quality deltas after feedback-policy updates
+
+#### Failure points
+
+- Memory leakage across users/tenants.
+- Stale memory overriding fresh retrieved evidence.
+- Feedback loops learning from noisy or adversarial signals.
+- Over-writing memory with unverified generated content.
+
+### 4) System Design Flavor (practical and concise)
+
+#### Key design question
+
+What can be remembered automatically, and what must always be re-grounded from source-of-truth data?
+
+This boundary prevents both amnesia and unsafe persistence.
+
+#### Tradeoffs
+
+- More memory vs more risk: richer continuity improves UX, but raises privacy and stale-data risk.
+- Aggressive grounding vs lower latency: stronger grounding improves factuality, but may add retrieval and validation cost.
+- Fast feedback adaptation vs stability: rapid updates help learning, but can overfit to noisy feedback.
+
+#### One scaling consideration
+
+At 10x usage, uncontrolled memory writes become technical debt.
+
+You need write policies, retention rules, and offline evaluation before promoting feedback-driven changes globally.
+
+### 5) Common Mistakes + Debugging
+
+#### Mistake 1
+
+- Symptom: assistant repeats outdated facts even after source docs were updated.
+- Likely cause: memory content is trusted over retrieval grounding freshness.
+- First debugging step: compare response evidence paths and enforce freshness-priority policy (current source beats old memory).
+
+#### Mistake 2
+
+- Symptom: one user's preferences appear in another user's answers.
+- Likely cause: memory partitioning or tenant scoping is broken.
+- First debugging step: audit memory keys and access controls for cross-tenant leakage.
+
+#### Mistake 3
+
+- Symptom: system quality oscillates after adding automatic feedback updates.
+- Likely cause: noisy feedback is being written directly into behavior policies without filtering.
+- First debugging step: gate feedback ingestion with confidence thresholds and offline replay evaluation.
+
+### 6) Active Recall (Spaced Repetition)
+
+1. What is the difference between memory and grounding in a GenAI system?
+2. Why can memory improve UX but also increase factual risk?
+3. What should usually win in conflict: stale memory or fresh authoritative retrieval?
+4. Why are feedback loops dangerous without filtering and evaluation?
+5. What is the first architectural control for preventing memory leakage?
+
+#### Active Recall Answers
+
+1. Memory stores prior state over time, while grounding ties the current answer to authoritative evidence.
+2. Memory adds continuity, but if stale or wrong it can be reused confidently unless re-grounded.
+3. Fresh authoritative retrieval should usually win.
+4. Because noisy or adversarial feedback can degrade behavior if applied directly.
+5. Strong partitioning and access controls by user/tenant plus audited memory keys.
+
+### 7) Practice
+
+#### Mini-exercise
+
+You are building an HR assistant.
+
+- It should remember user preferences (tone, language, office location).
+- It must answer policy questions from latest policy documents.
+- It receives thumbs-up/down and human corrections.
+
+1. Decide what goes to working memory, episodic memory, and semantic memory.
+2. Define one rule for when memory can be auto-written and one rule for when it must be human-reviewed.
+3. Define one feedback signal you would trust directly and one you would route to offline review.
+
+#### Mini-exercise Answers
+
+1. Memory placement:
+   - working memory: current conversation context and immediate clarifications
+   - episodic memory: user preferences like tone/language/location with user scope
+   - semantic memory: validated long-term preference summaries, not policy facts
+2. Auto-write rule: low-risk user preference updates with clear explicit user intent.
+   Human-review rule: any memory write that could affect policy/compliance interpretation.
+3. Trust directly: explicit user-set preference changes.
+   Route offline: ambiguous thumbs-down patterns without clear corrective labels.
+
+#### Capstone-style system design question
+
+Design a memory and grounding architecture for a multi-tenant enterprise assistant where answers must remain policy-accurate even as policies change weekly. Specify memory stores, grounding precedence, feedback ingestion pipeline, and rollback controls.
+
+#### Capstone-style Answer Outline
+
+- Memory stores:
+  - session cache for working memory
+  - tenant-scoped profile store for episodic memory
+  - validated preference store for semantic memory
+- Grounding precedence:
+  - policy retrieval with version/provenance outranks memory for factual claims
+  - memory used for personalization only unless explicitly validated
+- Feedback pipeline:
+  - collect feedback events
+  - classify confidence and risk
+  - replay on evaluation set before promotion
+- Rollback controls:
+  - versioned memory-write policies
+  - canary rollout for feedback-based updates
+  - one-click revert to prior prompt/ranking policy
+
+### 8) Production Reality Check (Mandatory Ending)
+
+If this fails in prod, what is the first thing we inspect?
+
+We inspect evidence precedence and memory-write logs for the failing answer path.
+
+Why:
+
+Most severe failures come from stale or leaked memory being trusted over fresh grounded evidence, and that is visible first in precedence traces and write-audit records.
+
+### 9) Curiosity Bridge (Mandatory Ending)
+
+Now we have the time dimension of GenAI systems: what to remember, what to re-ground, and how to learn safely.
+
+The next subtopic moves from architecture to assurance: evaluation, tracing, and safety as system components, where we make quality and risk measurable instead of subjective.
