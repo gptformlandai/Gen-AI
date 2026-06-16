@@ -10,6 +10,11 @@ This is the evolving knowledge base for Module 1.
 - [Subtopic 1.2.b: Memory, Knowledge Grounding, and Feedback Loops](#subtopic-12b-memory-knowledge-grounding-and-feedback-loops)
 - [Subtopic 1.2.c: Evaluation, Tracing, and Safety as System Components](#subtopic-12c-evaluation-tracing-and-safety-as-system-components)
 - [Subtopic 1.2.d: Reliability, Latency, and Cost as Product Constraints](#subtopic-12d-reliability-latency-and-cost-as-product-constraints)
+- [Topic 1.3: Failure Modes and Thinking Patterns](#topic-13-failure-modes-and-thinking-patterns)
+- [Subtopic 1.3.a: Hallucination, Omission, Shallow Retrieval, and Overconfident Answers](#subtopic-13a-hallucination-omission-shallow-retrieval-and-overconfident-answers)
+- [Subtopic 1.3.b: Prompt Brittleness, Hidden State, and Context Overload](#subtopic-13b-prompt-brittleness-hidden-state-and-context-overload)
+- [Subtopic 1.3.c: Tool Misuse, Stale Knowledge, and Permission Blind Spots](#subtopic-13c-tool-misuse-stale-knowledge-and-permission-blind-spots)
+- [Subtopic 1.3.d: Root-Cause Decomposition Across Model, Retrieval, Tool, and Orchestration Bugs](#subtopic-13d-root-cause-decomposition-across-model-retrieval-tool-and-orchestration-bugs)
 
 Covered so far:
 
@@ -21,6 +26,10 @@ Covered so far:
 - Topic 1.2.b: Memory, knowledge grounding, and feedback loops
 - Topic 1.2.c: Evaluation, tracing, and safety as system components
 - Topic 1.2.d: Reliability, latency, and cost as product constraints
+- Topic 1.3.a: Hallucination, omission, shallow retrieval, and overconfident answers
+- Topic 1.3.b: Prompt brittleness, hidden state, and context overload
+- Topic 1.3.c: Tool misuse, stale knowledge, and permission blind spots
+- Topic 1.3.d: Root-cause decomposition: model bug vs retrieval bug vs tool bug vs orchestration bug
 
 ---
 
@@ -1999,3 +2008,759 @@ Most production incidents here are not random. They come from specific overloade
 Now you have the full anatomy of a GenAI application with measurable constraints.
 
 The next topic moves into failure-mode thinking: hallucination, omission, brittle prompts, stale retrieval, and tool misuse, so you can diagnose failures by layer instead of guessing.
+
+---
+
+## Topic 1.3: Failure Modes and Thinking Patterns
+
+**Topic time:** 8h
+
+Subtopics in this topic:
+
+- 1.3.a Hallucination, omission, shallow retrieval, and overconfident answers - 2h
+- 1.3.b Prompt brittleness, hidden state, and context overload - 2h
+- 1.3.c Tool misuse, stale knowledge, and permission blind spots - 2h
+- 1.3.d Root-cause decomposition: model bug vs retrieval bug vs tool bug vs orchestration bug - 2h
+
+Learning rule adjustment for this topic:
+
+- This topic is covered in one integrated pass because the failure modes are tightly connected.
+- The goal is not memorizing names. The goal is learning to map symptoms to the correct failing layer.
+
+---
+
+## Subtopic 1.3.a: Hallucination, Omission, Shallow Retrieval, and Overconfident Answers
+
+### 1) The Intuition (Plain English)
+
+These are answer-quality failures, but they are not all the same failure.
+
+- Hallucination: the system invents unsupported information.
+- Omission: the system leaves out important information that should have been included.
+- Shallow retrieval: the system retrieves weak or partial evidence and answers from that thin context.
+- Overconfident answer: the system sounds certain even when evidence is weak or missing.
+
+Simple mental model:
+
+- Hallucination = says what is not supported
+- Omission = misses what matters
+- Shallow retrieval = answers from weak evidence
+- Overconfidence = certainty does not match evidence
+
+Analogy:
+
+Think of a junior analyst writing a report.
+
+- Hallucination is inventing a statistic.
+- Omission is forgetting a key risk.
+- Shallow retrieval is reading only the first search result.
+- Overconfidence is presenting guesses like audited facts.
+
+### 2) Real-World Industry Scenarios
+
+#### Scenario A: HR policy assistant
+
+- Product context: employees ask leave, benefits, and eligibility questions.
+- Constraints: policy accuracy, source citations, low tolerance for confident errors.
+- What good looks like in production: answers cite current policy, mention caveats, and refuse when evidence is insufficient.
+
+Why this matters:
+
+- Hallucinated policy guidance can create real employee harm and compliance risk.
+
+#### Scenario B: RAG customer support assistant
+
+- Product context: users ask product troubleshooting questions.
+- Constraints: docs may be incomplete, retrieval may miss version-specific details.
+- What good looks like in production: the assistant distinguishes supported steps from uncertain suggestions and escalates when retrieval confidence is low.
+
+Why this matters:
+
+- Many hallucinations are actually retrieval failures wearing a fluent-answer mask.
+
+### 3) System View (Think like a systems engineer)
+
+#### Inputs -> Transformations -> Outputs
+
+- Inputs: user question, retrieved evidence, prompt instructions, model response.
+- Transformations:
+  - retrieve and rank evidence
+  - check whether evidence is sufficient
+  - generate answer constrained to evidence
+  - validate citation and confidence behavior
+- Outputs: grounded answer, refusal, escalation, or clarification question.
+
+#### Observability
+
+What we log and inspect:
+
+- retrieved chunks and relevance scores
+- answer claims mapped to evidence
+- citation coverage
+- refusal/escalation rate
+- unsupported-claim rate
+- omission labels from human review
+
+#### Failure points
+
+- Retrieval misses source-of-truth documents.
+- Prompt asks for an answer even when evidence is weak.
+- Model fills gaps instead of refusing.
+- Evaluation rewards polished answers instead of grounded answers.
+
+### 4) System Design Flavor (practical and concise)
+
+#### Key design question
+
+Does every important claim have enough supporting evidence?
+
+This is the central question for grounding failures.
+
+#### Tradeoffs
+
+- More refusal vs more helpfulness: refusals reduce hallucination but may frustrate users.
+- Higher top-k retrieval vs lower latency: more evidence can improve recall but increases cost and context size.
+- Concise answers vs completeness: shorter answers reduce latency but may omit important caveats.
+
+#### One scaling consideration
+
+At 10x usage, unsupported claims become a statistical certainty unless you measure them continuously.
+
+Use claim-level evaluation, citation checks, and sampled human review.
+
+### 5) Common Mistakes + Debugging
+
+#### Mistake 1
+
+- Symptom: answer is fluent but factually unsupported.
+- Likely cause: model generated beyond retrieved evidence.
+- First debugging step: map each answer claim to retrieved chunks and identify unsupported claims.
+
+#### Mistake 2
+
+- Symptom: answer is technically correct but misses the key caveat.
+- Likely cause: retrieval found partial evidence or prompt optimized for brevity over completeness.
+- First debugging step: inspect expected source documents and compare against retrieved top-k.
+
+#### Mistake 3
+
+- Symptom: system never says "I do not know."
+- Likely cause: prompt and evaluation reward always-answer behavior.
+- First debugging step: add insufficient-evidence test cases and measure refusal correctness.
+
+### 6) Active Recall (Spaced Repetition)
+
+1. What is the difference between hallucination and omission?
+2. Why can shallow retrieval lead to overconfident answers?
+3. What is the first debugging step for a suspected hallucination?
+4. Why is citation presence not enough to prove groundedness?
+5. What behavior should a system show when evidence is insufficient?
+
+#### Active Recall Answers
+
+1. Hallucination adds unsupported information; omission leaves out important supported information.
+2. The model may answer confidently from incomplete evidence unless the system checks evidence sufficiency.
+3. Map each generated claim to retrieved evidence and find unsupported claims.
+4. A citation can point to a document without actually supporting the specific claim.
+5. It should ask a clarification, refuse, or escalate rather than invent.
+
+### 7) Practice
+
+#### Mini-exercise
+
+A policy assistant says: "Contractors are eligible for 12 weeks of paid parental leave," but the retrieved policy only mentions full-time employees.
+
+1. Classify the failure.
+2. Identify the likely failing layer.
+3. Give the first debugging step.
+
+#### Mini-exercise Answers
+
+1. Failure: hallucination plus overconfidence.
+2. Likely failing layer: retrieval/prompt/model interaction. The evidence is insufficient, and the model filled the gap.
+3. First debugging step: inspect retrieved chunks and claim-to-evidence mapping for the contractor eligibility claim.
+
+#### Capstone-style system design question
+
+Design a grounded-answer policy for a RAG assistant that must avoid hallucinations and omissions. Include evidence sufficiency checks, citation validation, and refusal behavior.
+
+#### Capstone-style Answer Outline
+
+- Require claim-to-evidence mapping for factual claims.
+- Validate that citations support the exact claim, not merely the topic.
+- Use insufficient-evidence thresholds based on retrieval score and coverage.
+- Return refusal or clarification when evidence is weak.
+- Track unsupported-claim and omission rates in evaluation.
+
+### 8) Production Reality Check (Mandatory Ending)
+
+If this fails in prod, what is the first thing we inspect?
+
+We inspect retrieved evidence and claim-to-evidence mapping for the failing answer.
+
+Why:
+
+Most hallucination and omission bugs become clear once you compare what the model said against what evidence it actually received.
+
+### 9) Curiosity Bridge (Mandatory Ending)
+
+Answer-quality failures are only one family of failures.
+
+Next we look at prompt brittleness, hidden state, and context overload, where the system may have the right evidence but still fail because the instruction/context package is unstable.
+
+---
+
+## Subtopic 1.3.b: Prompt Brittleness, Hidden State, and Context Overload
+
+### 1) The Intuition (Plain English)
+
+Prompt failures happen when behavior changes unexpectedly because the instruction package is fragile.
+
+- Prompt brittleness: small input or template changes cause large behavior changes.
+- Hidden state: invisible context or previous turns influence behavior in ways the developer forgets.
+- Context overload: too much instruction, evidence, chat history, or tool output makes the model miss what matters.
+
+Simple mental model:
+
+- Prompt brittleness = fragile instructions
+- Hidden state = invisible baggage
+- Context overload = too much on the desk
+
+Analogy:
+
+Think of giving instructions to a busy teammate.
+
+- If the instructions are brittle, one wording change breaks the task.
+- If hidden state exists, they act based on something you did not know they remembered.
+- If overloaded, they miss key details because the brief is too crowded.
+
+### 2) Real-World Industry Scenarios
+
+#### Scenario A: Structured extraction pipeline
+
+- Product context: model extracts fields into JSON from invoices.
+- Constraints: strict schema, low tolerance for missing fields, lots of document variation.
+- What good looks like in production: prompt templates are versioned, tested on fixtures, and protected with schema validation/retry.
+
+Why this matters:
+
+- A small prompt change can silently break downstream systems.
+
+#### Scenario B: Long-running chat assistant
+
+- Product context: user has multi-turn support conversation.
+- Constraints: old turns may become irrelevant, but recent user corrections matter.
+- What good looks like in production: context is summarized, stale turns are dropped, and hidden assumptions are surfaced before action.
+
+Why this matters:
+
+- Hidden state causes confusing behavior that looks like model randomness.
+
+### 3) System View (Think like a systems engineer)
+
+#### Inputs -> Transformations -> Outputs
+
+- Inputs: system prompt, developer instructions, user request, chat history, retrieved context, tool outputs.
+- Transformations:
+  - assemble prompt package
+  - rank and compress context
+  - enforce instruction precedence
+  - validate output format and policy constraints
+- Outputs: generated response or structured object with traceable prompt version.
+
+#### Observability
+
+What we log and inspect:
+
+- prompt version and rendered prompt
+- context size by component
+- instruction hierarchy and conflicting instructions
+- output schema failures
+- behavior drift by prompt version
+- context truncation events
+
+#### Failure points
+
+- Prompt template changes without regression tests.
+- Long chat history pushes important retrieval evidence out of attention.
+- Tool outputs are pasted unfiltered into the context.
+- Conflicting instructions appear across system, developer, user, and retrieved content.
+
+### 4) System Design Flavor (practical and concise)
+
+#### Key design question
+
+Is the model seeing the right context, in the right order, under non-conflicting instructions?
+
+That question explains many "random" LLM failures.
+
+#### Tradeoffs
+
+- More instructions vs clarity: more rules can help edge cases but also create contradictions.
+- More history vs relevance: history improves continuity but can overload the prompt.
+- More examples vs token budget: examples improve format reliability but consume context.
+
+#### One scaling consideration
+
+At 10x prompt/template complexity, manual prompt management collapses.
+
+You need prompt versioning, regression tests, render inspection, and diff discipline.
+
+### 5) Common Mistakes + Debugging
+
+#### Mistake 1
+
+- Symptom: same task behaves differently after a harmless wording change.
+- Likely cause: brittle prompt template or missing regression tests.
+- First debugging step: diff rendered prompts and replay fixed test cases across both versions.
+
+#### Mistake 2
+
+- Symptom: assistant uses old assumptions the user corrected earlier.
+- Likely cause: hidden state or stale conversation summary.
+- First debugging step: inspect full assembled context and summary memory.
+
+#### Mistake 3
+
+- Symptom: model ignores key retrieved evidence.
+- Likely cause: context overload or poor ordering.
+- First debugging step: measure token allocation by component and move key evidence closer to the task instruction.
+
+### 6) Active Recall (Spaced Repetition)
+
+1. What is prompt brittleness?
+2. Why is hidden state dangerous in multi-turn systems?
+3. What is context overload?
+4. What should you inspect first when behavior changes after a prompt edit?
+5. Why are rendered prompts more useful than template files during debugging?
+
+#### Active Recall Answers
+
+1. Prompt brittleness is when small wording/template changes cause large behavior changes.
+2. Because invisible prior context can influence behavior in ways the user/developer does not expect.
+3. Context overload is when too much information makes the model miss important instructions or evidence.
+4. Diff rendered prompts and replay fixed regression examples.
+5. Because rendered prompts show the exact text the model saw, including variables, history, and retrieved context.
+
+### 7) Practice
+
+#### Mini-exercise
+
+A JSON extractor starts returning prose after a prompt refactor, but the model and input documents are unchanged.
+
+1. Classify the failure.
+2. Identify the likely failing layer.
+3. Give the first debugging step.
+
+#### Mini-exercise Answers
+
+1. Failure: prompt brittleness and schema-following regression.
+2. Likely failing layer: prompt layer, possibly validation layer if schema enforcement is weak.
+3. First debugging step: compare old vs new rendered prompts and replay the same document fixtures.
+
+#### Capstone-style system design question
+
+Design a prompt governance system for a production GenAI app. Include versioning, regression tests, context-packing checks, and rollback.
+
+#### Capstone-style Answer Outline
+
+- Store prompt templates with semantic versions.
+- Log rendered prompts for sampled requests.
+- Maintain fixtures for common and edge cases.
+- Run schema validation and golden-set regression before rollout.
+- Use canary release and one-click prompt rollback.
+
+### 8) Production Reality Check (Mandatory Ending)
+
+If this fails in prod, what is the first thing we inspect?
+
+We inspect the rendered prompt package for the failing request.
+
+Why:
+
+The actual rendered prompt reveals hidden state, context order, token pressure, and instruction conflicts that templates alone hide.
+
+### 9) Curiosity Bridge (Mandatory Ending)
+
+Now we have covered failures inside answers and prompts.
+
+Next comes the more dangerous category: tool misuse, stale knowledge, and permission blind spots, where model mistakes can trigger real actions or expose data.
+
+---
+
+## Subtopic 1.3.c: Tool Misuse, Stale Knowledge, and Permission Blind Spots
+
+### 1) The Intuition (Plain English)
+
+Tool-using systems fail differently because they can affect the outside world.
+
+- Tool misuse: the system calls the wrong tool, calls the right tool with bad arguments, or acts at the wrong time.
+- Stale knowledge: the system relies on outdated docs, memory, or cached data.
+- Permission blind spot: the system can see or do something the user should not be allowed to access or trigger.
+
+Simple mental model:
+
+- Tool misuse = wrong action
+- Stale knowledge = old truth treated as current truth
+- Permission blind spot = missing access boundary
+
+Analogy:
+
+Think of an assistant with access to company systems.
+
+- A bad answer is embarrassing.
+- A bad tool call can update records, send messages, refund money, or expose restricted data.
+
+That is why tool failures need stricter controls than plain chat failures.
+
+### 2) Real-World Industry Scenarios
+
+#### Scenario A: Refund workflow assistant
+
+- Product context: support rep can approve refunds with AI assistance.
+- Constraints: financial impact, policy limits, audit trail, human approval.
+- What good looks like in production: tool calls require role checks, amount limits, explicit confirmation, and idempotent execution.
+
+Why this matters:
+
+- Prompt instructions are not enough when real money can move.
+
+#### Scenario B: Internal knowledge assistant with permissions
+
+- Product context: employees query documents from multiple departments.
+- Constraints: tenant/team permissions, restricted docs, stale docs.
+- What good looks like in production: retrieval is permission-aware, freshness-aware, and logs every source access.
+
+Why this matters:
+
+- Security failures often happen before generation, inside retrieval and tool access.
+
+### 3) System View (Think like a systems engineer)
+
+#### Inputs -> Transformations -> Outputs
+
+- Inputs: user identity, role, request, available tools, document permissions, freshness metadata.
+- Transformations:
+  - authorize user/tool/document access
+  - retrieve only permitted and fresh sources
+  - validate tool arguments
+  - require confirmation for risky actions
+  - execute action idempotently and log result
+- Outputs: safe answer, blocked action, approval request, or audited tool result.
+
+#### Observability
+
+What we log and inspect:
+
+- tool selected and arguments
+- authorization decision and policy version
+- document freshness and source version
+- approval events and user confirmations
+- tool result and side effects
+- blocked action reasons
+
+#### Failure points
+
+- Model chooses a tool based on weak intent classification.
+- Retrieval returns stale or unauthorized sources.
+- Tool schema allows ambiguous arguments.
+- Tool execution is not idempotent.
+- Permissions are checked in UI but not in backend tool layer.
+
+### 4) System Design Flavor (practical and concise)
+
+#### Key design question
+
+Can this action or data access cause harm if the model is wrong?
+
+If yes, the control must live outside the prompt.
+
+#### Tradeoffs
+
+- More tool power vs more risk: broad tools increase capability but expand blast radius.
+- Strict permissions vs convenience: tighter gates reduce accidents but may add friction.
+- Freshness checks vs latency: verifying current sources improves correctness but can slow response.
+
+#### One scaling consideration
+
+At 10x tools, tool governance becomes a platform problem.
+
+You need tool catalogs, risk tiers, schema reviews, audit logs, and approval policies.
+
+### 5) Common Mistakes + Debugging
+
+#### Mistake 1
+
+- Symptom: assistant calls a tool when it should only answer.
+- Likely cause: weak intent classification and no action threshold.
+- First debugging step: inspect tool-selection trace and add confidence/approval gates.
+
+#### Mistake 2
+
+- Symptom: assistant answers using outdated documentation.
+- Likely cause: stale retrieval index or memory overriding fresh source data.
+- First debugging step: inspect source version, index refresh time, and freshness metadata.
+
+#### Mistake 3
+
+- Symptom: user sees information from another team or tenant.
+- Likely cause: permission-aware retrieval or tool authorization is missing.
+- First debugging step: audit authorization checks at retrieval and tool execution layers.
+
+### 6) Active Recall (Spaced Repetition)
+
+1. Why are tool failures more dangerous than plain answer failures?
+2. What is stale knowledge in a GenAI system?
+3. Why should permission checks live outside prompts?
+4. What does idempotency protect against in tool execution?
+5. What is the first debugging step for suspected data leakage?
+
+#### Active Recall Answers
+
+1. Because tools can cause real side effects like data changes, messages, refunds, or external actions.
+2. Outdated docs, memory, cache, or indexed content being treated as current truth.
+3. Prompts are not enforceable security controls; backend authorization is enforceable.
+4. It prevents duplicate or repeated tool calls from causing repeated side effects.
+5. Audit retrieval and tool authorization decisions for the failing request/user/tenant.
+
+### 7) Practice
+
+#### Mini-exercise
+
+A sales assistant summarizes an account and includes a restricted internal note from another region.
+
+1. Classify the failure.
+2. Identify the likely failing layer.
+3. Give the first debugging step.
+
+#### Mini-exercise Answers
+
+1. Failure: permission blind spot and retrieval security failure.
+2. Likely failing layer: retrieval permissions or backend authorization, not model reasoning.
+3. First debugging step: inspect source document permissions and retrieval filters for that user/tenant.
+
+#### Capstone-style system design question
+
+Design a safe tool-using assistant for support operations. Include tool risk tiers, permission checks, confirmation flows, and audit logging.
+
+#### Capstone-style Answer Outline
+
+- Risk tier tools: read-only, low-risk write, high-risk action.
+- Enforce backend authorization before retrieval and tool execution.
+- Require explicit confirmation and human approval for high-risk actions.
+- Make write operations idempotent with action IDs.
+- Log tool selection, arguments, policy decision, user confirmation, and result.
+
+### 8) Production Reality Check (Mandatory Ending)
+
+If this fails in prod, what is the first thing we inspect?
+
+We inspect authorization traces and tool-call logs for the failing request.
+
+Why:
+
+Tool and permission failures are usually caused by missing enforcement boundaries, not by lack of model intelligence.
+
+### 9) Curiosity Bridge (Mandatory Ending)
+
+We now have the main failure families: answer quality, prompt/context instability, and tool/security failures.
+
+The final subtopic turns these into a repeatable debugging method: root-cause decomposition across model, retrieval, tool, and orchestration layers.
+
+---
+
+## Subtopic 1.3.d: Root-Cause Decomposition Across Model, Retrieval, Tool, and Orchestration Bugs
+
+### 1) The Intuition (Plain English)
+
+Senior GenAI debugging is mostly about refusing to blame "the model" too early.
+
+Every failure should be mapped to the layer that actually caused it.
+
+- Model bug: model lacks capability or makes an unsupported reasoning/generation error.
+- Retrieval bug: the right evidence was missing, stale, poorly chunked, or poorly ranked.
+- Tool bug: tool was wrong, unavailable, miscalled, unauthorized, or unsafe.
+- Orchestration bug: the system routed, sequenced, retried, summarized, or recovered incorrectly.
+
+Simple mental model:
+
+- Model = thinking/generation
+- Retrieval = evidence supply
+- Tool = action/data interface
+- Orchestration = control flow
+
+Analogy:
+
+Think of a hospital diagnosis workflow.
+
+- Model bug: doctor reasons poorly.
+- Retrieval bug: lab results are missing.
+- Tool bug: diagnostic machine gives bad output.
+- Orchestration bug: patient is sent to the wrong department.
+
+The fix depends entirely on which layer failed.
+
+### 2) Real-World Industry Scenarios
+
+#### Scenario A: RAG assistant gives wrong policy answer
+
+- Product context: user asks about eligibility.
+- Constraints: accurate source use, auditability, freshness.
+- What good looks like in production: trace shows retrieval candidates, prompt, model output, and evidence validation.
+
+Why this matters:
+
+- The failure may be missing docs, bad ranking, prompt overreach, or model reasoning. You need evidence before choosing a fix.
+
+#### Scenario B: Agentic workflow loops or stalls
+
+- Product context: system should inspect logs, call tools, then recommend action.
+- Constraints: tool reliability, bounded steps, recoverability.
+- What good looks like in production: graph/trajectory traces reveal repeated states, failed transitions, and tool errors.
+
+Why this matters:
+
+- Agent failures are often control-flow bugs, not raw model bugs.
+
+### 3) System View (Think like a systems engineer)
+
+#### Inputs -> Transformations -> Outputs
+
+- Inputs: failing request, expected behavior, actual output, trace, retrieved docs, tool logs, prompt package.
+- Transformations:
+  - reproduce failure
+  - isolate layer evidence
+  - test layer hypotheses one at a time
+  - apply smallest targeted fix
+  - add regression case
+- Outputs: root-cause label, remediation, test coverage, monitoring signal.
+
+#### Debugging ladder
+
+1. Reproduce the failure with the exact request and state.
+2. Inspect retrieval evidence.
+3. Inspect rendered prompt and context order.
+4. Inspect tool calls and permissions.
+5. Inspect orchestration route/step history.
+6. Only then evaluate model capability as the primary cause.
+
+#### Observability
+
+What we need for decomposition:
+
+- request ID across all layers
+- rendered prompt and model output
+- retrieved chunks and scores
+- tool calls, arguments, results, and failures
+- orchestration state transitions
+- evaluation labels and expected answer
+
+#### Failure points
+
+- No trace correlation across layers.
+- No golden expected answer for comparison.
+- Changing multiple layers at once during debugging.
+- Treating user feedback as root cause instead of symptom.
+
+### 4) System Design Flavor (practical and concise)
+
+#### Key design question
+
+What evidence would disprove my first guess about the failure?
+
+This prevents narrative debugging and forces disciplined investigation.
+
+#### Tradeoffs
+
+- Faster fix vs correct fix: quick prompt edits may hide a retrieval or orchestration bug.
+- Rich traces vs storage/privacy cost: more trace detail improves debugging but must be governed.
+- Layer isolation vs integrated realism: unit tests isolate causes, but end-to-end replay catches interaction failures.
+
+#### One scaling consideration
+
+At 10x usage, debugging must become a playbook, not hero work.
+
+Use failure labels, replay fixtures, and recurring dashboards by failure layer.
+
+### 5) Common Mistakes + Debugging
+
+#### Mistake 1
+
+- Symptom: team keeps changing prompts for every bad answer.
+- Likely cause: no layer-based failure taxonomy.
+- First debugging step: classify the failure as model, retrieval, prompt, tool, or orchestration before changing anything.
+
+#### Mistake 2
+
+- Symptom: fix improves one case but breaks many others.
+- Likely cause: patch was made without regression suite.
+- First debugging step: replay golden cases before and after the fix.
+
+#### Mistake 3
+
+- Symptom: incident review cannot identify why an agent acted oddly.
+- Likely cause: missing state transition and tool-call traces.
+- First debugging step: add trajectory tracing with state snapshots and decision reasons.
+
+### 6) Active Recall (Spaced Repetition)
+
+1. Why should you avoid blaming the model first?
+2. What is the difference between retrieval bug and model bug?
+3. What is an orchestration bug?
+4. Why should you change one layer at a time during debugging?
+5. What is the first step in a serious failure investigation?
+
+#### Active Recall Answers
+
+1. Because many failures come from missing evidence, bad prompts, broken tools, or bad routing rather than model capability.
+2. Retrieval bug means the model did not receive the right evidence; model bug means it had enough evidence but still failed to reason/generate correctly.
+3. A control-flow failure in routing, sequencing, retrying, summarizing, or recovering.
+4. So you can attribute improvement or regression to a specific cause.
+5. Reproduce the exact failure with the same request, context, model, and state.
+
+### 7) Practice
+
+#### Mini-exercise
+
+A RAG assistant gives the wrong answer. The correct policy exists in the document store, but it was not included in the retrieved top-k chunks.
+
+1. Classify the failure.
+2. Which layer should you debug first?
+3. Name two targeted experiments.
+
+#### Mini-exercise Answers
+
+1. Failure: retrieval bug, specifically recall/ranking failure.
+2. Debug retrieval first, not the model.
+3. Experiments:
+   - test query rewriting or higher top-k to see if correct chunk appears
+   - inspect chunking/metadata filters to see whether the correct policy is indexed and eligible
+
+#### Capstone-style system design question
+
+Create a first-pass GenAI incident triage playbook for a production assistant. It must classify failures by layer, define evidence needed for each classification, and produce a remediation plan.
+
+#### Capstone-style Answer Outline
+
+- Collect request ID, user input, expected behavior, actual behavior.
+- Pull rendered prompt, retrieval chunks, tool logs, and orchestration trace.
+- Classify primary failure layer and secondary contributing layers.
+- Run one isolating experiment per hypothesis.
+- Apply smallest targeted fix.
+- Add regression test and monitoring label.
+
+### 8) Production Reality Check (Mandatory Ending)
+
+If this fails in prod, what is the first thing we inspect?
+
+We inspect the full request trace and classify the failure by layer before changing prompts or models.
+
+Why:
+
+Layer-first diagnosis prevents expensive guesswork and stops teams from treating every GenAI failure as a model problem.
+
+### 9) Curiosity Bridge (Mandatory Ending)
+
+Module 1 now gives you the mental model for how GenAI systems are structured and how they fail.
+
+The next learning jump depends on our roadmap path: either move to Prompting and Structured Generation for market-fast system building, or enter Transformer internals when you want the deeper theory layer behind model behavior.
