@@ -8,6 +8,7 @@ This is the evolving knowledge base for Module 1.
 - [Topic 1.2: Anatomy of a GenAI Application](#topic-12-anatomy-of-a-genai-application)
 - [Subtopic 1.2.a: Model Layer, Prompt Layer, Tool Layer, Retrieval Layer](#subtopic-12a-model-layer-prompt-layer-tool-layer-retrieval-layer)
 - [Subtopic 1.2.b: Memory, Knowledge Grounding, and Feedback Loops](#subtopic-12b-memory-knowledge-grounding-and-feedback-loops)
+- [Subtopic 1.2.c: Evaluation, Tracing, and Safety as System Components](#subtopic-12c-evaluation-tracing-and-safety-as-system-components)
 
 Covered so far:
 
@@ -17,6 +18,7 @@ Covered so far:
 - Topic 1.1.d: Tokens, context windows, latency, throughput, and cost basics
 - Topic 1.2.a: Model layer, prompt layer, tool layer, retrieval layer
 - Topic 1.2.b: Memory, knowledge grounding, and feedback loops
+- Topic 1.2.c: Evaluation, tracing, and safety as system components
 
 ---
 
@@ -1543,3 +1545,229 @@ Most severe failures come from stale or leaked memory being trusted over fresh g
 Now we have the time dimension of GenAI systems: what to remember, what to re-ground, and how to learn safely.
 
 The next subtopic moves from architecture to assurance: evaluation, tracing, and safety as system components, where we make quality and risk measurable instead of subjective.
+
+---
+
+## Subtopic 1.2.c: Evaluation, Tracing, and Safety as System Components
+
+### 1) The Intuition (Plain English)
+
+You cannot fix what you cannot measure or see.
+
+- Evaluation decides whether the system is working and which problems are real.
+- Tracing shows exactly what happened on the request path when something went wrong.
+- Safety components enforce guardrails so mistakes do not cause harm.
+
+Simple mental model:
+
+- Evaluation = measurement and test
+- Tracing = visibility
+- Safety = preventive control
+
+Analogy:
+
+Think of aircraft operations.
+
+- Evaluation is the flight metrics and performance scoring.
+- Tracing is the black box flight recorder showing every step.
+- Safety components are the redundant systems and circuit breakers.
+
+Without evaluation, you ship broken things.
+Without tracing, you cannot debug fast enough.
+Without safety, a failure becomes a catastrophe.
+
+### 2) Real-World Industry Scenarios
+
+#### Scenario A: Support assistant with measured quality targets
+
+- Product context: service-level goals on accuracy, latency, cost per ticket.
+- Constraints: business metrics matter more than perfect answers, human review is the backstop.
+- What good looks like in production: automated metrics flag quality drops, traces show why, and safety gates hold risky deployments until reviewed.
+
+Why this matters:
+
+- Measurement discipline prevents silent regressions.
+
+#### Scenario B: Regulated financial advice system
+
+- Product context: compliance rules, audit trails, liability exposure.
+- Constraints: every decision must be auditable and reversible, safety is non-negotiable.
+- What good looks like in production: full request traces with decision provenance, evaluation on curated test sets, and automated blocks on policy violations.
+
+Why this matters:
+
+- In regulated domains, safety controls are the primary product.
+
+#### Scenario C: Internal research tool with learned behavior
+
+- Product context: analysts experiment, and systems improve from feedback.
+- Constraints: must measure learning stability, trace improvement experiments, prevent risky behavior changes.
+- What good looks like in production: offline evaluation before canary, trace logs compare old vs new behavior on fixed test sets, and rollback is one-click.
+
+Why this matters:
+
+- Safety and measurement are how you scale learned improvements without cascading failures.
+
+### 3) System View (Think like a systems engineer)
+
+#### Inputs -> Transformations -> Outputs
+
+- Inputs: model outputs, user feedback, retrieved evidence, tool results, expected ground truth.
+- Transformations:
+  - evaluate quality metrics (accuracy, latency, safety score)
+  - trace request path and decision points
+  - apply safety checks (policy violation, confidence thresholds)
+  - log full context for post-incident review
+  - decide whether to return, modify, or reject response
+- Outputs: response with confidence and safety signals, trace logs, quality metrics, safety audit trails.
+
+#### Evaluation dimensions (must measure all three)
+
+- Correctness: does the answer match ground truth or expert judgment?
+- Safety: does the answer violate policies or expose risk?
+- Efficiency: latency, cost, resource utilization?
+
+#### Observability
+
+What we log and inspect:
+
+- model output and confidence score
+- retrieved context and relevance scores
+- tool calls and side effects
+- safety check results and policy hits
+- actual vs predicted quality
+- user feedback distribution
+- end-to-end latency breakdown per component
+- failure classification (model, retrieval, tool, orchestration, policy)
+
+#### Failure points
+
+- Evaluation on the wrong distribution (past data vs live data drift).
+- Tracing too sparse to debug failures (missing intermediate steps).
+- Safety gates too loose (policy violations escape) or too tight (false positives block good requests).
+- Feedback treated as truth without confidence filtering.
+
+### 4) System Design Flavor (practical and concise)
+
+#### Key design question
+
+What is your ground truth for "right answer" and how do you measure drift from it?
+
+Without this anchor, you cannot reason about whether changes are improvements.
+
+#### Tradeoffs
+
+- Strict safety vs throughput: tighter gates improve safety but may reject valid requests.
+- Offline evaluation vs online metrics: offline is reproducible but misses live-data drift; online is immediate but noisy.
+- Rich tracing vs performance cost: full traces help debugging but add latency and storage burden.
+
+#### One scaling consideration
+
+At 10x scale, evaluation must be automated and continuous.
+
+Manual review cannot keep up, so you need statistical tests, drift detectors, and automated rollback policies.
+
+### 5) Common Mistakes + Debugging
+
+#### Mistake 1
+
+- Symptom: quality metrics look good, but user complaints increase.
+- Likely cause: evaluation metrics do not match real user needs (measuring wrong signal).
+- First debugging step: compare metric scores against user feedback classification and recalibrate metrics.
+
+#### Mistake 2
+
+- Symptom: incident takes hours to diagnose even with logs.
+- Likely cause: traces are too coarse (missing decision points) or lack request IDs linking layers.
+- First debugging step: add structured trace IDs, log at every layer boundary, and build request replay harness.
+
+#### Mistake 3
+
+- Symptom: safety gates block legitimate requests from power users.
+- Likely cause: one-size-fits-all safety policy does not account for user/context/risk profiles.
+- First debugging step: segment safety rules by user tier and use-case risk level.
+
+### 6) Active Recall (Spaced Repetition)
+
+1. What are the three mandatory dimensions of evaluation in GenAI systems?
+2. Why does offline evaluation sometimes mislead even with good metrics?
+3. What is the most common problem with tracing that makes debugging slow?
+4. Why are safety gates in prompts insufficient without tool-layer controls?
+5. How should feedback signals be treated: as truth or as noisy input?
+
+#### Active Recall Answers
+
+1. Correctness (accuracy), safety (policy compliance), and efficiency (latency/cost).
+2. Because live data distribution shifts from training/test data, and metrics become stale.
+3. Missing intermediate decision points makes it impossible to isolate where failures begin.
+4. Because prompts are advisory; tool-layer controls are enforceable and independent of model output.
+5. As noisy input that needs filtering and offline validation before being written into behavior.
+
+### 7) Practice
+
+#### Mini-exercise
+
+You deploy a new retrieval ranking model and notice a 2% drop in a key metric.
+
+1. Name three possible root causes.
+2. Define the exact trace/log data you would pull first.
+3. Name one safety check to prevent silent regressions in the future.
+
+#### Mini-exercise Answers
+
+1. Three possible causes:
+   - the ranking model ranks differently and retrieval context changed
+   - live data distribution drifted and ranking generalizes poorly
+   - metric is sensitive to query distribution shift in this batch
+
+2. Exact trace data:
+   - top-k retrieval results before/after ranking model
+   - queries grouped by embedding query-type clusters
+   - correlation between new-ranking changes and metric drops
+
+3. Future safety check:
+   - offline replay on held-out test queries before canary
+   - alert on metric delta > 1% in canary phase
+   - automatic rollback if p95 latency increases or safety score drops
+
+#### Capstone-style system design question
+
+Design an evaluation, tracing, and safety framework for a multi-tenant support assistant where different tiers have different SLAs and risk tolerances. Include metric definitions, trace requirements, safety policies, and a rollback strategy.
+
+#### Capstone-style Answer Outline
+
+- Metrics by tier:
+  - free: throughput + cost focus, relaxed accuracy SLA
+  - pro: balanced accuracy + SLA target, cost guardrails
+  - enterprise: tight accuracy + SLA, strict safety audit
+
+- Tracing requirements:
+  - layer-level request IDs (retrieval → model → tool → response)
+  - structured logs at each decision point with confidence/scores
+  - full user input + system output + evidence path
+
+- Safety policies:
+  - free tier: basic policy gates (no refund promises)
+  - pro tier: moderate policy gates with user-scoped overrides
+  - enterprise tier: strict enforcement + audit trail + escalation rules
+
+- Rollback strategy:
+  - canary at 5% with metric thresholds
+  - one-click revert to prior model/prompt version
+  - automatic rollback if p95 latency +50ms or accuracy drop >2%
+
+### 8) Production Reality Check (Mandatory Ending)
+
+If this fails in prod, what is the first thing we inspect?
+
+We inspect the ground-truth metric vs live metric, and pull the full trace for anomalous requests.
+
+Why:
+
+Most severe production failures come from undetected quality drift or unsafe outputs that escaped safety gates. Metrics and traces surface both immediately.
+
+### 9) Curiosity Bridge (Mandatory Ending)
+
+Now you understand the safety and visibility layer that holds GenAI systems accountable.
+
+The next subtopic takes this further: reliability, latency, and cost as product constraints, where we show how to balance all the tradeoffs at scale without sacrificing any single dimension.
