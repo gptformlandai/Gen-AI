@@ -38,20 +38,20 @@ Cover the sections that add value for the topic, but always include sections 5, 
 - Explain the core mental model in simple language.
 - Use one strong real-world analogy that maps well to reality.
 
-2) Real-World Industry Scenarios (usually 1-2, or 1 concise scenario for compressed topics)
+2) Real-World Industry Scenarios 
 For each scenario include:
-- The product/use case context
-- Constraints: latency, cost, reliability, failure modes, security/privacy
-- What “good” looks like in production
+- The product/use case context - be little more elaborative and explain clearly on how these params effect or how these works in the real world.
+- Constraints: latency, cost, reliability, failure modes, security/privacy - be little more elaborative and explain clearly on how these params effect or how these works in the real world.
+- What “good” looks like in production - be little more elaborative and explain clearly on how these params effect or how these works in the real world.
 
-3) System View (Think like a systems engineer)
+3) System View (Think like a systems engineer) - be little more elaborative and explain clearly on how these params effect or how these works in the real world.
 - Inputs → Transformations → Outputs
 - Observability: what we log, trace, and measure
 - Failure points: where it breaks and how it shows up
 
 4) System Design Flavor (practical and concise)
 - Key components/interfaces (APIs, services, flow between layers)
-- 2–3 important tradeoffs (e.g., cost vs quality, latency vs accuracy, recall vs precision)
+- 2–3 important tradeoffs (e.g., cost vs quality, latency vs accuracy, recall vs precision) - add little more laymann terms here when to choose what.
 - One scaling consideration (what changes at 10x traffic/data)
 
 5) Common Mistakes + Debugging
