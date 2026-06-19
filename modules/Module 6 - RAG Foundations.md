@@ -23,6 +23,9 @@ This is the evolving knowledge base for Module 6.
 - [Topic 6.3: Answer Generation with Citations](#topic-63-answer-generation-with-citations)
   - [Subtopic 6.3.a: Grounded Answer Prompting](#subtopic-63a-grounded-answer-prompting)
   - [Subtopic 6.3.b: Refusal Behavior When Evidence Is Insufficient](#subtopic-63b-refusal-behavior-when-evidence-is-insufficient)
+  - [Subtopic 6.3.c: Citation Formatting, Provenance, and Source Quoting](#subtopic-63c-citation-formatting-provenance-and-source-quoting)
+  - [Subtopic 6.3.d: Separating Evidence from Speculation and Reasoning](#subtopic-63d-separating-evidence-from-speculation-and-reasoning)
+- [Module 6 Checkpoint: End-to-End Baseline RAG Design](#module-6-checkpoint-end-to-end-baseline-rag-design)
 
 **Covered so far:**
 - Subtopic 6.1.a: Source inventory and content-quality audits
@@ -35,6 +38,9 @@ This is the evolving knowledge base for Module 6.
 - Subtopic 6.2.d: Common baseline RAG failures and debugging habits
 - Subtopic 6.3.a: Grounded answer prompting
 - Subtopic 6.3.b: Refusal behavior when evidence is insufficient
+- Subtopic 6.3.c: Citation formatting, provenance, and source quoting
+- Subtopic 6.3.d: Separating evidence from speculation and reasoning
+- **Module 6 Checkpoint: End-to-end baseline RAG design (complete)**
 
 ---
 
@@ -4087,6 +4093,1856 @@ Grounded answer prompting handles the *instruction* side of generation quality �
 
 ---
 
+## Subtopic 6.3.b: Refusal Behavior When Evidence Is Insufficient ✅
+
+### 0. Reading Path + Level Tags
+
+- **Beginner:** Read sections 1–2 and Active Recall.
+- **Intermediate:** Add sections 3–5 (evidence insufficiency types, signal-based gates, calibration) and the Hands-On Lab.
+- **Pro:** Full lab (Build → Break → Measure → Explain) including threshold calibration drill and capstone.
+
+---
+
+### 1. Pre-Question Hook + The Intuition [Beginner]
+
+**Pause — before reading:** Your RAG system retrieves chunks, packs them into a prompt with strong grounding instructions, and the LLM dutifully says "I don't have that information" — but the user's question is answerable. The answer IS in the corpus. Why did the system refuse, and how do you tell a correct refusal from a broken one?
+
+**The core mental model:**
+
+"Refusal" in RAG is not a single behavior — it's a spectrum of responses the system gives when the evidence quality is below the threshold needed for a confident, grounded answer. The key engineering insight is that there are **four distinct reasons** why evidence might be insufficient, and each requires a different response:
+
+1. **Zero coverage** — no relevant chunks retrieved at all. Hard refusal: "I don't have that information."
+2. **Partial coverage** — some chunks retrieved but they only partially address the query. Soft refusal: "Based on the available documents, I can only partially answer…"
+3. **Conflicting evidence** — top chunks retrieved but they contradict each other. Conflict disclosure: "The documents contain conflicting information on this topic…"
+4. **Stale evidence** — relevant chunks retrieved but their `last_modified` timestamps are old. Staleness warning: "This answer is based on documents last updated [date]. Please verify if current."
+
+The failure mode teams fall into: they implement only the first type (hard refusal via "I don't know" instruction) and ignore the other three. That means a system that retrieves two contradictory policy versions picks one arbitrarily and presents it as fact — the worst possible outcome.
+
+**The second insight** is equally important: a refusal can be *wrong*. A **false refusal** happens when the system says "I don't have that information" for a query whose answer is in the corpus — because retrieval failed, not because the evidence is absent. False refusals and false answers are two distinct failure modes, and you need separate metrics for each.
+
+**Real-world analogy:**  
+Imagine a doctor asking a medical librarian for evidence on a treatment. The librarian has four possible responses: "I found nothing on that" (zero coverage), "I found one small study — the evidence is weak" (partial), "I found two trials that contradict each other" (conflicting), "I found a 2015 guideline but not a current one" (stale). A librarian who responds "I found nothing" in all four cases is not being careful — they're failing to communicate the nature and quality of what they did find. The analogy breaks down because a librarian can judge evidence quality intuitively; a RAG system needs explicit signal thresholds to trigger each response type.
+
+**Key terms (first use — also in Module Glossary):**
+- **Evidence insufficiency:** Any condition where retrieved context does not meet the quality threshold for a confident, grounded answer — zero coverage, partial coverage, conflicting evidence, or stale evidence.
+- **Hard refusal:** The response when zero relevant evidence is retrieved; the system declines entirely: "I don't have information about that."
+- **Soft refusal:** The response when evidence partially covers the query; the system answers what it can and explicitly flags the gap.
+- **Conflict disclosure:** The response when retrieved chunks contradict each other; the system surfaces both claims and declines to pick one.
+- **Staleness warning:** The response when retrieved evidence is present but its `last_modified` timestamp exceeds a freshness threshold.
+- **Pre-generation gate:** A signal-based check run before the LLM call that classifies evidence quality and routes to the appropriate refusal type or proceeds to generation.
+- **False refusal:** A refusal triggered for a query whose answer is in the corpus; caused by retrieval failure, not genuine evidence absence.
+- **Refusal calibration triangle:** The three-metric system for measuring refusal quality: `true_refusal_rate`, `false_refusal_rate`, and `false_answer_rate`.
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+**The evidence sufficiency decision tree — runs before every LLM call:**
+
+```mermaid
+flowchart TD
+    Q["User query"] --> R["Retrieve top-k chunks"]
+    R --> G1{"max_score\n< ZERO_THRESHOLD\n(e.g. 0.50)"}
+    G1 -- Yes --> HARD["🔴 HARD REFUSAL\n'I don't have information\nabout that in the provided\ndocuments.'"]
+
+    G1 -- No --> G2{"chunks_packed\n< MIN_CHUNKS\n(e.g. 2)"}
+    G2 -- Yes --> SOFT["🟡 SOFT REFUSAL\n'Based on limited available\ninformation... This may\nnot be complete.'"]
+
+    G2 -- No --> G3{"Conflicting\nnumerical values\nor named entities\nin top chunks?"}
+    G3 -- Yes --> CONFLICT["🟠 CONFLICT DISCLOSURE\n'The documents contain\nconflicting information.\nDoc A says X; Doc B says Y.\nPlease verify directly.'"]
+
+    G3 -- No --> G4{"max(last_modified)\n> STALE_DAYS_THRESHOLD\n(e.g. 180 days)"}
+    G4 -- Yes --> STALE["🔵 STALE WARNING\n'Answer based on documents\nlast updated [date].\nPlease verify if current.'"]
+
+    G4 -- No --> GEN["✅ PROCEED TO GENERATION\nConfidence: HIGH\nFull grounded answer with citations"]
+
+    style HARD fill:#fcc,stroke:#c33
+    style SOFT fill:#ffe,stroke:#aa0
+    style CONFLICT fill:#fda,stroke:#c60
+    style STALE fill:#ddf,stroke:#66a
+    style GEN fill:#cfc,stroke:#393
+```
+
+**Post-generation faithfulness gate (second line of defense):**
+
+```mermaid
+flowchart LR
+    LLM["LLM response"] --> F{"Faithfulness\ncheck:\nAnswer grounded\nin packed chunks?"}
+    F -- "faithfulness_score ≥ 0.85" --> PASS["✅ Return answer\nwith citations"]
+    F -- "0.60 ≤ score < 0.85" --> PARTIAL["🟡 Return answer\nwith low-confidence\ncaveat"]
+    F -- "score < 0.60" --> FAIL["🔴 Strip answer\nReturn hard refusal\nLog for review"]
+```
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+**Scenario 1: Healthcare — Missing Clinical Evidence (Hard Refusal Required)**
+
+*Product/use-case context:*  
+A clinical decision support tool is asked: "What is the recommended dosage of Drug X for pediatric patients under 2 years old?" The corpus contains dosage information for adults and for children over 5 — but nothing for infants under 2. The nearest retrieved chunks are about pediatric dosing generally (similarity score ~0.72).
+
+*Why this matters more than a wrong answer:*
+- A soft answer ("approximately 5mg/day based on general pediatric guidelines") synthesized from the wrong age group is worse than "I don't have dosing information for patients under 2 in the provided guidelines."
+- The correct refusal must be specific: it should tell the clinician *what* evidence gap exists ("under-2 dosage"), not just "I don't know."
+- **Partial coverage refusal is the right behavior here**, not hard refusal: chunks exist and are retrieved, but they don't address the specific sub-group. The system should say: "The retrieved guidelines cover pediatric dosing for ages 5+. No dosing information was found for patients under 2. Clinical judgment and specialist consultation are required."
+- This requires checking coverage depth — not just whether chunks were retrieved, but whether they specifically address the query's key parameters (age group, drug, indication).
+
+*What "good" looks like:*
+- Refusal message names the specific gap ("under-2 dosage") not a generic "I don't know"
+- Hard refusal triggered only when `max_score < 0.55` (nothing relevant) — not when partial evidence exists
+- 100% of partial-coverage refusals include what WAS found, not just what wasn't
+
+---
+
+**Scenario 2: Legal Research — Conflicting Precedents (Conflict Disclosure Required)**
+
+*Product/use-case context:*  
+A regulatory affairs team asks: "Does our product fall under GDPR Article 17 right-to-erasure requirements?" The corpus returns two chunks — one from a 2019 legal memo saying "yes, Article 17 applies," and one from a 2023 update saying "Article 17 exemptions under Article 17(3)(e) may apply depending on jurisdiction."
+
+*Why blind synthesis is dangerous:*
+- If the LLM picks the 2019 chunk and says "Yes, Article 17 applies" — it's giving legal advice that may have been superseded.
+- If it picks the 2023 chunk and says "Exemptions may apply" — it's underselling a real compliance obligation.
+- The only safe behavior is conflict disclosure: "The retrieved documents contain differing assessments of this question. A 2019 analysis concludes Article 17 applies [DOC 1]; a 2023 update notes potential exemptions under Article 17(3)(e) [DOC 2]. Legal review is required to determine which applies to your specific context."
+- Conflict detection in practice: flag when top-2 chunks assert contradictory boolean conclusions (yes/no) or numerical values that differ by more than a threshold.
+
+*What "good" looks like:*
+- Conflict disclosure surfaces both chunks with their dates
+- The system never picks one side of a legal conflict and presents it as the answer
+- Conflict detection rate measured on a golden test set of known contradictions
+
+---
+
+**Scenario 3: Enterprise Knowledge Base — Stale Policy (Staleness Warning Required)**
+
+*Product/use-case context:*  
+HR employees ask about the company's remote work policy. The best-matching chunk is from a policy document last modified 14 months ago, with similarity score 0.88. The content is clearly relevant — but the policy was updated 3 months ago and the new version hasn't been re-ingested yet.
+
+*The staleness trap:*
+- High similarity score (0.88) looks great — the system confidently answers.
+- But the answer may be wrong because it's from an outdated document version.
+- The staleness warning changes the trust calculus: "Based on the Remote Work Policy last updated March 2024: employees may work remotely up to 3 days per week [DOC 1]. Note: this policy document is 14 months old — please verify with HR if any updates have been made."
+- The user now has the answer AND the caveat. They can decide to act on the information or verify first.
+- Stale evidence is the most dangerous type because similarity scores remain high — it looks like good evidence, but the content may be superseded.
+
+*What "good" looks like:*
+- Staleness warning threshold configurable per source type (e.g., 30 days for pricing, 365 days for legal principles)
+- Staleness surfaced to user with the actual last_modified date, not a generic warning
+- Ingestion freshness monitoring alerts when key documents exceed the staleness threshold before users encounter it
+
+---
+
+### 4. System View [Intermediate]
+
+**Evidence quality signals and what they measure:**
+
+| Signal | How to compute | What it means | Gate threshold (typical) |
+|---|---|---|---|
+| `max_score` | `max(top_k_scores)` | Best-match similarity to query | < 0.55 → hard refusal |
+| `mean_score` | `mean(top_k_scores)` | Average relevance of retrieved set | < 0.62 → soft refusal signal |
+| `chunks_packed` | Count of chunks in prompt | Evidence breadth | < 2 → soft refusal |
+| `score_gap` | `scores[0] - scores[1]` | Confidence in rank-1 being the answer | < 0.05 → uncertain, add reranker |
+| `max_last_modified` | Latest timestamp in packed chunks | Freshness of best evidence | > staleness_threshold → stale warning |
+| `conflict_detected` | Contradictory values in top-2 chunks | Whether evidence disagrees | True → conflict disclosure |
+| `faithfulness_score` | Post-gen LLM-as-judge | Whether LLM answer matches chunks | < 0.60 → strip answer, hard refusal |
+
+**Inputs → Transformations → Outputs:**
+
+| Stage | Input | Transformation | Output |
+|---|---|---|---|
+| 1. Retrieve | Query | ANN search → top-k chunks | `chunks[]`, `scores[]` |
+| 2. Pre-gen gate | `scores[]`, `chunks[]`, metadata | Compute evidence quality signals; route to refusal type or proceed | `evidence_class`: SUFFICIENT / PARTIAL / CONFLICT / STALE / NONE |
+| 3. Prompt routing | `evidence_class` | Select prompt template (full grounded / partial / conflict / stale / hard refusal) | Selected prompt template |
+| 4. LLM generation | Prompt | LLM generates response | Raw answer |
+| 5. Post-gen gate | Answer + packed chunks | Faithfulness check; if score < threshold → strip answer, return refusal | Validated answer or refusal |
+| 6. Response enrichment | Validated answer + evidence signals | Attach `confidence_level`, `last_modified`, conflict flags | Final structured response |
+
+**Observability — the refusal calibration triangle:**
+
+| Metric | Formula | Target | Alert if |
+|---|---|---|---|
+| `true_refusal_rate` | Refusals where answer truly absent ÷ total queries with no answer in corpus | > 0.90 | < 0.80: system hallucinating instead of refusing |
+| `false_refusal_rate` | Refusals where answer IS in corpus ÷ total answerable queries | < 0.05 | > 0.10: retrieval broken or threshold too aggressive |
+| `false_answer_rate` | Answers given when evidence was insufficient ÷ total queries | < 0.02 | > 0.05: insufficient evidence gate not working |
+
+The three metrics are in tension: lowering the similarity threshold reduces false refusals but increases false answers. Raising it reduces false answers but increases false refusals. The correct threshold is calibrated on your golden test set, not picked arbitrarily.
+
+---
+
+### 5. System Design Flavor [Intermediate]
+
+**The evidence router — core component:**
+
+```python
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from enum import Enum
+
+class EvidenceClass(Enum):
+    SUFFICIENT = "sufficient"
+    PARTIAL    = "partial"
+    CONFLICT   = "conflict"
+    STALE      = "stale"
+    NONE       = "none"
+
+@dataclass
+class EvidenceGateConfig:
+    zero_threshold: float = 0.55      # max_score below this → NONE
+    partial_min_chunks: int = 2       # fewer chunks than this → PARTIAL
+    conflict_value_diff_pct: float = 0.20  # numerical diff > 20% → CONFLICT
+    stale_days: int = 180             # last_modified older than this → STALE
+
+def classify_evidence(
+    scores: list[float],
+    chunks: list[dict],
+    cfg: EvidenceGateConfig = EvidenceGateConfig(),
+) -> EvidenceClass:
+    if not scores or max(scores) < cfg.zero_threshold:
+        return EvidenceClass.NONE
+
+    if len(chunks) < cfg.partial_min_chunks:
+        return EvidenceClass.PARTIAL
+
+    # Staleness check
+    cutoff = datetime.utcnow() - timedelta(days=cfg.stale_days)
+    freshest = max(
+        (c.get("last_modified") for c in chunks if c.get("last_modified")),
+        default=None
+    )
+    if freshest and freshest < cutoff:
+        return EvidenceClass.STALE
+
+    # Conflict check (simplified: look for contradictory boolean terms in top-2)
+    if len(chunks) >= 2:
+        text0 = chunks[0].get("text", "").lower()
+        text1 = chunks[1].get("text", "").lower()
+        contradictions = [
+            ("does apply", "does not apply"),
+            ("is required", "is not required"),
+            ("is eligible", "is not eligible"),
+        ]
+        for pos, neg in contradictions:
+            if (pos in text0 and neg in text1) or (neg in text0 and pos in text1):
+                return EvidenceClass.CONFLICT
+
+    return EvidenceClass.SUFFICIENT
+```
+
+**Prompt template routing by evidence class:**
+
+```python
+REFUSAL_TEMPLATES = {
+    EvidenceClass.NONE: (
+        "I don't have information about that in the provided documents."
+    ),
+    EvidenceClass.PARTIAL: (
+        "The provided documents only partially address this question. "
+        "Based on the available information: {partial_answer} "
+        "This response may not be complete — please verify with the primary source."
+    ),
+    EvidenceClass.CONFLICT: (
+        "The retrieved documents contain conflicting information on this topic:\n"
+        "- [DOC 1] states: {claim_a}\n"
+        "- [DOC 2] states: {claim_b}\n"
+        "Please review both sources directly and consult the appropriate authority."
+    ),
+    EvidenceClass.STALE: (
+        "{answer} [DOC {n}]\n\n"
+        "⚠️ Note: This answer is based on documents last updated {last_modified}. "
+        "Please verify whether this information remains current."
+    ),
+}
+```
+
+**Tradeoffs:**
+
+| Decision | Aggressive thresholds | Conservative thresholds | When to choose |
+|---|---|---|---|
+| **Zero threshold** | Low (0.45) — few hard refusals | High (0.65) — many hard refusals | Calibrate on golden set. Low: fewer false refusals, more false answers. High: fewer false answers, more false refusals. Start at 0.55, tune from recall@k data. |
+| **Pre-gen vs. post-gen gate** | Pre-gen only (fast, cheap) | Pre-gen + post-gen faithfulness check | Pre-gen alone misses cases where retrieved chunks are relevant but LLM hallucinates anyway. Post-gen faithfulness check is slower (+100–200ms) but catches generation-layer failures. Use both for high-stakes domains. |
+| **Conflict detection depth** | Keyword-based (fast, cheap) | NLI entailment between chunk pairs (accurate, slow) | Keyword detection catches obvious contradictions. NLI catches subtle ones. Use keyword for real-time RAG, NLI for asynchronous or batch high-stakes validation. |
+
+**Scaling consideration:**  
+At 10x traffic, the pre-generation evidence gate runs on every request — it must be sub-millisecond. All signal computations (`max_score`, `chunks_packed`, date comparisons) are O(k) over small lists — they scale trivially. The faithfulness post-gen check (LLM-as-judge) does NOT scale linearly because it's another LLM call. At high volume: run post-gen faithfulness only for responses below a grounding confidence threshold (e.g., when `max_score < 0.70`), not on every request.
+
+---
+
+### 6. Common Mistakes + Debugging [Intermediate]
+
+**Mistake 1: Only one refusal type — conflating all insufficiency into "I don't know"**
+- **Symptom:** The system handles complete absence of evidence correctly (hard refusal), but for partial coverage cases it still says "I don't have that information" — even when 3 chunks were retrieved that partially answer the question. Users report the system is "unhelpful" and "refuses too much."
+- **Likely cause:** The system prompt has a single uncertainty disclosure instruction triggered whenever the LLM decides evidence is insufficient. It doesn't distinguish between zero coverage (hard refusal) and partial coverage (soft refusal with partial answer).
+- **First debugging step:** Check `idk_rate` broken down by `evidence_class`. If partial-coverage queries have the same refusal rate as zero-coverage queries, you need separate refusal logic. Implement the pre-gen evidence gate with a dedicated `PARTIAL` class and a separate prompt template that delivers a partial answer with a caveat.
+
+**Mistake 2: Threshold set arbitrarily — too high → excessive false refusals**
+- **Symptom:** `false_refusal_rate` is 15%+ — users ask clearly answerable questions and the system refuses. Manual inspection shows the correct chunk exists at rank 1 with similarity score 0.62, but the hard-refusal threshold is set to 0.70.
+- **Likely cause:** The similarity threshold was copied from a blog post or set to a "round number" (0.7, 0.8) without calibration on actual retrieval data. Different embedding models have different score distributions — `all-MiniLM-L6-v2` typically scores good matches at 0.65–0.80, while `text-embedding-3-large` may score them at 0.45–0.65. A threshold calibrated for one model breaks on another.
+- **First debugging step:** Run your golden test set and plot `recall@k` as a function of the similarity threshold. Find the score at which recall drops sharply — that's the natural threshold for your model and corpus. Set the hard-refusal threshold at that score minus a small margin (e.g., threshold = elbow_point − 0.05).
+
+**Mistake 3: Stale evidence not surfaced — users act on outdated answers**
+- **Symptom:** Users report that the system gave them policy information that was changed months ago. The answer was technically "correct" — it matched what the document said — but the document was stale. No freshness warning was shown.
+- **Likely cause:** The evidence gate only checks `max_score` and `chunks_packed`. Freshness (`last_modified`) is not part of the evidence quality signal. The system treats a 2-year-old chunk with high similarity the same as a fresh one.
+- **First debugging step:** Add `max(last_modified)` to the evidence gate. Define a staleness threshold per source type (e.g., 30 days for pricing, 180 days for HR policy, 365 days for legal principles). For chunks past the threshold, prepend a staleness warning to the answer: "Based on documents last updated [date] — please verify if current." Monitor `stale_answer_rate` as a new production metric.
+
+---
+
+### 7. Hands-On Lab [Pro]
+
+**Goal:** Build the pre-generation evidence gate. Break it by miscalibrating the threshold. Measure false refusal rate vs. false answer rate. Explain threshold calibration.
+
+**Prerequisites:** No external dependencies required.
+
+---
+
+**Build: Evidence gate + refusal router**
+
+```python
+from datetime import datetime, timedelta
+
+# ── Evidence gate ─────────────────────────────────────────────────────────────
+ZERO_THRESHOLD    = 0.55   # max_score below this → hard refusal
+PARTIAL_MIN_CHUNKS = 2     # fewer packed chunks → soft refusal
+STALE_DAYS        = 180    # last_modified older than this → stale warning
+
+def classify_evidence(scores: list[float], chunks: list[dict]) -> str:
+    if not scores or max(scores) < ZERO_THRESHOLD:
+        return "NONE"
+    if len(chunks) < PARTIAL_MIN_CHUNKS:
+        return "PARTIAL"
+    cutoff = datetime.utcnow() - timedelta(days=STALE_DAYS)
+    freshest = max(
+        (c["last_modified"] for c in chunks if "last_modified" in c),
+        default=datetime.utcnow()
+    )
+    if freshest < cutoff:
+        return "STALE"
+    # Simple conflict check: contradictory boolean phrases in top-2
+    if len(chunks) >= 2:
+        t0, t1 = chunks[0].get("text","").lower(), chunks[1].get("text","").lower()
+        for pos, neg in [("is required","is not required"),("does apply","does not apply")]:
+            if (pos in t0 and neg in t1) or (neg in t0 and pos in t1):
+                return "CONFLICT"
+    return "SUFFICIENT"
+
+def route_response(evidence_class: str, chunks: list[dict], partial_answer: str = "") -> str:
+    last_mod = max(
+        (c.get("last_modified", datetime.min) for c in chunks),
+        default=datetime.min
+    )
+    routes = {
+        "NONE":      "I don't have information about that in the provided documents.",
+        "PARTIAL":   f"The documents only partially address this question. {partial_answer} This may not be complete — please verify with the primary source.",
+        "CONFLICT":  f"The retrieved documents contain conflicting information:\n  • [DOC 1]: {chunks[0]['text'][:80]}…\n  • [DOC 2]: {chunks[1]['text'][:80]}…\nPlease review both sources directly.",
+        "STALE":     f"{partial_answer}\n\n⚠️ Based on documents last updated: {last_mod.strftime('%Y-%m-%d')}. Please verify if current.",
+        "SUFFICIENT": None,  # proceed to full grounded generation
+    }
+    return routes[evidence_class]
+
+# ── Test cases ────────────────────────────────────────────────────────────────
+test_cases = [
+    {
+        "label": "Zero coverage",
+        "scores": [0.48, 0.44, 0.41],
+        "chunks": [{"text": "Unrelated chunk A", "last_modified": datetime.utcnow()}],
+        "expected": "NONE",
+    },
+    {
+        "label": "Partial coverage (1 chunk packed)",
+        "scores": [0.72],
+        "chunks": [{"text": "Some relevant info.", "last_modified": datetime.utcnow()}],
+        "expected": "PARTIAL",
+    },
+    {
+        "label": "Stale evidence",
+        "scores": [0.85, 0.80],
+        "chunks": [
+            {"text": "Policy: 3 days remote work.", "last_modified": datetime.utcnow() - timedelta(days=400)},
+            {"text": "Policy details continued.", "last_modified": datetime.utcnow() - timedelta(days=390)},
+        ],
+        "expected": "STALE",
+    },
+    {
+        "label": "Conflicting evidence",
+        "scores": [0.88, 0.83],
+        "chunks": [
+            {"text": "Filing an extension is required for all contractors.", "last_modified": datetime.utcnow()},
+            {"text": "Filing an extension is not required for contractors under 6 months.", "last_modified": datetime.utcnow()},
+        ],
+        "expected": "CONFLICT",
+    },
+    {
+        "label": "Sufficient evidence",
+        "scores": [0.91, 0.85],
+        "chunks": [
+            {"text": "Enterprise refund: 30 days, full amount.", "last_modified": datetime.utcnow()},
+            {"text": "Submit via the support portal.", "last_modified": datetime.utcnow()},
+        ],
+        "expected": "SUFFICIENT",
+    },
+]
+
+print(f"{'Case':<30} {'Expected':>12} {'Got':>12} {'Pass':>6}")
+print("-" * 65)
+for tc in test_cases:
+    got = classify_evidence(tc["scores"], tc["chunks"])
+    passed = "✓" if got == tc["expected"] else "✗"
+    print(f"{tc['label']:<30} {tc['expected']:>12} {got:>12} {passed:>6}")
+```
+
+Expected output:
+```
+Case                           Expected          Got   Pass
+-----------------------------------------------------------------
+Zero coverage                      NONE         NONE      ✓
+Partial coverage (1 chunk packed)   PARTIAL  PARTIAL      ✓
+Stale evidence                     STALE        STALE      ✓
+Conflicting evidence             CONFLICT    CONFLICT      ✓
+Sufficient evidence             SUFFICIENT  SUFFICIENT      ✓
+```
+
+---
+
+**Break: Miscalibrate the threshold**
+
+```python
+# Set threshold too HIGH → triggers false refusals on answerable queries
+ZERO_THRESHOLD = 0.90   # almost nothing passes
+
+print("\n=== HIGH THRESHOLD (0.90) ===")
+for tc in test_cases:
+    got = classify_evidence(tc["scores"], tc["chunks"])
+    print(f"  {tc['label']:<30} → {got}")
+```
+
+Expected output — the "Sufficient evidence" case (0.91 max score) barely passes; everything else becomes NONE:
+```
+=== HIGH THRESHOLD (0.90) ===
+  Zero coverage                  → NONE
+  Partial coverage (1 chunk)     → NONE     ← false refusal: partial evidence exists
+  Stale evidence                 → NONE     ← false refusal: stale but real evidence
+  Conflicting evidence           → NONE     ← false refusal: conflict exists but suppressed
+  Sufficient evidence            → SUFFICIENT  ← just barely passes at 0.91
+```
+
+```python
+# Set threshold too LOW → misses genuine zero-coverage cases
+ZERO_THRESHOLD = 0.30
+
+print("\n=== LOW THRESHOLD (0.30) ===")
+for tc in test_cases:
+    got = classify_evidence(tc["scores"], tc["chunks"])
+    print(f"  {tc['label']:<30} → {got}")
+```
+
+Expected output — "Zero coverage" (scores 0.48, 0.44, 0.41) passes through to generation:
+```
+=== LOW THRESHOLD (0.30) ===
+  Zero coverage                  → PARTIAL   ← false answer: LLM now generates from noise chunks
+  Partial coverage (1 chunk)     → PARTIAL
+  Stale evidence                 → STALE
+  Conflicting evidence           → CONFLICT
+  Sufficient evidence            → SUFFICIENT
+```
+
+---
+
+**Measure:** Threshold 0.90 → `false_refusal_rate` spikes (rejects good evidence). Threshold 0.30 → `false_answer_rate` spikes (lets noise evidence through). The optimal threshold for this embedding model and corpus sits between these — found by plotting score distributions on your golden test set and locating the natural gap between "relevant" and "noise" similarity scores.
+
+**Explain:** There is no universal "correct" threshold. Different embedding models produce different score ranges. `all-MiniLM-L6-v2` scores good matches at 0.60–0.88; `text-embedding-3-large` scores them at 0.40–0.70. Using a threshold calibrated for one model on another will systematically over-refuse or under-refuse. The calibration process: (1) run retrieval on your golden test set, (2) plot the histogram of scores for "correct" vs. "incorrect" matches, (3) find the score where the two distributions diverge — set the threshold there.
+
+---
+
+### 8. Active Recall [Intermediate]
+
+1. **(Beginner)** Name the four types of evidence insufficiency and the refusal behavior appropriate for each.
+
+   **Answer:** (1) Zero coverage → hard refusal: "I don't have information about that." (2) Partial coverage → soft refusal: answer what's available + "this may not be complete." (3) Conflicting evidence → conflict disclosure: present both sides + "please review directly." (4) Stale evidence → staleness warning: answer + "based on documents last updated [date] — please verify."
+
+2. **(Beginner)** What is the difference between a false refusal and a false answer? Why do you need separate metrics for each?
+
+   **Answer:** A **false refusal** is when the system refuses a query whose answer IS in the corpus — caused by retrieval failure or threshold too high. A **false answer** is when the system gives an answer for a query whose answer is NOT in the corpus — caused by threshold too low or missing gate. They require separate metrics (`false_refusal_rate` vs. `false_answer_rate`) because fixing one worsens the other: lowering the threshold reduces false refusals but increases false answers. You can only optimize the right tradeoff if you're measuring both.
+
+3. **(Intermediate)** Your similarity threshold is set at 0.70. The embedding model scores good matches in the range 0.55–0.78. What problem does this create and how do you fix it?
+
+   **Answer:** The threshold is too high relative to the model's score range for good matches. Queries with correct chunks at score 0.65 trigger false refusals. Fix: calibrate by running the golden test set, plotting the score distribution for correct vs. incorrect matches, and setting the threshold at the natural gap between those distributions — typically near the 10th percentile of "correct match" scores, not a round number.
+
+4. **(Intermediate)** Why is stale evidence the most dangerous type of evidence insufficiency — more dangerous than zero coverage?
+
+   **Answer:** Zero coverage produces a clear refusal signal (low similarity scores); users know to look elsewhere. Stale evidence has high similarity scores — it looks like good, confident evidence — so the system proceeds to generate a confident answer from outdated content. Users trust it because nothing signals a problem. The answer may have been correct at the time of the source document, but if policy, pricing, or clinical guidelines have changed since, users act on wrong information with no warning. The system must surface freshness explicitly even when similarity scores are high.
+
+5. **(Pro)** You run the refusal calibration triangle on your system and find: `true_refusal_rate = 0.93`, `false_refusal_rate = 0.03`, `false_answer_rate = 0.08`. What is the primary problem and what is its likely cause?
+
+   **Answer:** `false_answer_rate = 0.08` is above the 0.02 target — the system gives answers when evidence is insufficient 8% of the time. The `true_refusal_rate` and `false_refusal_rate` look healthy, so the zero-coverage gate is working. The issue is that some evidence gate classification is allowing insufficient evidence through to generation — most likely the `PARTIAL` class: queries with low-quality partial evidence are classified as PARTIAL (gets a soft refusal instruction) but the LLM still generates a confident full answer instead of following the partial-answer template. Fix: add a post-generation faithfulness check as a second gate for PARTIAL-classified queries, or tighten the PARTIAL → SUFFICIENT boundary by requiring higher `mean_score` before proceeding to full generation.
+
+---
+
+### 9. Practice
+
+**Mini-exercise:** You are building a RAG assistant for a benefits platform. Users ask about their personal health plan coverage. A query comes in: "Is my plan covered for vision therapy?" Retrieval returns 1 chunk (score 0.68) about general vision benefit structures, but it doesn't mention therapy specifically. The chunk was last modified 8 months ago. What evidence class does this get, what response does the user see, and what system improvements would prevent this case from reaching users?
+
+**Suggested answer:**
+- **Evidence class:** `STALE` (8 months > 180-day threshold) AND `PARTIAL` (1 chunk, doesn't directly answer therapy). In a layered gate, STALE takes precedence over PARTIAL if the staleness threshold fires first; alternatively, the gate returns both signals for maximum user transparency.
+- **User response:** "Based on the benefits documentation last updated 8 months ago, vision benefits cover standard eye exams and corrective lenses [DOC 1]. Vision therapy coverage was not found in the retrieved documents. Note: this information is 8 months old — please verify with your current plan documents or HR."
+- **System improvement:** (1) Set a stricter staleness threshold for benefits documents (30–60 days, since plans update annually). (2) Trigger an ingestion pipeline alert when any benefits document exceeds its staleness threshold, prompting re-ingestion before users encounter stale answers. (3) Add `therapy` and `rehabilitation` as query expansion terms for vision-related queries to improve recall for specialty coverage questions.
+
+---
+
+**Capstone design question:**  
+You are building a RAG assistant for a multinational bank's compliance team. The system answers questions about anti-money laundering (AML) regulations. The corpus includes regulations from 15 jurisdictions. Regulations conflict across jurisdictions (what's required in the EU may differ from the US). The bank is audited annually, and every answer the system gives must be explainable. Design the complete evidence insufficiency handling system: the four refusal types, their triggering signals, the response templates, the post-generation gate, and the audit logging requirement.
+
+**Suggested answer outline:**
+
+| Evidence class | Trigger signal | Response template | Audit log |
+|---|---|---|---|
+| NONE | `max_score < 0.55` | "No AML guidance found in the provided regulatory corpus for this question. Please consult a compliance officer." | Log: `{query, evidence_class: NONE, max_score, timestamp}` |
+| PARTIAL | `chunks_packed < 2` OR `mean_score < 0.62` | "Partial guidance found [DOC N]: {partial}. This may not represent complete regulatory requirements — please verify." | Log: `{query, evidence_class: PARTIAL, chunks_packed, mean_score}` |
+| CONFLICT | Top-2 chunks from different jurisdictions OR contradictory boolean assertions | "Conflicting requirements detected: [Jurisdiction A] requires X [DOC 1]; [Jurisdiction B] does not require X [DOC 2]. Jurisdiction-specific legal review required." | Log: `{query, evidence_class: CONFLICT, doc_ids[], jurisdictions[]}` — flag for mandatory human review |
+| STALE | `max(last_modified) > 90 days` (AML regs change frequently) | "{answer} [DOC N] ⚠️ Based on regulations last updated {date}. AML regulations may have changed — verify against current regulatory publications." | Log: `{query, evidence_class: STALE, last_modified}` |
+| SUFFICIENT | All gates pass | Full grounded answer with citations | Log: `{query, evidence_class: SUFFICIENT, faithfulness_score, citations[]}` |
+| **Post-gen faithfulness** | `faithfulness_score < 0.75` | Strip answer, return: "Answer could not be verified against the provided corpus. Please consult a compliance officer." | Log: `{query, faithfulness_score, raw_answer (for audit)}` — flag for review |
+
+Audit requirement: All query traces including evidence_class, retrieved_chunk_ids, and faithfulness_score stored in a tamper-evident log for the annual audit. Conflict-class responses trigger mandatory human review within 24 hours.
+
+---
+
+### 10. Production Reality Check ✅
+
+**If this fails in prod, what's the first thing we inspect?**
+
+Check the **refusal calibration triangle** metrics: `true_refusal_rate`, `false_refusal_rate`, and `false_answer_rate`. If `false_answer_rate` is above 0.05, the evidence gate thresholds are too permissive — the system is generating answers from insufficient evidence. If `false_refusal_rate` is above 0.10, thresholds are too aggressive for your embedding model's score range. Both are fixed by recalibrating the similarity threshold on your golden test set — not by changing the system prompt. The second check: verify that staleness detection is running, because stale-evidence failures look exactly like correct answers in all metrics except `last_modified` — they only surface when users report outdated information.
+
+---
+
+### 11. Curiosity Bridge ✅
+
+Refusal behavior handles the cases where evidence is absent, partial, conflicting, or stale. But there's a subtler problem that even good evidence doesn't solve: what if the LLM's answer is factually grounded in the retrieved chunks, but the chunks themselves are incomplete — they cover 70% of the question and leave a 30% gap that the user needs answered? That's the **faithfulness vs. completeness tradeoff** — a fully faithful answer can still be an incomplete one, and an incomplete answer can mislead just as much as a wrong one. That's the next subtopic.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit Check:** You're done when you can — from memory — name the four evidence insufficiency types with their trigger signals, implement a pre-generation evidence gate with configurable thresholds, explain the refusal calibration triangle and what each metric means when it's out of range, and describe why threshold calibration must be done on a golden test set rather than set to an arbitrary value.
+
+**Carry-Forward Review (from Subtopic 6.3.a — Grounded Answer Prompting):**
+- Q: Your evidence gate fires `NONE` (hard refusal) for a query, but the user insists the answer is in the corpus. You check retrieval inspection and find the correct chunk at rank 1 with score 0.62. Your `ZERO_THRESHOLD` is 0.65. What's the problem and what are the two ways to fix it?
+- A: The threshold (0.65) is calibrated too high for this embedding model — it classifies good-match evidence (score 0.62) as zero-coverage. Fix (1): recalibrate the threshold by running the golden test set and finding the natural gap between "relevant" and "noise" score distributions — the threshold should sit below good-match scores, not above them. Fix (2): check if the embedding model was recently changed (a different model's score range may require a lower threshold). Never change the threshold without re-running the full refusal calibration triangle on the golden test set.
+
+---
+
+## Subtopic 6.3.c: Citation Formatting, Provenance, and Source Quoting ✅
+
+### 0. Reading Path + Level Tags
+
+- **Beginner:** Read sections 1–2 and Active Recall.
+- **Intermediate:** Add sections 3–5 (citation format taxonomy, production data model, rendering layer) and the Hands-On Lab.
+- **Pro:** Full lab including deep-link construction, deduplication, and the capstone multi-surface rendering design.
+
+---
+
+### 1. Pre-Question Hook + The Intuition [Beginner]
+
+**Pause — before reading:** Your RAG system gives a correct answer and appends `[Source: Policy.pdf]`. A compliance auditor asks you to prove the answer came from page 12, section 3.1, paragraph 2 of that document — and to show the exact words. Can you?
+
+**The core mental model:**
+
+A citation is not just a filename. A **production citation** is a structured data object that carries everything needed to independently verify a specific claim: the document identity, the exact location within it, the last time it was updated, and — for high-stakes domains — the verbatim words from the source.
+
+There are three distinct engineering problems in this space that teams routinely conflate:
+
+1. **Citation formatting** — what format the citation takes in the output (inline bracket, footnote, JSON array, source block) and how that format is selected per output surface (chat UI, API, PDF report).
+2. **Provenance** — the complete traceable chain from answer claim → chunk_id → document location → ingestion run; the audit trail that proves the answer's origin.
+3. **Source quoting** — when and how verbatim text from the source chunk is included in the response; the strongest possible trust signal because the user sees the exact words, not the LLM's paraphrase.
+
+The key insight: **citation format is a user-experience decision; provenance is a system-integrity decision; source quoting is a trust and verifiability decision.** They are three different concerns that happen to travel together. Teams that treat them as one problem under-engineer two of the three.
+
+**Real-world analogy:**  
+Think of a legal brief. The citation format is how the case is cited (`Smith v. Jones, 42 F.3d 100, 105 (9th Cir. 1994)`). The provenance is the reporter volume and page that a clerk can retrieve from the law library. The source quote is the verbatim passage from the opinion reprinted in the brief. You need all three: the format tells you where to look, the provenance tells you you're looking at the right thing, and the quote proves the claim without requiring the reader to look it up. The analogy breaks down because legal citations follow a rigid standardized format; RAG citation formats vary enormously across systems and must be adapted per output surface.
+
+**Key terms (first use — also in Module Glossary):**
+- **Citation object:** A structured data record (chunk_id, source_title, section, page, URL, last_modified, quote, confidence) that carries all provenance and display data for a single citation.
+- **Citation format:** The visual/structural representation of a citation in output — inline bracket, named inline, footnote, source block, or JSON array; chosen per output surface.
+- **Citation rendering layer:** The pipeline component that takes a `Citation` object and emits the correct format string for a given output surface (chat, API, PDF, email).
+- **Verbatim quote:** The exact text from the source chunk included in the response alongside the citation; the strongest trust signal, required for numerical values, legal clauses, and dosage figures.
+- **Deep link:** A citation URL that points to a specific location within a document — a page anchor, section fragment, or named bookmark — rather than the document root.
+- **Citation deduplication:** The process of collapsing multiple citations to the same source document into a single source entry with multiple location references, preventing a cluttered references list.
+- **Bibliographic completeness:** The requirement that a citation contains every field needed for independent verification: not just filename but also section, page, version, URL, and last_modified date.
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+**The citation object and its three output paths:**
+
+```mermaid
+graph TD
+    C["Citation Object\n─────────────────\nchunk_id: 'abc123'\nsource_title: 'Refund-Policy-v3.pdf'\nsection: '3.1 Enterprise Refunds'\npage: 3\nsource_url: 'https://docs.example.com/refund#3-1'\nlast_modified: 2025-11-01\ndoc_version: 'v3.2'\nquote: 'Enterprise customers receive...'\nconfidence: HIGH"]
+
+    C --> F1["Chat UI surface\n→ Inline [1] + collapsible source card"]
+    C --> F2["API surface\n→ JSON citations array\n{chunk_id, source, section, page, url, quote}"]
+    C --> F3["Compliance report\n→ Numbered footnote\n¹ Refund-Policy-v3.pdf §3.1 (p.3) v3.2 (2025-11-01)"]
+
+    F1 --> R1["User sees: verified link + freshness date"]
+    F2 --> R2["App parses: programmatic rendering, grounding check"]
+    F3 --> R3["Auditor sees: full bibliographic reference"]
+```
+
+**The citation format taxonomy:**
+
+```mermaid
+graph LR
+    subgraph "Least detail → Most detail"
+        A["[1]\nMinimal inline\n(position only)"]
+        B["[DOC 1]\nLabeled inline\n(position + label)"]
+        C["[Policy.pdf, §3.1]\nNamed inline\n(source + section)"]
+        D["Footnote ¹\n+ source at bottom\n(reader can look up)"]
+        E["Source block\n[1] Policy.pdf | §3.1 | p.3 | url\n(full bibliographic)"]
+        F["JSON array\n{chunk_id, section, page,\nurl, quote, confidence}\n(machine-parseable)"]
+    end
+    A --> B --> C --> D --> E --> F
+```
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+**Scenario 1: Customer-Facing Chat UI (Trust Through Transparency)**
+
+*Product/use-case context:*  
+A consumer-facing assistant for a financial services company. Users ask about account fees, transfer limits, and product terms. When the bot answers, the citation must be a clickable link the user can verify — not a filename they can't access.
+
+*Citation engineering requirements:*
+- **`source_url` must be the public-facing canonical URL**, not the internal S3 path. The chunk metadata at ingestion time must map every document to its live URL. A citation pointing to `s3://internal-bucket/terms-v4.pdf` is useless; `https://www.example.com/legal/terms#transfer-limits` is actionable.
+- **Freshness date surfaced in the citation card:** Users need to see "last updated: Jan 2025" to calibrate how much to trust the answer. This comes from `last_modified` in chunk metadata — set at ingestion time.
+- **Deep link to the exact section:** Rather than linking to the document root, the citation URL should include a fragment: `#transfer-limits` or `#page=7`. This requires storing `anchor_id` or `page_number` in chunk metadata and constructing the deep link at citation rendering time.
+- **Mobile rendering consideration:** On mobile, a source block with a long URL breaks the layout. Citation rendering must detect the surface and collapse to a compact format (icon + tooltip) for mobile.
+
+*What "good" looks like:*
+- 100% of citations have valid, live `source_url` (validated at ingestion, re-checked on a schedule)
+- Deep links point to exact section, not document root
+- Last_modified surfaced in citation card
+- Citation format adapts per surface (desktop vs. mobile vs. API)
+
+---
+
+**Scenario 2: Legal Research Platform (Bibliographic Completeness Required)**
+
+*Product/use-case context:*  
+Lawyers use a RAG system to research case law and statutes. Every citation in a legal brief must follow a precise format and include the exact jurisdiction, year, volume, and page. Lawyers need to paste citations directly into their briefs without manual reformatting.
+
+*Citation engineering requirements:*
+- **Jurisdiction-specific citation formats:** US federal cases follow Bluebook format (`Smith v. Jones, 42 F.3d 100 (9th Cir. 1994)`); EU regulations follow a different format (`Regulation (EU) 2016/679 of 27 April 2016 (GDPR)`). The citation rendering layer must accept a `format_style` parameter and apply the correct template per jurisdiction.
+- **Verbatim quotes are mandatory for key holdings:** When the answer includes a legal principle, the system should quote the relevant holding verbatim: `"The court held: 'Fair use requires consideration of the purpose and character of the use.' [DOC 1, Smith v. Jones, p.105]"`. Paraphrasing legal holdings changes their scope.
+- **Doc_version / publication date critical:** Legal documents have effective dates. A regulation's wording may differ between the 2018 and 2023 versions. The citation must include `effective_date` and `doc_version` so the lawyer can verify they're looking at the current version.
+- **Deduplication across a multi-source answer:** A single legal answer might cite the same statute 3 times from different sections. The references list should deduplicate: one entry per unique source with multiple location sub-entries.
+
+*What "good" looks like:*
+- Citation format correct for the jurisdiction (configurable `format_style`)
+- Verbatim quote included for legal holdings and statutory language
+- `effective_date` surfaced in every citation
+- Deduplicated references list at the end of multi-citation answers
+
+---
+
+**Scenario 3: Internal Compliance RAG (Audit Trail for Every Answer)**
+
+*Product/use-case context:*  
+An internal RAG system used by a compliance team to answer questions about regulatory obligations. The system must support annual audits — every answer ever given must be reproducible with full provenance.
+
+*Citation engineering requirements:*
+- **Immutable citation log:** Every answer generated must be stored with the complete citation object at the time of generation — `chunk_id`, `doc_version`, `last_modified`, `query_id`, and `timestamp`. If the source document is updated later, the citation log still shows what version was cited at query time.
+- **chunk_id as the stable audit key:** The citation log is keyed by `chunk_id`, not by filename or URL. Filenames change. URLs redirect. The chunk_id is assigned at ingestion and never changes — it's the only reliable pointer to the exact text that was used.
+- **Provenance replay:** Given a `query_id` from 6 months ago, an auditor should be able to replay: "Which chunk was cited? What did that chunk say at the time? What document was it from? Was the document the current version then?" This requires the citation log, the chunk store, and document version history to all be queryable together.
+- **Export to audit report:** The citation object must be serializable to multiple formats: JSON for the internal log, PDF for the audit report, CSV for bulk export. A single canonical citation data model with format-specific serializers handles this.
+
+*What "good" looks like:*
+- Every generated answer stored in the immutable citation log with full `Citation` object
+- Provenance replay possible for any query in the last 24 months
+- `chunk_id` used as the stable citation key throughout (not filename, not URL)
+- Citation exportable to JSON, PDF, and CSV without data loss
+
+---
+
+### 4. System View [Intermediate]
+
+**The production `Citation` data model:**
+
+```python
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Literal
+
+@dataclass
+class Citation:
+    # ── Identity ──────────────────────────────────────────────────────────────
+    doc_index:     int            # position in packed context (1, 2, 3...)
+    chunk_id:      str            # stable UUID from ingestion — the audit key
+
+    # ── Location ──────────────────────────────────────────────────────────────
+    source_title:  str            # human-readable document name
+    section:       str            # section heading or clause name
+    page_number:   int | None     # page for PDFs; None for web/DB sources
+    anchor_id:     str | None     # CSS/HTML anchor or PDF named destination
+
+    # ── Accessibility ─────────────────────────────────────────────────────────
+    source_url:    str            # canonical public URL (not internal path)
+    deep_link:     str | None     # source_url + fragment (#anchor_id or #page=N)
+
+    # ── Freshness + Version ───────────────────────────────────────────────────
+    last_modified: datetime       # from chunk metadata; drives staleness warning
+    doc_version:   str | None     # "v3.2", "2025-Q1", "Rev. 4"
+
+    # ── Trust signals ─────────────────────────────────────────────────────────
+    quote:         str | None     # verbatim supporting text (10–50 words)
+    confidence:    Literal["HIGH", "MEDIUM", "LOW"]  # grounding confidence
+
+    # ── Computed at serialization ─────────────────────────────────────────────
+    def inline(self) -> str:
+        return f"[{self.doc_index}]"
+
+    def named_inline(self) -> str:
+        return f"[{self.source_title}, {self.section}]"
+
+    def source_block_line(self) -> str:
+        ver = f" | {self.doc_version}" if self.doc_version else ""
+        pg  = f" | p.{self.page_number}" if self.page_number else ""
+        url = self.deep_link or self.source_url
+        return f"[{self.doc_index}] {self.source_title} | {self.section}{pg}{ver} | {url}"
+
+    def to_dict(self) -> dict:
+        return {k: str(v) if isinstance(v, datetime) else v
+                for k, v in self.__dict__.items() if not callable(v)}
+```
+
+**Citation rendering layer — format × surface matrix:**
+
+| Output surface | Format | Key constraints |
+|---|---|---|
+| Chat UI (desktop) | Inline `[1]` + collapsible source block at bottom | Keep answer readable; source block collapsed by default, expandable |
+| Chat UI (mobile) | Inline `[1]` + icon tap → bottom sheet with full citation | Long URLs break mobile layout; use icon + modal |
+| REST API response | JSON `citations[]` array with full Citation fields | Consumers need machine-parseable data; include all fields including `quote` |
+| PDF / compliance report | Numbered footnotes + bibliography section | Follows academic/legal convention; `doc_version` + `effective_date` in bibliography |
+| Email / Slack | Named inline `[Policy.pdf, §3.1]` + short URL | No rendering engine for complex markdown; use text-safe format |
+| Streaming UI | Inline `[1]` first, source block appended after stream ends | Can't render source block until all citations are known; buffer and append |
+
+**Observability — what we log and measure:**
+- `citation_completeness_rate` — fraction of citations with all required fields populated (`source_url`, `section`, `page_number`, `last_modified`); below 95% indicates metadata gaps from ingestion
+- `deep_link_validity_rate` — fraction of deep links that resolve to a live anchor (periodic link validation); broken deep links erode trust
+- `quote_coverage_rate` — fraction of HIGH-confidence citations that include a verbatim `quote` field; low rate on high-stakes domains signals the quote instruction is missing from the system prompt
+- `citation_dedup_rate` — fraction of answers where deduplication collapsed multiple citations to fewer source entries; high rate may indicate chunking is too fine (many chunks per source)
+
+---
+
+### 5. System Design Flavor [Intermediate]
+
+**Building deep links at citation rendering time:**
+
+```python
+def build_deep_link(source_url: str, page: int | None, anchor_id: str | None) -> str:
+    """Construct a deep link from base URL + location signals."""
+    if anchor_id:
+        # HTML anchor: https://docs.example.com/policy#section-3-1
+        return f"{source_url}#{anchor_id}"
+    if page:
+        # PDF page anchor: https://docs.example.com/policy.pdf#page=12
+        if source_url.lower().endswith(".pdf"):
+            return f"{source_url}#page={page}"
+        # Generic page param for web docs without anchors
+        return f"{source_url}?page={page}"
+    return source_url  # fallback: document root
+```
+
+**Citation deduplication — collapsing multi-cite answers:**
+
+```python
+from collections import defaultdict
+
+def deduplicate_citations(citations: list[Citation]) -> list[dict]:
+    """Group citations by source document; list multiple locations per source."""
+    grouped: dict[str, dict] = defaultdict(lambda: {"locations": []})
+    for cite in citations:
+        key = cite.chunk_id.split("-chunk-")[0]  # group by parent document ID
+        entry = grouped[key]
+        entry["source_title"]  = cite.source_title
+        entry["source_url"]    = cite.source_url
+        entry["last_modified"] = cite.last_modified
+        entry["doc_version"]   = cite.doc_version
+        entry["locations"].append({
+            "doc_index":   cite.doc_index,
+            "section":     cite.section,
+            "page":        cite.page_number,
+            "deep_link":   cite.deep_link,
+            "quote":       cite.quote,
+        })
+    return list(grouped.values())
+```
+
+**Verbatim quoting — system prompt instruction:**
+
+```
+When citing specific numerical values, policy limits, legal clauses, dosage figures,
+or regulatory thresholds, include a verbatim quote from the source immediately after
+the citation marker. Format:
+
+  [DOC N]: "exact words from the document, 10–50 words"
+
+Do NOT paraphrase quoted material — copy it exactly as it appears in the document.
+Paraphrase is acceptable for context and background information only.
+```
+
+**Tradeoffs:**
+
+| Decision | Lightweight citations | Full citation objects | When to choose |
+|---|---|---|---|
+| **Citation depth** | Inline `[1]` + source title | Full `Citation` object with section, page, URL, quote, version | Lightweight for conversational, exploratory use. Full object for any system where citations are audited, verified, or used in reports. Default to full objects — the marginal storage cost is negligible. |
+| **Verbatim quote field** | Optional (omit for performance) | Mandatory for HIGH-confidence citations | Omit for background/context claims. Mandatory for numerical values, legal clauses, dosage figures — anywhere paraphrase could distort meaning. |
+| **Deep links** | Source URL (document root) | Deep link to page/section anchor | Deep links always preferred — they save the user from hunting through the document. Requires `anchor_id` or `page_number` in chunk metadata at ingestion time. |
+| **Citation deduplication** | Raw list (may repeat source) | Deduplicated + grouped by source | Always deduplicate for multi-citation answers in reports and compliance contexts. Raw list acceptable in streaming chat where rendering is incremental. |
+
+**Scaling consideration:**  
+At 10x volume, the citation rendering layer is stateless and CPU-bound — it processes a small list of Citation objects per request. It scales trivially with horizontal replication. The expensive part is **link validation** (checking `deep_link` is live) — at 10M queries/day you cannot validate links per query. Instead: validate links asynchronously on a schedule (daily crawl of all deep links in the citation index), cache `link_valid: bool` in chunk metadata, and surface it in the citation object without a live check at query time.
+
+---
+
+### 6. Common Mistakes + Debugging [Intermediate]
+
+**Mistake 1: `source_url` is an internal path — citations are unclickable for end users**
+- **Symptom:** Users click a citation link and get a 403 Forbidden, an S3 presigned URL that expired, or a path that only resolves on the internal network. Citations appear in the answer but provide zero verifiability for external users.
+- **Likely cause:** At ingestion, the `source_url` metadata field was populated from the file system path or the internal document store URL, not the canonical public-facing URL.
+- **First debugging step:** Sample 20 citations from recent answers. Check if `source_url` starts with `s3://`, `file://`, an internal hostname, or a localhost URL. If so, the ingestion pipeline needs a URL mapping step: for each source document, map internal path → canonical public URL. Store both as separate metadata fields (`internal_path` and `source_url`) so the public URL is what appears in citations.
+
+**Mistake 2: No verbatim quote for precision-critical claims**
+- **Symptom:** The LLM correctly cites a source for a numerical claim ("Limit is $50,000 [DOC 1]") but the actual chunk says "up to $50,000 for platinum tier only." The paraphrase omits the tier condition — a material difference. Compliance audit flags the answer as misleading.
+- **Likely cause:** The system prompt includes a citation instruction but no verbatim quote instruction. The LLM paraphrases because that's its natural behavior.
+- **First debugging step:** Check the system prompt for a quote instruction. Add it with explicit scope: "For numerical values, dollar limits, policy thresholds, and legal conditions, include a verbatim quote: `[DOC N]: 'exact text'`." Then inspect 10 answers containing numerical claims — verify each has a quote field in the citation object that matches the claim.
+
+**Mistake 3: Citation deduplication not implemented — references list cluttered**
+- **Symptom:** A 5-sentence answer cites `[DOC 1]` three times and `[DOC 2]` twice. The source block shows 5 entries, all pointing to the same 2 documents. For longer answers with 15+ inline citations, the source block becomes unusable noise.
+- **Likely cause:** Citation rendering simply lists every `[DOC N]` instance as a separate source block entry without grouping. There's no deduplication step between citation extraction and source block rendering.
+- **First debugging step:** Add a deduplication pass after citation extraction: group by `chunk_id` parent document, collapse repeated citations to one source entry with multiple `section` + `page` sub-entries. For the inline text, keep `[DOC 1]` repeated — that's correct. Only deduplicate in the source block / references section.
+
+---
+
+### 7. Hands-On Lab [Pro]
+
+**Goal:** Build a complete citation object, render it across three surfaces, construct a deep link, and implement deduplication. Break it by omitting required metadata fields and observe what degrades in each surface.
+
+**Prerequisites:** No external dependencies required.
+
+---
+
+**Build: Citation object + multi-surface renderer**
+
+```python
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Literal
+
+@dataclass
+class Citation:
+    doc_index:     int
+    chunk_id:      str
+    source_title:  str
+    section:       str
+    page_number:   int | None
+    anchor_id:     str | None
+    source_url:    str
+    last_modified: datetime
+    doc_version:   str | None
+    quote:         str | None
+    confidence:    Literal["HIGH", "MEDIUM", "LOW"]
+
+    @property
+    def deep_link(self) -> str:
+        if self.anchor_id:
+            return f"{self.source_url}#{self.anchor_id}"
+        if self.page_number and self.source_url.endswith(".pdf"):
+            return f"{self.source_url}#page={self.page_number}"
+        return self.source_url
+
+def render(citation: Citation, surface: str) -> str:
+    ver = f" | {citation.doc_version}" if citation.doc_version else ""
+    pg  = f" | p.{citation.page_number}" if citation.page_number else ""
+    qt  = f'\n   Quote: "{citation.quote}"' if citation.quote else ""
+    age = citation.last_modified.strftime("%Y-%m-%d")
+
+    if surface == "inline":
+        return f"[{citation.doc_index}]"
+
+    if surface == "named_inline":
+        return f"[{citation.source_title}, {citation.section}]"
+
+    if surface == "source_block":
+        return (
+            f"[{citation.doc_index}] {citation.source_title} | {citation.section}"
+            f"{pg}{ver} | Last updated: {age}\n"
+            f"   🔗 {citation.deep_link}{qt}"
+        )
+
+    if surface == "footnote":
+        return f"[^{citation.doc_index}]: {citation.source_title}, {citation.section}{pg}{ver} ({age}) — {citation.deep_link}"
+
+    if surface == "json":
+        return str({"doc_index": citation.doc_index, "chunk_id": citation.chunk_id,
+                    "source": citation.source_title, "section": citation.section,
+                    "page": citation.page_number, "url": citation.deep_link,
+                    "last_modified": age, "quote": citation.quote,
+                    "confidence": citation.confidence})
+    return ""
+
+# ── Sample citation ───────────────────────────────────────────────────────────
+c = Citation(
+    doc_index=1, chunk_id="abc123-chunk-4",
+    source_title="Refund-Policy-v3.pdf", section="3.1 Enterprise Refunds",
+    page_number=3, anchor_id="section-3-1",
+    source_url="https://docs.example.com/refund-policy.pdf",
+    last_modified=datetime(2025, 11, 1), doc_version="v3.2",
+    quote="Enterprise customers receive a 30-day full refund, no questions asked.",
+    confidence="HIGH"
+)
+
+for surface in ["inline", "named_inline", "source_block", "footnote", "json"]:
+    print(f"=== {surface.upper()} ===")
+    print(render(c, surface))
+    print()
+```
+
+Expected output:
+```
+=== INLINE ===
+[1]
+
+=== NAMED_INLINE ===
+[Refund-Policy-v3.pdf, 3.1 Enterprise Refunds]
+
+=== SOURCE_BLOCK ===
+[1] Refund-Policy-v3.pdf | 3.1 Enterprise Refunds | p.3 | v3.2 | Last updated: 2025-11-01
+   🔗 https://docs.example.com/refund-policy.pdf#section-3-1
+   Quote: "Enterprise customers receive a 30-day full refund, no questions asked."
+
+=== FOOTNOTE ===
+[^1]: Refund-Policy-v3.pdf, 3.1 Enterprise Refunds | p.3 | v3.2 (2025-11-01) — https://docs.example.com/refund-policy.pdf#section-3-1
+
+=== JSON ===
+{'doc_index': 1, 'chunk_id': 'abc123-chunk-4', 'source': 'Refund-Policy-v3.pdf',
+ 'section': '3.1 Enterprise Refunds', 'page': 3,
+ 'url': 'https://docs.example.com/refund-policy.pdf#section-3-1',
+ 'last_modified': '2025-11-01', 'quote': 'Enterprise customers...', 'confidence': 'HIGH'}
+```
+
+---
+
+**Break: Strip required metadata fields**
+
+```python
+c_broken = Citation(
+    doc_index=1, chunk_id="abc123-chunk-4",
+    source_title="Refund-Policy-v3.pdf",
+    section="",           # missing section
+    page_number=None,     # missing page
+    anchor_id=None,       # missing anchor
+    source_url="s3://internal-bucket/refund-policy.pdf",  # internal path!
+    last_modified=datetime(2023, 1, 1),   # very stale
+    doc_version=None,     # missing version
+    quote=None,           # no quote
+    confidence="HIGH"
+)
+
+print("=== BROKEN SOURCE_BLOCK ===")
+print(render(c_broken, "source_block"))
+print("\n=== BROKEN DEEP LINK ===")
+print(f"Deep link: {c_broken.deep_link}")
+```
+
+Expected output — degraded at every level:
+```
+=== BROKEN SOURCE_BLOCK ===
+[1] Refund-Policy-v3.pdf |  | Last updated: 2023-01-01
+   🔗 s3://internal-bucket/refund-policy.pdf
+
+=== BROKEN DEEP LINK ===
+Deep link: s3://internal-bucket/refund-policy.pdf
+```
+
+---
+
+**Measure:** With missing metadata: section is blank (user can't find the location), deep link is an S3 URL (users get 403 Forbidden), last_modified shows a 2-year-old date (staleness warning should fire), no quote (cannot verify verbatim claim), no version (can't confirm which edition was used).
+
+**Explain:** Every missing metadata field degrades one dimension of citation trustworthiness. The fix is upstream — at ingestion time. The citation rendering layer can only render what's in the metadata envelope. Ingestion must validate that `section`, `page_number`, `source_url` (public-facing), `last_modified`, and `doc_version` are all populated before a chunk enters the index. Add a metadata completeness gate to the ingestion pipeline: `assert chunk.section and chunk.source_url and not chunk.source_url.startswith("s3://")`.
+
+---
+
+**Bonus — Deduplication:**
+
+```python
+from collections import defaultdict
+
+citations = [
+    Citation(1, "abc123-chunk-4", "Refund-Policy-v3.pdf", "3.1 Enterprise Refunds", 3, "section-3-1",
+             "https://docs.example.com/refund-policy.pdf", datetime(2025,11,1), "v3.2",
+             "Enterprise customers receive a 30-day full refund.", "HIGH"),
+    Citation(2, "abc123-chunk-7", "Refund-Policy-v3.pdf", "3.3 Processing Times", 5, "section-3-3",
+             "https://docs.example.com/refund-policy.pdf", datetime(2025,11,1), "v3.2",
+             None, "HIGH"),
+    Citation(3, "def456-chunk-2", "Billing-FAQ.pdf", "Processing Times", 7, None,
+             "https://docs.example.com/billing-faq.pdf", datetime(2025,10,1), None,
+             None, "MEDIUM"),
+]
+
+def deduplicate(citations: list[Citation]) -> list[dict]:
+    groups: dict[str, dict] = defaultdict(lambda: {"locations": []})
+    for c in citations:
+        doc_key = c.source_title   # group by document title
+        g = groups[doc_key]
+        g["source_title"] = c.source_title
+        g["source_url"]   = c.source_url
+        g["last_modified"]= c.last_modified.strftime("%Y-%m-%d")
+        g["doc_version"]  = c.doc_version
+        g["locations"].append({
+            "doc_index": c.doc_index, "section": c.section,
+            "page": c.page_number, "deep_link": c.deep_link,
+        })
+    return list(groups.values())
+
+deduped = deduplicate(citations)
+for src in deduped:
+    locs = "; ".join(f"§{l['section']} p.{l['page']}" for l in src["locations"])
+    print(f"• {src['source_title']} ({src['last_modified']}) → {locs}")
+```
+
+Output — 3 citations collapsed to 2 source entries:
+```
+• Refund-Policy-v3.pdf (2025-11-01) → §3.1 Enterprise Refunds p.3; §3.3 Processing Times p.5
+• Billing-FAQ.pdf (2025-10-01) → §Processing Times p.7
+```
+
+---
+
+### 8. Active Recall [Intermediate]
+
+1. **(Beginner)** What are the three distinct concerns in "citation formatting, provenance, and source quoting," and why does conflating them cause engineering problems?
+
+   **Answer:** (1) **Citation format** — how the citation looks in the output (inline, footnote, JSON); a UX decision. (2) **Provenance** — the audit trail from answer → chunk_id → document location; a system-integrity decision. (3) **Source quoting** — including verbatim text from the source; a trust/verifiability decision. Conflating them causes teams to implement one (usually inline labels) and skip the others, resulting in unverifiable citations for auditors and paraphrase distortions for precision-critical values.
+
+2. **(Beginner)** Why is `chunk_id` a more reliable citation key than the source document's filename or URL?
+
+   **Answer:** Filenames change when documents are renamed or versioned (`Policy.pdf` → `Policy-v4.pdf`). URLs redirect or break when documents move. The `chunk_id` is a stable UUID assigned at ingestion and never changes — it always points to the same specific passage, regardless of what happens to the file or URL. It's the only reliable key for provenance replay and long-term audit logging.
+
+3. **(Intermediate)** What data must be stored in chunk metadata at ingestion time to support deep links in citations?
+
+   **Answer:** Either `anchor_id` (the CSS/HTML ID of the section, e.g., `section-3-1`) for web documents, or `page_number` for PDFs. Deep links are constructed at citation rendering time by appending `#anchor_id` or `#page=N` to the `source_url`. Without these fields in the metadata envelope, the rendering layer can only link to the document root, which forces users to search through the entire document to find the cited passage.
+
+4. **(Intermediate)** When is a verbatim quote in the citation object mandatory vs. optional?
+
+   **Answer:** **Mandatory** for: numerical values (amounts, limits, percentages, dosages), legal clauses and statutory language, policy thresholds, regulatory requirements, and any claim where paraphrase could change the meaning. **Optional** for: background context, general explanations, and categorical information where paraphrase preserves full meaning. The rule of thumb: if a user or auditor would need to verify the exact wording — not just the general idea — a verbatim quote is required.
+
+5. **(Pro)** Your `citation_completeness_rate` drops from 97% to 82% after onboarding a new data source (a SharePoint knowledge base). Which specific metadata fields are most likely missing and why?
+
+   **Answer:** Most likely `page_number` (SharePoint pages have no natural page concept — it's a web document, not a PDF), `anchor_id` (SharePoint section anchors are auto-generated and inconsistent), and `doc_version` (SharePoint versioning is often not exposed in the content API without extra configuration). The `source_url` may also be an internal SharePoint URL that requires authentication. Fix: build a SharePoint-specific ingestion connector that (1) maps page IDs to anchor fragments, (2) calls the SharePoint version API to get the current version number, and (3) maps internal SharePoint URLs to externally accessible URLs (or SharePoint Online direct links).
+
+---
+
+### 9. Practice
+
+**Mini-exercise:** A RAG answer contains the following inline citations: `[DOC 1]`, `[DOC 1]`, `[DOC 2]`, `[DOC 1]`, `[DOC 3]`, `[DOC 2]`. The answer has 3 unique sources with DOC 1 cited 3 times, DOC 2 cited twice, and DOC 3 once. Write the deduplicated source block that should appear at the bottom of the answer.
+
+**Suggested answer:**
+```
+Sources:
+[1] Refund-Policy-v3.pdf | §3.1 (p.3), §3.3 (p.5), §3.5 (p.8) | v3.2 | 2025-11-01
+    🔗 https://docs.example.com/refund-policy.pdf
+
+[2] Billing-FAQ.pdf | §Processing Times (p.7), §Refund Eligibility (p.2) | 2025-10-01
+    🔗 https://docs.example.com/billing-faq.pdf
+
+[3] Support-Guide.pdf | §Initiating a Refund (p.2) | 2025-09-15
+    🔗 https://docs.example.com/support-guide.pdf
+```
+DOC 1 appears once in the source block with three section sub-entries; DOC 2 appears once with two sub-entries; DOC 3 appears once with one entry.
+
+---
+
+**Capstone design question:**  
+You are building a RAG system for a pharmaceutical company that generates clinical summary reports. These reports are read by both clinicians (who need precise citations and verbatim quotes) and regulatory affairs teams (who need audit-ready provenance). The reports are exported as PDF, sent via email, and consumed by an internal API. Design the complete citation architecture: the `Citation` data model, all required metadata fields, verbatim quoting rules, rendering for each output surface, deduplication strategy, and audit logging.
+
+**Suggested answer outline:**
+
+| Layer | Design decision | Justification |
+|---|---|---|
+| **Citation data model** | Full `Citation` object: chunk_id, source_title, section, page, anchor_id, source_url, last_modified, doc_version (guideline name + year), effective_date, quote, confidence | All fields required for pharmaceutical regulatory citation; `effective_date` distinguishes guideline versions; `quote` mandatory for dosage/contraindication fields |
+| **Verbatim quote rule** | Required for: dosages, contraindications, eligibility criteria, statistical thresholds. Prompt instruction: "For any numerical value or clinical requirement, include verbatim quote field with exact wording." | Paraphrasing clinical values is a patient safety risk |
+| **PDF surface** | Numbered footnote + bibliography section in Bluebook-adjacent clinical format: `¹ ICH E6(R2) §5.2.1, p.14 (Rev. 2) (Effective: Nov 2016)` + deep link in bibliography | Standard for clinical documents; auditors expect formal bibliography |
+| **Email surface** | Named inline `[ICH E6(R2), §5.2.1]` + short canonical URL (no deep link in email body — broken rendering risk) | Email clients strip anchors and render raw URLs; use document root URL |
+| **API surface** | Full JSON Citation array with all fields including `quote`, `effective_date`, `confidence` | Downstream systems (clinical trial management software) need machine-parseable provenance |
+| **Deduplication** | Group by guideline name + version; list all section + page sub-entries per guideline; preserve inline `[DOC N]` intact | A clinical report may cite the same guideline 10+ times; grouped source block is essential |
+| **Audit logging** | Immutable log per query: `{query_id, generated_at, citations[{chunk_id, doc_version, effective_date, quote}]}` | Supports regulatory agency audit of AI-assisted clinical documents; must survive 10+ years |
+
+---
+
+### 10. Production Reality Check ✅
+
+**If this fails in prod, what's the first thing we inspect?**
+
+Check `citation_completeness_rate` broken down by source type. A drop below 95% almost always traces to a new data source being onboarded without all required metadata fields being extracted — specifically `section`, `page_number`, `source_url` (public-facing), and `last_modified`. The second check: sample 10 recent citations and manually attempt to click the deep links. Broken deep links are often the first thing users notice and the last thing engineers check. Add a scheduled deep-link validation job (daily crawl) that sets `link_valid: false` on stale or moved URLs, and surface a `⚠️ link may be outdated` flag in the citation card for those entries.
+
+---
+
+### 11. Curiosity Bridge ✅
+
+Citation formatting, provenance, and source quoting close out the core generation-with-citations story — you can now retrieve, pack, generate, refuse when needed, and present trustworthy citations across any output surface. The final piece of Topic 6.3 is the hardest and most subtle: **faithfulness vs. completeness tradeoffs**. A fully faithful answer — one that only says what's in the retrieved chunks — can still be an incomplete answer, missing facts that are in the corpus but not in the retrieved set. And an answer designed to maximize completeness may synthesize across chunks in ways that introduce distortions. Navigating that tension is where RAG engineering meets evaluation science.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit Check:** You're done when you can — from memory — list the 9 required fields in a production `Citation` object and justify each, implement `build_deep_link()` from page and anchor_id, describe when verbatim quoting is mandatory vs. optional, explain citation deduplication and how the source block differs from inline markers, and name the three surface-specific rendering formats and their constraints.
+
+**Carry-Forward Review (from Subtopic 6.3.b — Refusal Behavior):**
+- Q: Your citation completeness check shows that 30% of citations in the last week have `source_url` pointing to an S3 internal path. These citations also triggered the staleness warning because `last_modified` shows dates 2+ years ago. Both problems appeared after a batch re-ingestion of archived documents. What is the root cause and what two ingestion gates would have caught this?
+- A: The re-ingestion pipeline for the archived document batch didn't include (1) a URL mapping step to translate internal storage paths to public-facing canonical URLs, and (2) a metadata freshness validation step that checks `last_modified` is set to the document's actual last-edited date, not the archive's creation date. Two ingestion gates that catch these: (1) `assert not source_url.startswith("s3://")` — blocks internal-path chunks from entering the index; (2) `assert last_modified > datetime(2020, 1, 1)` — flags implausibly old timestamps for human review before indexing.
+
+---
+
+## Subtopic 6.3.d: Separating Evidence from Speculation and Reasoning ✅
+
+### 0. Reading Path + Level Tags
+
+- **Beginner:** Read sections 1–2 and Active Recall.
+- **Intermediate:** Add sections 3–5 (epistemic taxonomy, structured output approach, post-gen audit) and the Hands-On Lab.
+- **Pro:** Full lab (Build → Break → Measure → Explain), epistemic audit drill, and the capstone scenario.
+
+---
+
+### 1. Pre-Question Hook + The Intuition [Beginner]
+
+**Pause — before reading:** Read these three sentences from a RAG answer:
+> *"The enterprise refund window is 30 days [DOC 1]. Since your subscription started on March 1, you are still within the window. You may also want to contact your account manager for faster processing."*
+
+Which of these is a documented fact? Which is a logical inference from the fact? Which is the LLM adding helpful-sounding speculation? Can your users tell the difference?
+
+**The core mental model:**
+
+Every RAG answer is made of at least three epistemically distinct categories of content, and LLMs blend them seamlessly into prose:
+
+1. **Direct evidence** — a fact explicitly stated in a retrieved chunk, citeable to `[DOC N]`. The sentence: *"The enterprise refund window is 30 days."*
+2. **Supported inference** — a conclusion the LLM draws by applying logic to retrieved evidence. The sentence: *"Since your subscription started March 1, you are still within the window."* — logically follows from DOC 1 but is the LLM's deduction, not a stated document fact.
+3. **Speculation** — a claim the LLM generates that goes beyond what any retrieved document supports, often drawing on training patterns about what "helpful" responses look like. The sentence: *"You may also want to contact your account manager."* — not in any retrieved chunk.
+
+The danger is **epistemic blur**: all three read identically in prose. A user reading that answer cannot tell which sentences are document-backed, which are reasoned inferences, and which are LLM inventions dressed in confident language. In legal, medical, or compliance contexts, conflating evidence with inference is a liability. In consumer contexts, it erodes trust the moment a user acts on speculative advice and it turns out wrong.
+
+**The two failure modes** are symmetric:
+- **Too much blending** — speculation is presented as evidence; the user acts on it as if it were documented fact.
+- **Too much suppression** — the LLM refuses to reason at all, returning only raw document quotes with no connecting logic; the user gets facts but can't apply them.
+
+The goal is **transparent layering**: the answer delivers evidence first, inference second, and explicitly labels any speculation as advisory rather than documented.
+
+**Real-world analogy:**  
+A doctor's clinical note has three clearly separated sections: *Assessment* (what the evidence shows), *Impression* (what the doctor infers from the evidence), and *Plan* (recommendations that go beyond the evidence). Mixing all three into one paragraph without labels would be a documentation error. A RAG system that serves clinical questions needs the same discipline. The analogy breaks down because a doctor has professional accountability for each section; a RAG system has no automatic separation unless the system prompt explicitly enforces it.
+
+**Key terms (first use — also in Module Glossary):**
+- **Epistemic category:** The type of claim being made — direct evidence (cited fact), supported inference (derived from evidence), or speculation (beyond evidence).
+- **Epistemic blur:** The failure mode where evidence, inference, and speculation are mixed in prose without labeling, making each indistinguishable to the reader.
+- **Supported inference:** A conclusion explicitly drawn from retrieved evidence through stated reasoning; grounded but not a direct quote; must be labeled as inference, not fact.
+- **Speculation:** An LLM-generated claim that goes beyond what any retrieved chunk supports; includes sycophantic additions, procedural suggestions, and completions drawn from training data.
+- **Epistemic marker:** A label (e.g., `[FACT]`, `[INFERENCE]`, `[NOTE]`) or structural separator that signals to the reader which epistemic category a sentence belongs to.
+- **Epistemic audit:** A post-generation classification pass that labels each sentence in the answer as FACT, INFERENCE, or SPECULATION; used to strip or flag speculative content before the response is returned.
+- **Show-your-work instruction:** A system prompt pattern that requires the LLM to structure its answer in labeled sections — Evidence first, Reasoning second — making the inference step visible and auditable.
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+**The three epistemic categories in a RAG answer — and the danger zone:**
+
+```mermaid
+graph TD
+    subgraph "LLM Response (blended by default)"
+        S1["'The enterprise refund window is 30 days.'"]
+        S2["'Since your subscription started March 1,\nyou are still within the window.'"]
+        S3["'You may also want to contact\nyour account manager.'"]
+    end
+
+    S1 -->|"Verified against [DOC 1]"| E["✅ DIRECT EVIDENCE\nCiteable. Verbatim or close paraphrase.\nUser can verify."]
+    S2 -->|"Reasoned from [DOC 1]\nbut not stated in it"| I["🟡 SUPPORTED INFERENCE\nLLM logic applied to evidence.\nLabeled as inference, not fact."]
+    S3 -->|"No retrieved chunk supports this"| SP["🔴 SPECULATION\nParametric training pattern.\nNot in any document.\nMust be flagged or stripped."]
+
+    style E fill:#cfc,stroke:#393
+    style I fill:#ffe,stroke:#aa0
+    style SP fill:#fcc,stroke:#c33
+```
+
+**The layered answer structure (target architecture):**
+
+```mermaid
+flowchart TD
+    Q["User query"] --> GEN["LLM generates layered answer"]
+    GEN --> EA["EVIDENCE section\n(facts from documents, each cited [DOC N])"]
+    GEN --> RA["REASONING section\n(inferences drawn from evidence,\nlabeled 'Based on [DOC N], ...')"]
+    GEN --> NA["NOTES section\n(suggestions beyond documents,\nlabeled 'Note: not stated in documents')"]
+
+    EA --> AUDIT["Post-generation\nepistemic audit"]
+    RA --> AUDIT
+    NA --> AUDIT
+
+    AUDIT --> CHECK{"All NOTES\nsafe to surface?"}
+    CHECK -- Yes --> RESP["Return layered\nresponse to user"]
+    CHECK -- No --> STRIP["Strip risky speculation\nReturn Evidence + Reasoning only"]
+```
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+**Scenario 1: Medical Clinical Decision Support (Inference ≠ Guideline Recommendation)**
+
+*Product/use-case context:*  
+A clinician asks: "What is the recommended first-line treatment for hypertension in a 65-year-old patient with CKD Stage 3?" The corpus contains clinical guidelines covering first-line treatment for hypertension and separate sections on CKD comorbidities — but no single chunk that directly addresses the specific combination.
+
+*Why epistemic blur is patient-safety-critical here:*
+- **Direct evidence** might be: "ACE inhibitors are first-line for hypertension with CKD [DOC 2]." — verifiable against the guideline.
+- **Supported inference** might be: "Based on the CKD Stage 3 criteria in [DOC 3], your patient likely meets the threshold for ACE inhibitor use." — a reasonable inference, but the clinician should know it's the AI reasoning across two guidelines, not a single stated recommendation.
+- **Speculation** might be: "You should also monitor potassium levels closely." — clinically reasonable advice, but not stated in any retrieved chunk; the LLM added it from training data about hypertension management.
+- If all three appear in one paragraph without labels, the clinician may treat the potassium monitoring advice as a guideline-backed recommendation and document it as such — a compliance error.
+
+*How to engineer around this:*
+- **Structure the output in labeled sections:** `GUIDELINE STATES:` / `CLINICAL REASONING:` / `ADVISORY NOTE (not from guidelines):`
+- **Require inference labeling in the system prompt:** "When drawing a conclusion that is not explicitly stated in a document, begin the sentence with: 'Based on [DOC N], it can be inferred that…'"
+- **Audit the ADVISORY NOTE section:** run a post-generation check that flags any advisory sentences containing clinical action verbs (monitor, prescribe, adjust) that are not backed by a citation.
+
+*What "good" looks like:*
+- 100% of sentences in GUIDELINE STATES section have a citation and can be verified verbatim
+- 0% of advisory notes contain clinical action verbs without an explicit "not from guidelines" label
+- Clinician can clearly see which sentences are evidence, which are reasoning, and which are the system's suggestions
+
+---
+
+**Scenario 2: Legal Research Assistant (Inference Changes Legal Meaning)**
+
+*Product/use-case context:*  
+A paralegal asks: "Does GDPR Article 17 require erasure for data processed under legitimate interest?" The corpus has the GDPR text and two law review articles — one arguing yes, one arguing no.
+
+*The epistemic layering challenge:*
+- **Direct evidence** is the statute text: "Article 17(1) provides a right of erasure where personal data is no longer necessary [DOC 1]." — verifiable.
+- **Supported inference** from the conflicting articles: "Legal commentary is divided; one analysis holds erasure is required [DOC 2] while another argues Article 17(3)(b) provides a valid exemption [DOC 3]." — still grounded, but the LLM is characterizing the state of legal opinion, not stating a legal fact.
+- **Speculation** would be: "Given the current regulatory environment, erasure is probably required." — the LLM extrapolating a legal conclusion from training patterns about GDPR enforcement trends.
+- Presenting speculative legal conclusions as document-backed is a professional conduct issue. Legal RAG must either separate the layers or refuse to speculate at all.
+
+*Engineering approach:*
+- Use a **conflict disclosure** response type (from 6.3.b) when documents disagree.
+- Apply the show-your-work instruction: "State what the documents explicitly say, then state what legal scholars argue, then explicitly refuse to draw a legal conclusion: 'The applicable legal outcome requires professional legal judgment.'"
+- Never permit speculation on legal outcomes; strip any sentence that asserts a legal conclusion not directly stated in retrieved documents.
+
+*What "good" looks like:*
+- Statute text quoted verbatim from DOC 1
+- Scholarly positions summarized with separate citations [DOC 2] [DOC 3]
+- Explicit refusal to speculate: "The question of whether your specific situation requires erasure requires legal counsel."
+
+---
+
+**Scenario 3: Enterprise HR Policy Assistant (Sycophantic Speculation)**
+
+*Product/use-case context:*  
+An employee asks: "I've been at the company for 3 years — am I eligible for the enhanced pension matching?" The retrieved chunk covers standard matching (2% → 4% employer match after year 2). The LLM infers the employee qualifies and then adds: "Given your tenure, you may also be approaching eligibility for the leadership development program."
+
+*The sycophantic speculation problem:*
+- The inference (employee qualifies for enhanced matching) is supported by the retrieved evidence — reasonable and useful.
+- The addition about the leadership development program is **sycophantic speculation** — the LLM detected that the user seems career-focused and added something it thought would be appreciated, drawn entirely from training patterns about HR conversations, with no document support.
+- If the company's leadership development program has different eligibility criteria, the employee may incorrectly believe they qualify, take action, and be disappointed. The damage to trust in the RAG system is disproportionate to a single unhelpful sentence.
+
+*Engineering approach:*
+- Apply a post-generation epistemic audit: classify every sentence as FACT/INFERENCE/SPECULATION. Flag SPECULATION sentences that contain phrases like "you may also", "you might consider", "this could also apply", "it's worth noting" — common sycophantic speculation patterns.
+- Strip or separate speculative additions into a clearly labeled `NOTE: This is a suggestion, not stated in the provided policy documents.` section.
+
+*What "good" looks like:*
+- Evidence + inference about pension matching returned with citations
+- Sycophantic speculation about the leadership program either stripped or moved to a labeled "SUGGESTIONS (not from documents)" section
+- Zero speculative sentences in the main answer body
+
+---
+
+### 4. System View [Intermediate]
+
+**Epistemic classification — inputs, transformation, outputs:**
+
+| Stage | Input | Transformation | Output |
+|---|---|---|---|
+| 1. Structured generation | Prompt with show-your-work instruction | LLM generates answer with labeled sections (EVIDENCE / REASONING / NOTES) | Raw labeled response string |
+| 2. Section parsing | Raw labeled response | Extract sentences per section using regex or LLM-structured output | `{evidence: [], inference: [], speculation: []}` |
+| 3. Epistemic audit | Sentences per section + packed chunks | For each EVIDENCE sentence: verify citation exists + chunk supports claim. For each INFERENCE: verify it logically follows from cited evidence. Flag SPECULATION. | Audit results per sentence |
+| 4. Speculation filter | Speculation sentences | Apply configurable policy: STRIP (remove), WARN (label and retain), BLOCK (fail the whole response) | Filtered response |
+| 5. Response assembly | Filtered evidence + inference + optional labeled speculation | Assemble final response with epistemic structure preserved in the output | Structured response |
+
+**Observability — what we log and measure:**
+- `speculation_rate` — fraction of answers containing ≥1 speculative sentence; high rate indicates system prompt not enforcing epistemic separation
+- `inference_labeling_rate` — fraction of inference sentences that include an explicit "based on [DOC N], it can be inferred" marker; low rate means the LLM is presenting inferences as facts
+- `sycophantic_phrase_rate` — fraction of answers containing high-risk speculation phrases ("you may also", "you might want to", "it's worth noting") without a document citation
+- `epistemic_audit_pass_rate` — fraction of answers where all EVIDENCE sentences are verified against packed chunks; low rate signals grounding failure
+
+**Failure points:**
+
+| Failure | Symptom | Root cause |
+|---|---|---|
+| Speculation presented as evidence | User acts on advice not in any document; complaint traces to an unsourced sentence | No epistemic separation instruction; LLM blends all content types by default |
+| Hidden inference | LLM synthesizes 2 facts into a conclusion presented as a third fact with no "inferred" label | No show-your-work instruction; inference step is implicit |
+| Sycophantic speculation | Answer contains helpful-sounding additions ("you might also…") that have no document support | LLM optimizing for perceived helpfulness over grounding; requires explicit negative constraint: "Do NOT add suggestions beyond the document content." |
+| Over-suppression | LLM refuses to reason at all, returning only raw document quotes | Show-your-work instruction too strict; LLM interprets it as "no inference allowed" rather than "label your inference" |
+
+---
+
+### 5. System Design Flavor [Intermediate]
+
+**The show-your-work system prompt pattern:**
+
+```
+Structure your answer in exactly two sections, using the headers below.
+Do not add any content outside these two sections.
+
+EVIDENCE:
+List only facts explicitly stated in the documents below.
+After each fact, cite [DOC N]. Use verbatim or close paraphrase.
+Do not add any information not directly stated in a document.
+
+REASONING:
+State any logical conclusions you draw from the evidence above.
+Begin each inference with: "Based on [DOC N], it follows that..."
+If you cannot reason to a conclusion from the provided documents,
+write: "Insufficient evidence to draw a conclusion."
+
+Do NOT include suggestions, recommendations, or additions that are
+not derived from the provided documents. If you are tempted to add
+helpful context from general knowledge, omit it entirely.
+```
+
+**When to add a third NOTES section (configurable):**
+
+For use cases where some advisory content is acceptable (e.g., general product support), add a third labeled section:
+
+```
+NOTES (not from documents — use with caution):
+Any general guidance or suggestions that go beyond the documents.
+Clearly labeled as the assistant's suggestions, not document-backed advice.
+```
+
+This lets the LLM surface useful suggestions without blending them into the evidence section. The user sees the epistemic separation clearly.
+
+**Tradeoffs:**
+
+| Decision | Enforce strict separation (2 sections) | Allow advisory NOTES section | When to choose |
+|---|---|---|---|
+| **Speculation policy** | Strip all speculation (high-stakes: medical, legal, compliance) | Label and retain speculation (general-purpose assistants) | Strip for any domain where wrong advice creates liability. Label+retain for consumer assistants where helpful suggestions add value if clearly marked. |
+| **Inference labeling** | Explicit "Based on [DOC N], it follows that…" required on every inference sentence | Implicit inference allowed | Explicit labeling is always better for auditability and user trust, but adds verbosity. Use implicit for low-stakes chat; explicit for legal, medical, HR policy. |
+| **Post-gen audit** | Full epistemic classification per sentence (LLM-as-judge) | Keyword/pattern-based speculation detector | Full LLM audit: accurate but adds 100–200ms + cost of a second LLM call. Pattern-based: fast and cheap, catches common sycophantic phrases but misses subtle speculation. Use LLM audit for high-stakes; pattern-based for real-time consumer RAG. |
+
+**Scaling consideration:**  
+A full per-sentence epistemic audit (second LLM call) at 10x traffic becomes a significant cost multiplier — 2× LLM calls per query. At scale, use a two-tier strategy: apply the pattern-based speculation detector (sub-millisecond, no LLM call) on all queries; trigger the full LLM epistemic audit only for answers flagged by the pattern detector or for high-risk query types (medical, legal, financial). This reduces LLM audit calls from 100% to 5–15% of traffic.
+
+---
+
+### 6. Common Mistakes + Debugging [Intermediate]
+
+**Mistake 1: Implicit inference — LLM presents reasoned conclusions as direct facts**
+- **Symptom:** An answer says "You qualify for the enterprise tier based on your account age." The retrieved chunk says the enterprise tier requires 2+ years. The LLM correctly inferred the user qualifies — but presents it as a stated fact, not as inference. There is no `[DOC N]` citation. The user doesn't know whether this is documented policy or the LLM's calculation.
+- **Likely cause:** The system prompt anchors the LLM to "use only the documents" but doesn't instruct it to label the inference step. The LLM performs the reasoning implicitly and folds the conclusion into the answer without a label.
+- **First debugging step:** Add the show-your-work instruction with explicit EVIDENCE / REASONING sections. Then inspect a batch of 20 answers — count how many inference sentences use "Based on [DOC N], it follows that…" vs. no label. If > 50% of inferences are unlabeled, the instruction is not being followed; switch to structured JSON output with `{"evidence": [...], "reasoning": [...]}` to enforce the separation programmatically.
+
+**Mistake 2: Sycophantic speculation not detected or stripped**
+- **Symptom:** Answers consistently end with one or two extra sentences like "You may also want to verify this with your HR department" or "This policy may have been updated — check the latest version." These sentences are not cited and are not in any retrieved chunk. Users take them as system recommendations.
+- **Likely cause:** No speculation filter is running. The system prompt says "use only documents" but doesn't explicitly prohibit adding helpful-sounding extras. The LLM is optimizing for perceived helpfulness (from RLHF training) by appending procedural suggestions.
+- **First debugging step:** Add the negative constraint to the system prompt: `"Do NOT add any suggestions, recommendations, or context that is not explicitly stated in the provided documents. If you are tempted to add general guidance, omit it."` Then run a keyword scan on a sample of 50 answers for phrases: "you may also", "you might want to", "it's worth", "consider", "you should also" without a [DOC N] citation. These are the sycophantic speculation fingerprints. Measure `sycophantic_phrase_rate` before and after.
+
+**Mistake 3: Over-suppression — the LLM stops reasoning and only quotes**
+- **Symptom:** After adding the show-your-work instruction, the LLM becomes excessively literal: the EVIDENCE section is correct and cited, but the REASONING section is always "Insufficient evidence to draw a conclusion" — even for cases where a clear inference is obvious. The system has become unhelpfully rigid.
+- **Likely cause:** The show-your-work instruction was too strict, implying "no inference allowed" rather than "label your inference." The LLM interpreted the negative constraints as a prohibition on all reasoning.
+- **First debugging step:** Relax the REASONING section instruction. Change from "Do NOT add any information not directly stated" (which the LLM may apply to inferences too) to: "State logical conclusions you can draw from the evidence above. Begin each with 'Based on [DOC N], it follows that…' Reasoning from evidence is allowed and encouraged; speculation beyond evidence is not." Test on 10 cases where inference is clearly warranted.
+
+---
+
+### 7. Hands-On Lab [Pro]
+
+**Goal:** Build an epistemic classifier that separates a blended answer into FACT / INFERENCE / SPECULATION. Break it by omitting the show-your-work instruction and measuring epistemic blur. Explain why explicit labeling is required.
+
+**Prerequisites:** No external dependencies required. Substitute any LLM API for the simulated responses.
+
+---
+
+**Build: Epistemic classifier + speculation filter**
+
+```python
+import re
+from dataclasses import dataclass
+
+# ── Epistemic patterns ────────────────────────────────────────────────────────
+SPECULATION_PHRASES = [
+    r"you may also", r"you might want to", r"you might consider",
+    r"it'?s worth", r"consider reaching out", r"you should also",
+    r"you could also", r"it would be advisable", r"feel free to",
+]
+INFERENCE_PHRASES = [
+    r"based on \[doc \d+\]", r"it follows that", r"therefore",
+    r"this suggests", r"given that \[doc", r"since \[doc",
+]
+CITATION_PATTERN = r"\[doc \d+\]"
+
+@dataclass
+class EpistemicResult:
+    sentence: str
+    category: str          # FACT / INFERENCE / SPECULATION
+    has_citation: bool
+    flag: str | None       # warning message if suspicious
+
+def classify_sentence(sentence: str) -> EpistemicResult:
+    s = sentence.lower()
+    has_citation = bool(re.search(CITATION_PATTERN, s))
+
+    # Speculation detection: speculative phrase AND no citation
+    is_spec_phrase = any(re.search(p, s) for p in SPECULATION_PHRASES)
+    if is_spec_phrase and not has_citation:
+        return EpistemicResult(sentence, "SPECULATION", False,
+                               "⚠️ Speculative phrase without citation — likely beyond document scope")
+
+    # Inference detection: contains inference phrase with or without citation
+    is_inf_phrase = any(re.search(p, s) for p in INFERENCE_PHRASES)
+    if is_inf_phrase:
+        flag = None if has_citation else "⚠️ Inference without citation — basis unclear"
+        return EpistemicResult(sentence, "INFERENCE", has_citation, flag)
+
+    # Fact with citation
+    if has_citation:
+        return EpistemicResult(sentence, "FACT", True, None)
+
+    # No citation, no known pattern — ambiguous; treat as uncited claim
+    return EpistemicResult(sentence, "SPECULATION", False,
+                           "⚠️ No citation and no inference marker — uncited claim")
+
+def audit_answer(answer: str) -> list[EpistemicResult]:
+    sentences = re.split(r'(?<=[.!?])\s+', answer.strip())
+    return [classify_sentence(s) for s in sentences if s]
+
+# ── Test case: blended answer (no epistemic separation) ──────────────────────
+blended_answer = (
+    "The enterprise refund window is 30 days [DOC 1]. "
+    "Since your subscription started on March 1, you are still within the window. "
+    "You may also want to contact your account manager for expedited processing."
+)
+
+print("=== EPISTEMIC AUDIT: BLENDED ANSWER ===")
+results = audit_answer(blended_answer)
+for r in results:
+    print(f"  [{r.category:<12}] {r.sentence[:70]}")
+    if r.flag:
+        print(f"                {r.flag}")
+
+# ── Test case: well-structured answer (show-your-work) ───────────────────────
+structured_answer = (
+    "EVIDENCE: The enterprise refund window is 30 days [DOC 1]. "
+    "REASONING: Based on [DOC 1], since your subscription started March 1 and today is within 30 days, "
+    "it follows that you are currently eligible for a full refund. "
+)
+
+print("\n=== EPISTEMIC AUDIT: STRUCTURED ANSWER ===")
+results2 = audit_answer(structured_answer)
+for r in results2:
+    print(f"  [{r.category:<12}] {r.sentence[:70]}")
+    if r.flag:
+        print(f"                {r.flag}")
+```
+
+Expected output:
+```
+=== EPISTEMIC AUDIT: BLENDED ANSWER ===
+  [FACT        ] The enterprise refund window is 30 days [DOC 1].
+  [SPECULATION ] Since your subscription started on March 1, you are still within
+                ⚠️ No citation and no inference marker — uncited claim
+  [SPECULATION ] You may also want to contact your account manager for expedited
+                ⚠️ Speculative phrase without citation — likely beyond document scope
+
+=== EPISTEMIC AUDIT: STRUCTURED ANSWER ===
+  [FACT        ] EVIDENCE: The enterprise refund window is 30 days [DOC 1].
+  [INFERENCE   ] REASONING: Based on [DOC 1], since your subscription started Marc
+```
+
+---
+
+**Break: Measure epistemic blur rate**
+
+```python
+test_answers = [
+    ("The policy requires 2 years of service for enhanced matching [DOC 1]. "
+     "Given your tenure, you likely qualify. "
+     "You should also check with HR for any exceptions.",
+     {"FACT": 1, "INFERENCE_OR_SPEC": 2}),  # 2 unlabeled claims
+    ("Enterprise accounts receive 99.9% SLA [DOC 2]. "
+     "Based on [DOC 2], it follows that downtime above 0.1% monthly would trigger SLA credits. "
+     "You might want to review your recent uptime reports.",
+     {"FACT": 1, "INFERENCE_OR_SPEC": 2}),  # 1 labeled inference, 1 speculation
+]
+
+print("\n=== BLUR RATE ANALYSIS ===")
+total_sentences, total_flagged = 0, 0
+for answer, _ in test_answers:
+    results = audit_answer(answer)
+    flagged = [r for r in results if r.flag]
+    total_sentences += len(results)
+    total_flagged += len(flagged)
+    for r in results:
+        marker = "✗" if r.flag else "✓"
+        print(f"  {marker} [{r.category:<12}] {r.sentence[:60]}...")
+
+print(f"\nEpistemic blur rate: {total_flagged}/{total_sentences} sentences flagged ({total_flagged/total_sentences:.0%})")
+```
+
+Expected output — roughly 50% of sentences flagged in unstructured answers:
+```
+Epistemic blur rate: 3/6 sentences flagged (50%)
+```
+
+---
+
+**Measure:** Without the show-your-work instruction, roughly half of all non-trivial RAG answer sentences are either unlabeled inferences or speculative additions. These look identical to evidenced facts in prose. A user reading a 6-sentence answer with 3 flagged sentences has a 50% chance of acting on non-evidenced content as if it were documented fact.
+
+**Explain:** LLMs generate text by predicting the most probable continuation — not by tracking the epistemic status of each token. An inference ("since March 1 you are within the window") and a speculative addition ("contact your account manager") feel equally natural to generate after a stated fact. The LLM doesn't distinguish between them; the system prompt must do that work. The show-your-work instruction — `EVIDENCE: / REASONING:` — forces the model to perform epistemic sorting as a generation constraint rather than leaving it implicit.
+
+---
+
+### 8. Active Recall [Intermediate]
+
+1. **(Beginner)** What are the three epistemic categories in a RAG answer? Give one example sentence for each from the refund policy scenario.
+
+   **Answer:** (1) **Direct evidence** — "Enterprise customers receive a 30-day full refund [DOC 1]." Stated in the document, citeable. (2) **Supported inference** — "Based on [DOC 1], since your subscription is 15 days old, you are eligible." Reasoned from the document; not stated as a specific fact about this user. (3) **Speculation** — "You may also want to contact your account manager for faster processing." Not in any retrieved chunk; LLM addition from training patterns.
+
+2. **(Beginner)** What is epistemic blur and why is it more dangerous in a RAG system than in a plain LLM answer?
+
+   **Answer:** Epistemic blur is when evidence, inference, and speculation are mixed in prose without any labels, making them indistinguishable to the reader. It's more dangerous in RAG because users trust RAG answers more than plain LLM answers — they believe everything is sourced from documents. A blended RAG answer where 2 sentences are evidenced and 1 is speculation is actively misleading, because the user's elevated trust means they are more likely to act on the speculative sentence as if it were documented fact.
+
+3. **(Intermediate)** What is the "show-your-work" instruction and why does it reduce epistemic blur better than a negative constraint alone?
+
+   **Answer:** The show-your-work instruction requires the LLM to structure its answer in explicit sections: EVIDENCE (cited facts) and REASONING (labeled inferences). A negative constraint alone ("Do NOT speculate") tells the LLM what to avoid but doesn't give it a structure for separating the categories. The show-your-work instruction provides the structure: the model must sort each sentence into a section, which forces explicit epistemic classification at generation time rather than hoping the model self-regulates.
+
+4. **(Intermediate)** What is sycophantic speculation and what is its signature in answer text?
+
+   **Answer:** Sycophantic speculation is when the LLM adds helpful-sounding suggestions drawn from training patterns about what users in a similar situation would want to hear — not from any retrieved document. Signature phrases: "you may also want to", "you might consider", "it's worth", "you should also", "feel free to". These phrases appear without a `[DOC N]` citation, distinguishing them from evidenced facts or labeled inferences. They are the LLM's attempt to be maximally helpful, optimizing for perceived user satisfaction at the expense of grounding.
+
+5. **(Pro)** Your post-generation epistemic audit finds that `inference_labeling_rate` is 0.92 (92% of inferences are labeled), but `epistemic_audit_pass_rate` is only 0.71 (71% of EVIDENCE sentences are verified against packed chunks). Which is the more serious problem and why?
+
+   **Answer:** The low `epistemic_audit_pass_rate` (0.71) is the more serious problem. High inference labeling (0.92) means the system is correctly marking its reasoning. But a 29% failure rate on EVIDENCE verification means nearly 1 in 3 sentences labeled as "evidence" is not actually supported by the packed chunks — these are facts being presented as documented when they may be parametric leakage or hallucinations. A clearly labeled "INFERENCE" that turns out to be wrong is recoverable; a mislabeled "EVIDENCE" sentence presented as documented fact is the most dangerous epistemic failure in the system.
+
+---
+
+### 9. Practice
+
+**Mini-exercise — Epistemic classification drill:**  
+Classify each sentence as FACT (citeable from documents), INFERENCE (logical derivation from documents), or SPECULATION (beyond documents). Then write a corrected version of each SPECULATION sentence that either removes it or correctly labels it.
+
+| # | Sentence | Classification | Correction (if needed) |
+|---|---|---|---|
+| 1 | "The standard warranty period is 12 months [DOC 1]." | ? | — |
+| 2 | "Given your purchase date of January 15, your warranty expires January 15 next year." | ? | ? |
+| 3 | "You might also want to register your product for extended warranty options." | ? | ? |
+| 4 | "Based on [DOC 2], it follows that accessories are covered under the same 12-month term." | ? | — |
+| 5 | "The support team is very responsive and typically resolves issues within 24 hours." | ? | ? |
+
+**Suggested answer:**
+
+| # | Classification | Correction |
+|---|---|---|
+| 1 | **FACT** — cited, verifiable | None needed |
+| 2 | **INFERENCE** — correct derivation but unlabeled | "Based on [DOC 1] and your purchase date, it follows that your warranty expires January 15." |
+| 3 | **SPECULATION** — no document support, sycophantic addition | Remove entirely, or: "NOTE (not from documents): Extended warranty options may be available — check the manufacturer's website." |
+| 4 | **INFERENCE** — correctly labeled with "Based on [DOC 2]" | None needed |
+| 5 | **SPECULATION** — LLM training pattern about support teams, not in any retrieved chunk | Remove entirely |
+
+---
+
+**Capstone design question:**  
+You are building a RAG system for a financial advisory firm. The system answers questions from clients about investment product terms. Regulatory rules prohibit the system from giving personalized financial advice. The corpus has product prospectuses and term sheets. Design the complete epistemic separation system: the system prompt instruction, the three output sections, post-generation audit logic, and what happens to each category of content.
+
+**Suggested answer outline:**
+
+| Component | Design decision | Justification |
+|---|---|---|
+| **System prompt structure** | 3-section show-your-work: `PRODUCT TERMS:` / `WHAT THIS MEANS:` / `IMPORTANT NOTES:` | Product Terms = direct evidence (cited facts from prospectuses); What This Means = supported inference explaining implications; Important Notes = disclaimers and limitations, never personalized advice |
+| **PRODUCT TERMS section** | Verbatim or close paraphrase, every sentence cited `[DOC N]`, verbatim quote for numerical values | Regulatory requirement: any product representation must be traceable to the prospectus |
+| **WHAT THIS MEANS section** | Begins with "Based on [DOC N], it follows that…"; explains implications in plain language; explicitly states: "This is a general explanation, not personalized financial advice." | Useful inference adds value; explicit label prevents it being taken as regulated advice |
+| **IMPORTANT NOTES section** | Pre-defined static disclaimer block, not LLM-generated: "Past performance is not indicative of future results. This is not personalized financial advice." | Never allow the LLM to generate disclaimers — it may vary them or omit them. Disclaimers must be static and always present. |
+| **Post-generation audit** | Full LLM epistemic audit on PRODUCT TERMS section (verify all citations against packed chunks). Keyword scan on WHAT THIS MEANS for phrases like "you should invest", "we recommend", "this is suitable for you" — these are prohibited advisory phrases. | Regulatory compliance: any "suitability" determination must come from a human advisor |
+| **Action on violations** | If PRODUCT TERMS sentence fails grounding check → strip and flag for human review. If WHAT THIS MEANS contains prohibited advisory phrase → strip phrase, append: "For personalized advice, please speak with your financial advisor." | Zero tolerance for regulatory violations in advisory language |
+
+---
+
+### 10. Production Reality Check ✅
+
+**If this fails in prod, what's the first thing we inspect?**
+
+Check `sycophantic_phrase_rate` and `inference_labeling_rate` in your generation monitoring. If `sycophantic_phrase_rate` is above 5%, the show-your-work instruction is not suppressing speculative additions — add the explicit negative constraint: `"Do NOT add suggestions, recommendations, or context not in the provided documents."` Then re-run the keyword scan. If `inference_labeling_rate` is below 80%, the LLM is presenting its reasoning as undifferentiated facts — add the explicit `REASONING: Begin each inference with 'Based on [DOC N], it follows that…'` structure and verify compliance on 20 test cases. Both metrics are detectable with a fast keyword scan — no second LLM call required for monitoring; reserve the full epistemic audit for flagged responses.
+
+---
+
+### 11. Curiosity Bridge ✅
+
+Epistemic separation makes the content of each answer trustworthy — users know what's evidence, what's reasoning, and what's suggestion. But it doesn't answer a harder question: even when the answer is perfectly grounded and correctly labeled, is it *complete*? The system retrieved 5 chunks and answered from them — but what if the answer to the user's question requires information spread across 8 chunks, and 3 of those chunks scored below k? That's the **faithfulness vs. completeness** tension — a fully faithful answer can still miss critical information that's in the corpus but wasn't retrieved. Measuring and controlling that gap is how RAG moves from "technically correct" to "actually useful" in production — and it's the next natural evolution of the evaluation framework we've been building.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit Check:** You're done when you can — from memory — name the three epistemic categories with a concrete example of each, write the show-your-work system prompt instruction for a compliance-sensitive domain, explain the difference between implicit and explicit inference and why the latter is required for auditability, identify the two keyword signatures of sycophantic speculation, and describe the two-tier audit strategy (keyword scan + LLM audit) for scaling epistemic monitoring.
+
+**Carry-Forward Review (from Subtopic 6.3.c — Citation Formatting):**
+- Q: A compliance auditor reviews an answer that contains a sentence in the EVIDENCE section: "All contractors must file an extension annually." There is a `[DOC 1]` citation, but the grounding check shows the chunk says "Contractors engaged for more than 6 months must file an extension annually." The answer is presented as a FACT but is actually a distortion. What failed and at what layer?
+- A: The citation exists and the chunk is real — so citation mapping (6.2.c) and grounding verification (verifying DOC 1 exists and is in retrieved set) both passed. The failure is at the **verbatim quoting** layer (6.3.c): the LLM paraphrased the conditional ("more than 6 months") into an absolute ("all contractors"), changing the legal meaning. The fix is the verbatim instruction in the system prompt: for policy conditions and eligibility criteria, require verbatim quoting rather than paraphrase. This would have produced `"Based on [DOC 1]: 'Contractors engaged for more than 6 months must file an extension annually'"` — preserving the conditional.
+
+---
+
+## Module 6 Checkpoint: End-to-End Baseline RAG Design ✅
+
+> **Purpose:** Synthesize all three topics (Ingestion, Retrieval, Generation) into a single coherent design. This checkpoint does not introduce new concepts — it tests whether you can hold the entire pipeline in your head, see where each subtopic fits, and reason about failures at the system level.
+
+---
+
+### Checkpoint Objective 1 — The End-to-End Baseline RAG System
+
+**The single pipeline diagram — every stage you've learned, in order:**
+
+```mermaid
+flowchart TD
+    subgraph "TOPIC 6.1 — INGESTION"
+        A["Raw source documents\n(PDFs, HTML, Docs, KBs)"] --> B["Source inventory + quality audit\n(6.1.a: freshness, noise, duplication,\nsensitivity scored before indexing)"]
+        B --> C["Parser selection per format\n(6.1.b: PDF→pdfminer, HTML→Trafilatura,\nDocs→python-docx, structured→direct JSON)"]
+        C --> D["Chunking strategy selection\n(6.1.c: fixed-size / recursive / semantic /\nsection-aware based on document type)"]
+        D --> E["Metadata attachment per chunk\n(6.1.d: source_id, doc_title, section,\nlast_modified, permissions, chunk_index)"]
+        E --> F["Embedding generation\nchunk_text → vector (e.g. text-embedding-3-small)"]
+        F --> G[("Vector store\n(chunk_id → vector + metadata)\nANNS index for top-k retrieval")]
+    end
+
+    subgraph "TOPIC 6.2 — RETRIEVAL"
+        H["User query"] --> I["Query embedding\n(same embedding model as ingestion)"]
+        I --> J["Top-k vector search\n(6.2.a: cosine similarity, k=5–20)"]
+        J --> K["Metadata filter (optional)\n(permissions, freshness, section)"]
+        K --> L["Context packing\n(6.2.b: deduplicate, rank, fit within\ncontext window budget)"]
+        L --> M["Citation map assembly\n(6.2.c: [DOC N] → chunk_id →\nsource_url + section + page)"]
+        M --> N["Grounding pre-check\n(6.2.d: minimum k chunks, freshness gate,\npermission check before generation)"]
+    end
+
+    subgraph "TOPIC 6.3 — GENERATION"
+        N --> O["Grounded answer prompt\n(6.3.a: DOCUMENTS block + instruction\n'Answer only from documents below')"]
+        O --> P{"Evidence sufficient?"}
+        P -- "Yes" --> Q["Structured generation\n(6.3.d: EVIDENCE: / REASONING: sections;\nverbatim quoting for conditions 6.3.c)"]
+        P -- "No" --> R["Confident refusal\n(6.3.b: 'The provided documents do not contain\nthe information needed to answer this.')"]
+        Q --> S["Post-generation checks\n(citation grounding verify, epistemic audit,\nspeculation filter, freshness warning)"]
+        S --> T["Final cited answer\n(facts cited [DOC N], inference labeled,\ndeep-link provenance logged)"]
+    end
+
+    G --> J
+    T --> U[("Citation log\nquery_id → chunk_ids cited\n(enables provenance replay)")]
+
+    style A fill:#e8f4fd,stroke:#2980b9
+    style G fill:#d5f5e3,stroke:#27ae60
+    style H fill:#fef9e7,stroke:#f39c12
+    style T fill:#d5f5e3,stroke:#27ae60
+    style R fill:#fdebd0,stroke:#e67e22
+    style U fill:#f4ecf7,stroke:#8e44ad
+```
+
+**The complete component checklist — one line per decision:**
+
+| Stage | Component | Key decision from this module |
+|---|---|---|
+| **Ingestion** | Source inventory | Score every source on freshness, noise, duplication, sensitivity before it enters the pipeline (6.1.a) |
+| | Parser | Match parser to format — never assume PDF text is clean; inspect and test before indexing (6.1.b) |
+| | Chunking | Section-aware or recursive for narrative docs; fixed-size only for structured records; never fixed-size on legal/medical docs (6.1.c) |
+| | Metadata | At minimum: `source_id`, `doc_title`, `section_heading`, `last_modified`, `chunk_index`, `permissions` (6.1.d) |
+| | Embedding | Use the same model at ingestion time and query time; version-lock it — changing models requires full re-indexing (6.2.a) |
+| **Retrieval** | Top-k | Start k=5; increase only after measuring context utilization; more chunks ≠ better answers (6.2.a) |
+| | Context packing | Deduplicate cross-document chunks; respect token budget; order by relevance score, not document order (6.2.b) |
+| | Citation mapping | Build the `[DOC N] → chunk_id → source_url + page/section` map before generation, not after (6.2.c) |
+| | Failure gates | Gate generation on: minimum k retrieved, freshness threshold, permissions check (6.2.d) |
+| **Generation** | System prompt | DOCUMENTS block + "Answer only from documents below" instruction; never allow the model to bypass with "generally speaking" (6.3.a) |
+| | Refusal | Hard-coded refusal phrase if evidence is insufficient; never soften to "I'm not sure but…" (6.3.b) |
+| | Citation format | `[DOC N]` inline, full reference block at the end; verbatim quoting for conditions, eligibility, numbers (6.3.c) |
+| | Epistemic separation | EVIDENCE: / REASONING: sections; strip or label speculation; "show your work" instruction (6.3.d) |
+| **Observability** | Logging | Log every query: `query_id`, `query_text`, `chunk_ids_retrieved`, `scores`, `answer_text`, `citations_used` |
+| | Key metrics | `retrieval_k_used`, `context_utilization_rate`, `citation_grounding_rate`, `refusal_rate`, `speculation_rate` |
+
+---
+
+### Checkpoint Objective 2 — Why Chunking and Metadata Often Matter More Than Model Swapping
+
+This is the single most important architectural insight in this module. Internalise it:
+
+**The core argument:**
+
+Swapping a good LLM for a better one improves the *quality of reasoning* on what the model sees. Fixing your chunking and metadata improves *what the model sees in the first place*. You cannot reason well from bad input regardless of model capability.
+
+**The five failure modes that model swapping cannot fix:**
+
+| Failure | Root cause | Why a better model doesn't help |
+|---|---|---|
+| Retrieval miss — the right chunk is never in the top-k | Chunk boundaries cut across the key sentence; the answer is split across two chunks neither of which scores highly alone | The model never sees the relevant information; it can't answer what it doesn't receive |
+| Context stuffed with noise | Fixed-size chunking creates hundreds of boilerplate chunks (headers, footers, table of contents entries) that score deceptively high | A better model still processes the noisy chunks; it may be slightly better at ignoring them but the token budget is wasted |
+| Stale answers | No `last_modified` metadata; freshness gate never fires; outdated chunks retrieved at full similarity score | The model cannot know a chunk is stale; it answers from what it receives; a better model hallucinates the same outdated fact more fluently |
+| Permission leak | No `permissions` field on chunks; a query from a restricted user retrieves privileged chunks | A better model answers more accurately from the privileged information — making the security failure worse, not better |
+| Uncitable answer | Metadata missing `source_url` and `section_heading`; citation map incomplete | No model can cite a source it wasn't given the metadata for; the citation quality ceiling is set at ingestion time |
+
+**The production rule of thumb:**  
+Before reaching for a larger/newer model, run these three checks first:
+1. Open 10 random chunks from the vector store — do they represent coherent, self-contained facts? If not, fix chunking.
+2. Pull 10 random failed queries from the citation log — did the right chunk score in top-k? If not, fix chunking boundaries or embedding model (same model, different chunking usually works before needing a new model).
+3. Check `last_modified` distribution in your vector store — are there chunks with timestamps older than your freshness threshold? If so, fix the ingestion pipeline and metadata attachment before optimizing generation.
+
+Model swapping is expensive (cost, re-testing, re-integration) and improves a narrow slice of the pipeline. Chunking and metadata improvements are cheap, targeted, and improve the input quality ceiling for every model you ever run.
+
+---
+
+### Checkpoint Objective 3 — Confident Refusal Design
+
+A clean refusal is not a failure state — it is a trust signal. The system is telling the user: "I have evidence discipline. I don't make things up." Every time the system refuses correctly, it makes the times it does answer more credible.
+
+**The complete refusal decision tree:**
+
+```mermaid
+flowchart TD
+    Q["Query received"] --> RETRIEVE["Retrieve top-k chunks"]
+    RETRIEVE --> CHECK_K{"k_retrieved ≥ min_k\n(e.g., ≥ 3)?"}
+    CHECK_K -- "No" --> REFUSAL_EMPTY["Refusal Type 1: No relevant documents found\n'The provided documents do not contain\ninformation relevant to this question.'"]
+    CHECK_K -- "Yes" --> CHECK_FRESH{"All retrieved chunks\npass freshness gate?"}
+    CHECK_FRESH -- "No" --> REFUSAL_STALE["Refusal Type 2: Stale evidence\n'The most recent document on this topic\nis from [DATE]. The information may be outdated.\nI cannot provide a current answer.'"]
+    CHECK_FRESH -- "Yes" --> CHECK_PERM{"User has permission\nfor all retrieved chunks?"}
+    CHECK_PERM -- "No" --> STRIP["Strip unauthorized chunks\nRe-check: k_retrieved ≥ min_k?"]
+    STRIP -- "No" --> REFUSAL_PERM["Refusal Type 3: Insufficient authorized evidence\n'Based on your access level, the available\ndocuments do not contain enough information\nto answer this question.'"]
+    STRIP -- "Yes" --> CHECK_COVERAGE{"LLM evidence\ncoverage check:\ncan all parts of\nthe question be\naddressed?"}
+    CHECK_PERM -- "Yes" --> CHECK_COVERAGE
+    CHECK_COVERAGE -- "Partial" --> PARTIAL["Scoped answer + explicit scope statement\n'The documents address X but do not contain\ninformation about Y.'"]
+    CHECK_COVERAGE -- "Insufficient" --> REFUSAL_INSUFFICIENT["Refusal Type 4: Evidence too thin\n'The documents contain related information\nbut are insufficient to answer confidently.\nPlease consult [authoritative source].'"]
+    CHECK_COVERAGE -- "Sufficient" --> ANSWER["Proceed to grounded generation\n(6.3.a + 6.3.c + 6.3.d)"]
+
+    style REFUSAL_EMPTY fill:#fdebd0,stroke:#e67e22
+    style REFUSAL_STALE fill:#fdebd0,stroke:#e67e22
+    style REFUSAL_PERM fill:#fdebd0,stroke:#e67e22
+    style REFUSAL_INSUFFICIENT fill:#fdebd0,stroke:#e67e22
+    style PARTIAL fill:#fef9e7,stroke:#f39c12
+    style ANSWER fill:#d5f5e3,stroke:#27ae60
+```
+
+**The four refusal types and their exact phrasing patterns:**
+
+| Type | Trigger condition | Phrasing pattern | What NOT to say |
+|---|---|---|---|
+| **1. No relevant documents** | k_retrieved < min_k | "The provided documents do not contain information relevant to this question." | ~~"I'm not sure about this, but…"~~ |
+| **2. Stale evidence** | Retrieved chunks fail freshness gate | "The most recent document on this topic is from [DATE]. I cannot provide a current answer based on this information." | ~~"The policy may have changed, but as of [DATE]…"~~ (this still answers) |
+| **3. Permission boundary** | User lacks access to the relevant chunks | "Based on your access level, the available documents do not contain enough information to answer this question." | ~~"I don't have access to answer that"~~ (reveals too much about data structure) |
+| **4. Thin evidence** | Chunks retrieved but coverage insufficient for the specific question | "The documents contain related information but are not sufficient to answer this question confidently. Please consult [authoritative source]." | ~~"Based on general knowledge…"~~ (bypasses RAG entirely) |
+
+**The three phrases that signal a broken refusal — and why they fail:**
+
+1. **"I'm not sure but…"** — This is a soft refusal that still answers. The LLM is hedging rather than refusing. The user reads the following content as an answer with a caveat, not as a refusal. Fix: remove the hedge and state the refusal cleanly.
+2. **"Generally speaking…"** — This is a refusal bypass. The LLM is switching from RAG mode to parametric memory mode without flagging it. The user receives a non-grounded answer dressed as a document-backed one. Fix: add explicit system prompt constraint: "Do NOT answer with 'generally speaking' or 'in general' — if the documents are insufficient, refuse."
+3. **"You may also want to check…"** — This is sycophantic speculation appended to a refusal (6.3.d). It sends the user to an unverified source, implying the system knows where to find the answer. Fix: if refusing, refuse cleanly and optionally provide a static, pre-approved referral (e.g., "For current guidance, consult the official policy portal at [URL]").
+
+---
+
+### Module Integration — The 11-Subtopic Mental Map
+
+Every subtopic you've learned maps to a specific failure mode in the pipeline. Use this table as a quick revision and diagnostic reference:
+
+| If this breaks in prod… | Root subtopic | First thing to inspect |
+|---|---|---|
+| Answers are wrong because the corpus had outdated, low-quality, or duplicate content | **6.1.a** | Source inventory scores; re-run quality audit on the affected source |
+| Text is garbled or key sections are missing after ingestion | **6.1.b** | Parser selection for that file type; inspect raw parser output before embeddings |
+| Retrieval misses the right answer even though it exists in the corpus | **6.1.c** | Chunk boundaries around the relevant passage; are context-spanning answers split across two chunks? |
+| Answers are stale / missing freshness warnings / permissions not filtering | **6.1.d** | Metadata in vector store; run a spot-check on `last_modified` and `permissions` fields for 10 recent chunks |
+| Similar questions get very different answers; retrieval is noisy | **6.2.a** | Check that query embedding model = ingestion embedding model; inspect top-k score distribution (is k=3 vs k=5 making a difference?) |
+| Context window overflow / answers get cut off / low-quality chunks in prompt | **6.2.b** | Context packer: check deduplication logic and token counting; reduce k or tighten chunk size |
+| User asks "where did this come from?" and citations are broken or incomplete | **6.2.c** | Citation map: verify `[DOC N] → source_url + page` mapping; check deep-link validity rate |
+| Answers sometimes confidently wrong with no signal of failure | **6.2.d** | Run the 6 baseline failure checks; look at `retrieval_k_used` and `citation_grounding_rate` in logs |
+| LLM ignores retrieved context and answers from parametric memory | **6.3.a** | System prompt DOCUMENTS block format; test with an adversarial query about something not in the corpus — if it answers confidently, grounding is broken |
+| System answers when it should refuse; users receiving unsupported answers | **6.3.b** | Refusal trigger: check min_k threshold, freshness gate, and LLM evidence-coverage instruction; look at `refusal_rate` trend |
+| Citations are inconsistent, wrong page numbers, or don't match the quoted text | **6.3.c** | Citation assembly: verify citation map is built before generation; check verbatim quoting instruction for conditions/numbers |
+| Answers blend facts and speculation; users acting on unsourced advice | **6.3.d** | Epistemic audit: run keyword scan for sycophantic speculation phrases; check `speculation_rate` and `inference_labeling_rate` |
+
+---
+
+### Module Synthesis Exercises
+
+**Exercise 1 — Design the system (open-ended, 20 minutes)**
+
+You are building a RAG system for a healthcare insurance company. The system answers member questions about their benefits using a corpus of: (a) plan documents (PDFs, updated annually), (b) an FAQ knowledge base (HTML, updated weekly), (c) regulatory requirement documents (PDFs, rarely updated but legally authoritative). Members have different plan types; each member should only see information relevant to their plan.
+
+Design the complete baseline RAG system covering:
+1. Ingestion design: how would you chunk each source type? What metadata would you attach?
+2. Retrieval design: what freshness thresholds would you set for each source? How would you enforce plan-level permissions?
+3. Generation design: what does the system prompt look like? What refusal conditions would you set? What would the citation format be?
+4. What is the single most likely failure mode in year 1, and which subtopic does it map to?
+
+**Suggested answer outline:**
+
+| Component | Decision | Reasoning |
+|---|---|---|
+| **PDF plan documents** | Section-aware chunking on section headings; fixed-size fallback within sections (≤400 tokens); metadata: `doc_type=plan_doc`, `plan_id`, `effective_date`, `section_heading`, `last_modified` | Plan documents have clear section structure; section-aware chunking keeps benefit definitions intact; `plan_id` enables permissions filtering; `effective_date` enables freshness gating |
+| **FAQ knowledge base** | Fixed-size chunking on Q&A pairs (each Q+A as one chunk); metadata: `doc_type=faq`, `last_modified`, `plan_id` or `plan_ids=["all"]` | FAQ entries are already self-contained units; no benefit to recursive splitting; freshness important since FAQs update weekly |
+| **Regulatory documents** | Section-aware; conservative chunk size (≤300 tokens) to preserve exact statutory language; metadata: `doc_type=regulatory`, `regulation_id`, `last_modified`, `jurisdiction` | Regulatory text must not be split mid-sentence; verbatim quoting required; freshness less critical but `last_modified` still set for audit |
+| **Freshness thresholds** | Plan docs: flag if `last_modified` > 365 days. FAQs: flag if > 90 days. Regulatory: flag if > 730 days. | Plan docs update annually; FAQs are volatile; regulatory is slow but still date-stamped |
+| **Permissions** | Filter retrieved chunks by `plan_id` matching the authenticated member's plan; chunks with `plan_ids=["all"]` always pass | Members must never receive information about a plan they don't hold; this is a data access control requirement |
+| **System prompt** | DOCUMENTS block + "Answer only from documents below. Do not provide medical advice. Do not generalize across plan types." | "Do not generalize" prevents the LLM from synthesizing coverage rules that are plan-specific |
+| **Refusal conditions** | Refuse if k_retrieved < 3, if all retrieved chunks are from a stale source, if post-permission-filter leaves < 2 chunks | Benefits questions require at least 2 corroborating chunks; a single stale FAQ answer is not sufficient |
+| **Citation format** | Inline `[DOC N]` + full reference block with `doc_title`, `section_heading`, `effective_date`, `page` | Members may need to reference the exact plan document section for dispute resolution; citation must be fully auditable |
+| **Most likely year-1 failure** | **Stale FAQs causing incorrect benefit information** (6.1.d + 6.1.a) | FAQs update weekly; if the ingestion pipeline runs monthly, members receive outdated answers to common questions with high confidence. The fix: automate FAQ re-ingestion weekly with a freshness gate that flags any FAQ chunk older than 90 days for review. |
+
+---
+
+**Exercise 2 — Diagnose the failure (5 minutes)**
+
+A customer support RAG system is receiving user complaints: "The system told me I was eligible for a discount but when I called support they said the promotion ended 3 months ago." The logs show: `k_retrieved=5`, `citation_grounding_rate=0.94`, `refusal_rate=0.02`. All 5 retrieved chunks have `last_modified` dates from 8 months ago, but the freshness threshold is set to 365 days.
+
+What failed? Which subtopic? What is the fix?
+
+**Answer:**
+- **What failed:** The freshness threshold is too permissive (365 days) for promotional content that changes every few months. The system retrieved 5 chunks correctly (high citation grounding), but all 5 were stale — they accurately described a promotion that had since ended. The system answered confidently and correctly from those chunks, which is why `refusal_rate` is low — the evidence was sufficient by volume but not by recency.
+- **Which subtopic:** **6.1.d** (Metadata Design — Freshness) and **6.2.d** (Failure Mode: stale-but-confident answers).
+- **Fix:** Split freshness thresholds by content category. Promotional content gets a 30-day threshold; policy content gets 180 days. When a query matches a document of type `promotion` or `offer`, apply the 30-day gate. If chunks are stale, trigger Refusal Type 2: "The most recent information on this promotion is from [DATE]. This offer may no longer be active. Please check the current promotions page."
+
+---
+
+### Active Recall — Module 6 Full Sweep
+
+Attempt these from memory before checking the answers. These span all three topics.
+
+1. **(6.1.c)** You have a 200-page pharmaceutical regulatory submission (PDFs with structured sections: Background, Methods, Results, Safety, Conclusion). Which chunking strategy and why?
+
+   **Answer:** Section-aware chunking. The document has clear labeled sections; preserving section boundaries keeps regulatory context intact — a "Results" chunk should not be split into a "Methods" chunk. Each section becomes one or more chunks with the section heading in metadata. Within-section fixed-size at ≤400 tokens as a fallback. Never fixed-size only — "Safety" and "Results" sections may span multiple pages and must not be arbitrarily cut.
+
+2. **(6.2.a)** At ingestion you used `text-embedding-ada-002`. Six months later you switch to `text-embedding-3-small` for new documents. What breaks and how do you fix it?
+
+   **Answer:** Vector space mismatch. The old chunks are embedded in the Ada-002 space; new queries use the 3-small space. Cosine similarity scores between old chunk vectors and new query vectors are semantically meaningless — retrieval degrades silently. The metric that reveals this: `hit_rate@k` drops noticeably for queries about older documents. The fix: full re-embedding of all existing chunks with the new model before switching. Lock the embedding model version in config; treat an embedding model change as a full re-indexing event.
+
+3. **(6.2.b)** Your context packing is set to k=10. You find that `context_utilization_rate` (fraction of packed tokens cited in the final answer) is 0.18. What does this signal and what should you do?
+
+   **Answer:** 82% of the packed tokens are not cited — they are being processed by the LLM but contributing nothing to the answer. This is wasted context budget, wasted inference cost, and increased noise risk (irrelevant chunks can distract the model). Reduce k to 4–5 and measure whether `citation_grounding_rate` changes. If it doesn't, you were packing irrelevant chunks — tighten the similarity threshold or add metadata pre-filtering before packing.
+
+4. **(6.3.b)** A user asks: "Will the new regulation require us to file quarterly reports?" The retrieved chunks describe the regulation's scope but contain no mention of quarterly reporting requirements. Write the exact refusal response.
+
+   **Answer:** *"The provided documents describe the scope of the regulation but do not contain information about quarterly reporting requirements. I cannot answer this question from the available documents. For authoritative guidance, consult [authoritative source]."* — Note: no hedge, no "I think", no "generally companies are required to…", no sycophantic addition. Clean, specific, and directs to a real source.
+
+5. **(6.3.d)** An answer contains: "The service plan covers hardware failures within 24 months [DOC 1]. Since your device was purchased 18 months ago, you are covered. Liquid damage may also be covered under some extended warranty plans." Classify each sentence and identify which requires intervention.
+
+   **Answer:** Sentence 1: **FACT** — cited, verifiable from DOC 1. Sentence 2: **INFERENCE** — correctly derived from DOC 1 using the purchase date; should be labeled "Based on [DOC 1], since your device is 18 months old, it follows that…" but the inference itself is grounded. Sentence 3: **SPECULATION** — "under some extended warranty plans" is not in DOC 1 or any retrieved chunk; this is sycophantic speculation about a different product type. Intervention required on Sentence 3: strip it entirely, or replace with: "NOTE (not from documents): Extended warranty coverage for liquid damage varies — check your specific plan documentation."
+
+---
+
+### Module 6 — Completion Signal
+
+**You have completed Module 6: RAG Foundations when you can, from memory:**
+
+- [ ] Sketch the full RAG pipeline (ingestion → retrieval → generation) with the key design decision at each stage
+- [ ] Explain, in two sentences, why chunking and metadata are often more impactful than model swapping
+- [ ] Write a grounded answer system prompt for a compliance-sensitive domain from scratch
+- [ ] Write all four refusal types with their exact trigger conditions and phrasing
+- [ ] Classify any three-sentence RAG answer as FACT / INFERENCE / SPECULATION without prompting
+- [ ] Name the single first metric to check for each of the three major failure classes: retrieval miss, stale answer, epistemic blur
+- [ ] Design a freshness + permissions metadata schema for a new corpus from scratch
+
+If you can do all seven, you are ready for **Module 7 (RAG Evaluation and Quality Metrics)** — where you will learn to measure retrieval precision, answer faithfulness, and context coverage at production scale using RAGAS-style frameworks.
+
+---
+
 ## Module Glossary
 
 | Term | Definition |
@@ -4199,3 +6055,44 @@ Grounded answer prompting handles the *instruction* side of generation quality �
 | **idk_rate** | The fraction of LLM responses using the configured uncertainty disclosure phrase; too low signals hallucination on out-of-scope queries; too high signals broken retrieval (correct chunks not reaching the prompt). |
 | **Verbatim instruction** | A system prompt rule requiring the LLM to quote numerical values, dates, legal terms, or dosage figures exactly as they appear in the source chunk rather than paraphrasing; required for Level 4 grounding in medical, financial, or regulatory RAG. |
 | **Parametric leak rate** | The fraction of generated answers containing facts not present in any retrieved chunk; measured by post-processing or LLM-as-judge; the primary signal that context anchor strength is insufficient. |
+| **Evidence insufficiency** | Any condition where retrieved context does not meet the quality threshold for a confident grounded answer — covers zero coverage, partial coverage, conflicting evidence, and stale evidence; each type requires a different system response. |
+| **Hard refusal** | The RAG system response when zero relevant evidence is retrieved (max similarity score below threshold); the system declines entirely: "I don't have information about that in the provided documents." |
+| **Soft refusal** | The RAG system response when evidence partially covers the query; the system answers what is available and explicitly flags the coverage gap with a caveat. |
+| **Conflict disclosure** | The RAG system response when retrieved chunks contradict each other; the system surfaces both claims with their sources and declines to pick one, requiring the user to review both directly. |
+| **Staleness warning** | The RAG system response when retrieved evidence is present and relevant but the `last_modified` timestamp exceeds a freshness threshold; the system answers but surfaces the age of the source. |
+| **Pre-generation gate** | A signal-based check run before the LLM call that classifies evidence quality into SUFFICIENT / PARTIAL / CONFLICT / STALE / NONE and routes to the appropriate prompt template or refusal response. |
+| **False refusal** | A refusal triggered for a query whose answer is in the corpus; caused by similarity threshold set too high for the embedding model's score range or by retrieval failure. |
+| **False answer** | An answer generated for a query whose answer is genuinely not in the corpus; caused by the evidence gate threshold being too permissive, letting noise chunks through to generation. |
+| **Refusal calibration triangle** | The three-metric system for measuring refusal quality: `true_refusal_rate` (correct refusals) + `false_refusal_rate` (over-refusal) + `false_answer_rate` (under-refusal); all three must be monitored simultaneously since tuning one affects the others. |
+| **Evidence router** | A pipeline component that takes retrieval signals (scores, chunk count, timestamps, conflict detection) and returns an `EvidenceClass` enum used to select the appropriate generation path or refusal template. |
+| **Threshold calibration** | The process of setting the similarity threshold for evidence gates by running a golden test set and finding the natural gap between "relevant" and "noise" match score distributions; must be done per embedding model and corpus. |
+| **Post-generation faithfulness gate** | A second-line-of-defense check run after LLM generation that measures answer faithfulness against packed chunks and strips the response if the faithfulness score is below a threshold; catches generation-layer failures that the pre-gen gate cannot. |
+| **Citation object** | A structured data record carrying all provenance and display data for a single citation: chunk_id, source_title, section, page, URL, last_modified, doc_version, quote, and confidence; the production unit of citation traceability. |
+| **Citation format** | The visual/structural representation of a citation in output — inline bracket `[1]`, named inline, footnote, source block, or JSON array; selected per output surface, not per citation. |
+| **Citation rendering layer** | The pipeline component that takes a `Citation` object and emits the correct format string for a given output surface (chat UI, API, PDF, email, Slack); a stateless, surface-aware transformation. |
+| **Verbatim quote** | The exact, unedited text from the source chunk included alongside a citation; mandatory for numerical values, dosages, legal clauses, and policy thresholds where paraphrase could distort meaning. |
+| **Deep link** | A citation URL constructed to point to a specific location within a document (section anchor or page number) rather than the document root; requires `anchor_id` or `page_number` in chunk metadata at ingestion time. |
+| **Citation deduplication** | Collapsing multiple inline citations to the same source document into a single source block entry with multiple section/page sub-entries; keeps references lists readable for multi-citation answers. |
+| **Bibliographic completeness** | The requirement that a citation contains all fields needed for independent verification: source_title, section, page, source_url (public-facing), last_modified, doc_version, and (for precision claims) verbatim quote. |
+| **Citation completeness rate** | The fraction of citations with all required metadata fields populated; below 95% signals a metadata gap in the ingestion pipeline for one or more source types. |
+| **Deep-link validity rate** | The fraction of deep links in the citation index that resolve to a live, correct anchor; measured by a periodic async crawl; broken links erode user trust in citations. |
+| **Anchor_id** | The CSS/HTML fragment identifier for a section within a web document (e.g., `section-3-1`); stored in chunk metadata at ingestion time and appended to `source_url` to form a deep link. |
+| **Provenance replay** | The ability to reconstruct, from a stored `query_id`, the exact chunks cited, their text at query time, and the document version used; requires an immutable citation log keyed by chunk_id. |
+| **Epistemic category** | The type of claim being made in an LLM answer — direct evidence (cited fact from a retrieved chunk), supported inference (derived from evidence through stated reasoning), or speculation (beyond retrieved context). |
+| **Epistemic blur** | The failure mode where evidence, inference, and speculation are mixed in prose without labeling, making each category indistinguishable to the reader. |
+| **Supported inference** | A conclusion explicitly drawn from retrieved evidence through stated reasoning; grounded but not a direct quote from any document; must be labeled as inference, not fact. |
+| **Speculation** | An LLM-generated claim that goes beyond what any retrieved chunk supports; includes sycophantic additions, procedural suggestions, and completions drawn from parametric training data. |
+| **Epistemic marker** | A label (e.g., `[FACT]`, `[INFERENCE]`, `[NOTE]`) or structural section header (e.g., `EVIDENCE:`, `REASONING:`) that signals to the reader which epistemic category a sentence belongs to. |
+| **Epistemic audit** | A post-generation classification pass that labels each sentence in an LLM answer as FACT, INFERENCE, or SPECULATION; used to strip or flag speculative content before the response is returned to the user. |
+| **Show-your-work instruction** | A system prompt pattern that requires the LLM to structure its answer in explicitly labeled sections — Evidence first, Reasoning second — making the inference step visible and auditable rather than implicit. |
+| **Sycophantic speculation** | A specific form of speculation where the LLM adds helpful-sounding suggestions drawn from training patterns about what users in a similar situation would want to hear, with no retrieved document support; signature phrases include "you may also want to", "you might consider", and "it's worth." |
+| **Epistemic audit pass rate** | The fraction of answers where all sentences labeled as EVIDENCE are verified against the packed chunks; a low rate signals that the LLM is presenting non-evidenced claims as document facts. |
+| **Speculation detection rate** | The fraction of speculative sentences correctly identified and flagged by the epistemic audit system; a key quality signal for the post-generation filtering layer. |
+| **Two-tier audit strategy** | A scaling pattern where a fast keyword/pattern scan (sub-millisecond) is applied to all queries, and a full LLM epistemic audit (second LLM call) is triggered only for flagged responses or high-risk query types. |
+| **Context utilization rate** | The fraction of packed context tokens that are actually cited in the final answer; a low rate (< 30%) indicates over-packing — too many irrelevant chunks are being included, wasting token budget. |
+| **Refusal rate** | The fraction of queries that result in a refusal response rather than an answer; too high signals retrieval or coverage problems; too low (near zero) in a domain with genuine gaps signals the refusal mechanism is broken. |
+| **Evidence discipline** | The system property of consistently answering only from retrieved evidence and refusing confidently when evidence is insufficient; the foundation of user trust in a RAG system. |
+| **Freshness threshold** | The maximum age (in days) of a chunk's `last_modified` timestamp before it triggers a stale-evidence warning or refusal; should be set per content category based on how frequently that source type changes. |
+| **Grounding pre-check** | A gate applied before LLM generation that verifies: (a) minimum k chunks were retrieved, (b) all chunks pass the freshness threshold, and (c) the requesting user has permission for all retrieved chunks. |
+| **Context packing budget** | The maximum number of tokens allocated for packed context chunks in the prompt; setting this correctly prevents context overflow and ensures the most relevant chunks are included, not just the most chunks. |
+| **Sycophantic speculation** | (see 6.3.d) LLM-added helpful-sounding suggestions with no document support; the single most common form of epistemic blur in production RAG; signature phrases include "you may also want to" and "it's worth checking." |
