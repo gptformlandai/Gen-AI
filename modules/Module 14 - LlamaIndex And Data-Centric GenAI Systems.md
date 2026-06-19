@@ -15,9 +15,9 @@
 | 14.1.c | Index types: VectorStoreIndex, SummaryIndex, KnowledgeGraph | ✅ Done |
 | 14.1.d | Data-centric pipeline design choices | ✅ Done |
 | **Topic 14.2** | **Querying, Retrieval, and Response Synthesis (10h)** | |
-| 14.2.a | QueryEngine, RetrieverQueryEngine, and routing | 🔲 |
-| 14.2.b | Retrieval modes: dense, sparse, hybrid, and reranking | 🔲 |
-| 14.2.c | Response synthesizers and streaming | 🔲 |
+| 14.2.a | Query engines and response synthesis | ✅ Done |
+| 14.2.b | Retriever customization and fusion | ✅ Done |
+| 14.2.c | Workflow orchestration in data-heavy applications | ✅ Done |
 | 14.2.d | Sub-question query engine and query decomposition | 🔲 |
 | **Topic 14.3** | **Agents, Tools, and Advanced Patterns (8h)** | |
 | 14.3.a | LlamaIndex agents and ReActAgent | 🔲 |
@@ -30,6 +30,9 @@
 - 14.1.b — Parsing, nodes, and document representation: TextNode anatomy (text, metadata, relationships, char offsets), SentenceSplitter vs TokenTextSplitter vs SemanticSplitterNodeParser vs HierarchicalNodeParser, chunk size / overlap retrieval tradeoffs, NodeRelationship provenance chain, MetadataExtractor suite (Title, Summary, Keywords, QuestionsAnswered), auto-metadata enrichment patterns, chunking failure modes and debugging
 - 14.1.c — Index types and retrieval abstractions: VectorStoreIndex (ANN-based top-k), SummaryIndex (full-scan summarization), KnowledgeGraphIndex (triple-based graph traversal), index selection decision framework, as_retriever() vs as_query_engine() interface, retrieval modes (default/embedding/llm), metadata filters, index composition and routing, production failure modes
 - 14.1.d — Data-centric pipeline design choices: StorageContext anatomy (VectorStore, DocStore, IndexStore, GraphStore), persistent backends (Chroma, Pinecone, pgvector) vs SimpleVectorStore, IngestionPipeline transformation chain + IngestionCache, incremental vs full re-ingestion strategies, freshness patterns (polling/webhook/CDC/hybrid), multi-source fan-out with source isolation, ghost-node deletion, pipeline observability and cost control
+- 14.2.a — Query engines and response synthesis: QueryEngine vs Retriever interface, ResponseSynthesizer modes (refine/compact/tree_summarize/accumulate/simple_summarize), RetrieverQueryEngine composition, source_nodes provenance, streaming responses, token-budget-aware synthesis, NodePostprocessor chain (reranking, similarity cutoff, metadata replacement), production failure modes
+- 14.2.b — Retriever customization and fusion: VectorIndexRetriever (ANN dense), BM25Retriever (sparse keyword), QueryFusionRetriever (RRF hybrid fusion), custom BaseRetriever, dense vs sparse vs hybrid recall/precision tradeoffs, cross-encoder reranking (SentenceTransformerRerank), query rewriting for retrieval, retriever observability and failure modes
+- 14.2.c — Workflow orchestration in data-heavy applications: LlamaIndex Workflow API (event-driven, @step decorator, StartEvent/StopEvent/custom events), ctx.send_event() for fan-out, IngestionPipeline vs Workflow comparison, sequential vs parallel step execution, human-in-the-loop checkpoints, ctx.get()/ctx.set() shared state, external orchestrators (Airflow/Prefect) integration patterns, production error handling and retries, cost-awareness in large-scale workflows
 
 ---
 
@@ -2484,6 +2487,2043 @@ But getting data *in* is only half the problem. **Getting the right data *out* �
 
 ---
 
+---
+
+## Topic 14.2: Query Engines, Retrievers, and Workflows
+
+> **Topic time:** 10h
+> Focus: Getting the right data *out* — building query pipelines that translate a user question into a high-quality, well-cited, token-efficient answer.
+
+---
+
+## Subtopic 14.2.a: Query Engines and Response Synthesis
+
+### Reading Path + Level Tags
+
+- **Beginner:** Read sections 1–2 and the Active Recall.
+- **Intermediate:** Add sections 3–5 and the Hands-On Lab Build step.
+- **Pro:** Complete the full Hands-On Lab (Build → Break → Measure → Explain) plus the capstone practice question.
+
+---
+
+### 0. Pre-Question Hook [Beginner]
+
+**Pause:** Your retriever returns 5 relevant `TextNode` objects for the query *"Explain the refund policy for international orders."* Those 5 nodes together contain 1,800 tokens. Before reading — how would you turn those 5 nodes into a single coherent answer, and what if the nodes partially contradict each other?
+
+Think for 30 seconds. Then read on.
+
+---
+
+### 1. The Intuition (Plain English) [Beginner]
+
+A **retriever** finds relevant nodes. A **query engine** turns those nodes into an answer. The component that does the actual "turning" is the **`ResponseSynthesizer`** — it decides *which* nodes to read, *in what order*, and *with what prompt* to produce the final response.
+
+The mental model has three stages:
+
+```
+Query String
+    │
+    ▼ [Retriever]            — finds candidate nodes (already covered in 14.1)
+    │
+    ▼ [NodePostprocessors]   — filter, rerank, replace metadata on retrieved nodes
+    │
+    ▼ [ResponseSynthesizer]  — reads nodes + original query → produces final Answer
+    │
+    ▼ Response object        — .response (str), .source_nodes, .metadata
+```
+
+The `QueryEngine` is the orchestrator that wires these three stages together. `as_query_engine()` gives you a pre-wired default. `RetrieverQueryEngine` gives you full control to swap any stage independently.
+
+**Key terms (first use):**
+
+- **`QueryEngine`** — the end-to-end pipeline object: takes a query string, runs retriever + postprocessors + synthesizer, returns a `Response`.
+- **`RetrieverQueryEngine`** — a `QueryEngine` subclass where you explicitly supply a `BaseRetriever` and a `ResponseSynthesizer`; the main composition entry point.
+- **`ResponseSynthesizer`** — the component that combines retrieved nodes + original query into a final LLM-generated answer.
+- **`response_mode`** — the synthesis strategy; controls how many LLM calls are made and in what order nodes are read.
+- **`refine`** — synthesis mode: reads nodes one at a time, passing the accumulating answer to each subsequent call; O(n) LLM calls; best for iterative refinement.
+- **`compact`** — synthesis mode: packs as many nodes as possible into each LLM context window before calling; reduces LLM calls vs `refine`; the default for most use cases.
+- **`tree_summarize`** — synthesis mode: builds a summarization tree bottom-up (chunks → summaries → final answer); O(n log n) calls; best for long-form summarization.
+- **`accumulate`** — synthesis mode: calls the LLM independently on each node and concatenates the per-node answers; O(n) calls; best when you want per-source granularity.
+- **`simple_summarize`** — synthesis mode: truncates all nodes to fit in one LLM call; O(1) call; fastest but loses content when nodes exceed context window.
+- **`NodePostprocessor`** — a pipeline step applied to retrieved nodes *before* synthesis; common uses: similarity cutoff filtering, LLM reranking, metadata field replacement, keyword filtering.
+- **`source_nodes`** — list of `NodeWithScore` objects attached to every `Response`; the provenance trail for citations.
+
+**Analogy:** A `ResponseSynthesizer` is like a courtroom judge reading evidence packets. `refine` is the judge re-reading their running notes after each new piece of evidence, continuously revising their verdict. `compact` is the judge cramming as many evidence packets as possible into each reading session. `tree_summarize` is the judge delegating summaries to clerks, then summarizing the summaries. The analogy breaks down here: a judge can weigh contradictory evidence — a `ResponseSynthesizer` with `refine` mode can too, but `compact` may not surface contradictions if the conflicting nodes end up in different LLM calls.
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+```mermaid
+flowchart TD
+    subgraph QE["QueryEngine Pipeline"]
+        Q["Query String\n'What is the refund policy?'"]
+
+        R["Retriever\n─────────────────\nVectorIndexRetriever\nBM25Retriever\nCustomRetriever\n→ List[NodeWithScore]"]
+
+        PP["NodePostprocessors (optional)\n─────────────────────────────\n1. SimilarityCutoffPostprocessor\n   (drop nodes below threshold)\n2. LLMRerank\n   (LLM re-scores + reorders)\n3. MetadataReplacementNodePostprocessor\n   (swap text with window metadata)\n4. KeywordNodePostprocessor\n   (filter by keyword presence)"]
+
+        RS["ResponseSynthesizer\n─────────────────────────\nresponse_mode:\n  compact (default)\n  refine\n  tree_summarize\n  accumulate\n  simple_summarize\n→ calls LLM with nodes + query"]
+
+        RESP["Response\n─────────────\n.response: str\n.source_nodes: List[NodeWithScore]\n.metadata: dict"]
+    end
+
+    Q --> R --> PP --> RS --> RESP
+
+    subgraph Modes["Response Mode Tradeoffs"]
+        M1["compact\nFewer LLM calls\nGood for point-lookup"]
+        M2["refine\nIterative refinement\nBest for multi-doc synthesis"]
+        M3["tree_summarize\nScalable summarization\nO(n log n) calls"]
+        M4["accumulate\nPer-node independence\nGood for comparisons"]
+    end
+
+    RS -.->|choose| M1 & M2 & M3 & M4
+```
+
+**Key insight:** The three stages (retrieve → postprocess → synthesize) are independently swappable. You can use the same `VectorIndexRetriever` with different synthesizers for different query types, or swap in a `BM25Retriever` for exact-keyword queries without touching synthesis logic.
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+#### Scenario A: Customer Support Bot — `compact` Mode for Point-Lookup Q&A
+
+**Context:** A SaaS company's support bot answers questions like *"How do I reset my 2FA?"* and *"What's the refund window for annual plans?"* from a 2,000-node documentation index. Every query must return an answer in < 3 seconds.
+
+**How synthesis fits in:**
+- `VectorStoreIndex.as_query_engine(similarity_top_k=5, response_mode="compact")` is the entire pipeline in one line.
+- `compact` mode: packs the 5 retrieved nodes into as few LLM calls as possible (usually 1 call if nodes fit in context). Latency: retrieval ~50ms + 1 LLM call ~800ms = < 2 seconds total.
+- `SimilarityCutoffPostprocessor(cutoff=0.72)` drops any node with cosine similarity < 0.72 before synthesis. This prevents low-quality nodes from polluting the prompt — e.g., if the query is unusual and retrieval returns loosely-related content, the cutoff ensures the LLM only synthesizes from high-confidence matches.
+- `response.source_nodes` provides the 2–5 docs cited, rendered in the UI as "Sources: [doc1, doc2]."
+
+**Constraints:**
+- **Latency:** `compact` with top_k=5 = 1 LLM call. `refine` with top_k=5 = 5 sequential LLM calls → 4× slower. For a < 3s SLA, `compact` is the only viable mode.
+- **Cost:** 1 LLM call per query × 5 nodes × ~200 tokens/node + query = ~1,200 synthesis tokens/query. At $0.002/1K tokens ≈ $0.0024/query. At 100K queries/month → $240/month synthesis cost.
+- **Failure mode:** If all 5 nodes are long (512 tokens each = 2,560 tokens of context) + system prompt + query exceeds the LLM context window → `compact` tries to split into 2 calls. If the LLM has a 4K context and nodes + prompt = 3,800 tokens, the second call gets only overflow content — answer quality drops. Fix: reduce `similarity_top_k` or `chunk_size`.
+- **What "good" looks like:** Answer directly addresses the question, cites 1–3 source nodes, response time < 2 seconds, similarity cutoff keeps hallucination rate near zero.
+
+---
+
+#### Scenario B: Research Analyst Tool — `tree_summarize` for Cross-Document Synthesis
+
+**Context:** A financial research firm needs to synthesize themes across 30 analyst reports for queries like *"What are the common risks cited for semiconductor stocks in Q3 2024?"*
+
+**How synthesis fits in:**
+- `SummaryIndex` (all 30 reports, ~450 nodes) + `as_query_engine(response_mode="tree_summarize")`.
+- `tree_summarize`: the synthesizer first divides the 450 nodes into batches that fit a context window (e.g., 10 nodes/batch = 45 batches). It calls the LLM 45 times to produce 45 chunk-summaries. Then it batches those summaries and calls the LLM again recursively until one final answer remains. O(n log n) calls but fully parallelizable with `aquery()`.
+- `LLMRerank(top_n=20)` postprocessor pre-filters the 450 nodes to the 20 most relevant before tree_summarize — reducing cost from O(450 nodes) to O(20 nodes) while preserving recall.
+- The system prompt for tree_summarize is customized: *"You are a financial analyst. Synthesize the following excerpts into a structured risk summary. Cite specific companies or sectors when possible."*
+
+**Constraints:**
+- **Cost:** 20 nodes (after rerank) ÷ 10 nodes/batch = 2 batch calls + 1 final = 3 LLM calls. At 2K tokens/call ≈ $0.012/query. Without `LLMRerank` pre-filter: 45 + 5 + 1 = 51 calls ≈ $0.20/query. Pre-filtering cuts cost 17×.
+- **Latency:** `aquery()` runs batch calls in parallel — 3 async calls vs 3 sequential = same wall-clock time as 1 call. Without async: 3 × 800ms = 2.4s. With `aquery()`: ~1s.
+- **Quality risk:** `LLMRerank` itself costs 1 LLM call (to score 450 nodes). If the reranker mis-ranks and drops relevant nodes, the final synthesis misses key themes. Always evaluate reranker quality on a held-out set before deploying to production.
+- **What "good" looks like:** Structured 4–6 paragraph synthesis, each paragraph citing specific source reports by name. All major risk themes present. Response time < 5 seconds via async synthesis.
+
+---
+
+#### Scenario C: Legal Contract Reviewer — `refine` for Iterative Precision
+
+**Context:** A legal AI system answers questions like *"What are the indemnification clauses and are there any contradictions between sections 4 and 9?"* Each answer must consider multiple contract sections sequentially and build a cohesive analysis.
+
+**How synthesis fits in:**
+- `VectorStoreIndex.as_query_engine(similarity_top_k=8, response_mode="refine")`.
+- `refine`: the synthesizer reads node 1 → generates draft answer → reads node 2 + draft answer → refines → ... → reads node 8 + refined answer → final answer. Each pass can update or correct the running answer. Contradictions between nodes surface naturally: node 4 says "indemnification is capped at $1M" but node 9 says "uncapped for gross negligence" — the refine loop builds both observations into the answer.
+- `MetadataReplacementNodePostprocessor(target_metadata_key="window")` is applied when `SentenceWindowNodeParser` was used — it replaces the 1-sentence node text with the full ±3 sentence window before synthesis, giving the LLM enough clause context.
+- Custom `text_qa_template` that instructs the LLM to note any contradictions it finds across sections.
+
+**Constraints:**
+- **Latency:** 8 sequential LLM calls at 800ms each = 6.4 seconds. Acceptable for legal analysis (users expect a few seconds for deep analysis). Not acceptable for a low-latency chatbot.
+- **Cost:** 8 × ~1,500 tokens/call = 12,000 tokens ≈ $0.024/query. 3× more expensive than `compact` but far higher analysis quality for multi-section legal questions.
+- **Token management:** Each refine call includes the full running answer (which grows). By call 8, the running answer itself might be 600 tokens. Total context per call: 600 (running answer) + 512 (node) + 200 (prompt) = 1,312 tokens. Still within 4K context. Monitor `synthesis_tokens_p95` to catch context overflow before it becomes a prod incident.
+- **What "good" looks like:** Answer explicitly notes "Section 4 caps indemnification at $1M, but Section 9 creates an uncapped exception for gross negligence — these clauses may conflict. Legal review recommended." No information dropped from any of the 8 retrieved nodes.
+
+---
+
+### 4. System View (Think Like a Systems Engineer) [Intermediate]
+
+**Inputs → Transformations → Outputs for the full QueryEngine pipeline:**
+
+```
+INPUTS:
+  - query_str: str
+  - retrieved nodes: List[NodeWithScore] (from retriever)
+  - response_mode: str
+  - text_qa_template: PromptTemplate (optional override)
+  - refine_template: PromptTemplate (optional override for refine mode)
+  - node_postprocessors: List[BaseNodePostprocessor]
+
+TRANSFORMATIONS:
+  1. NodePostprocessors run in order:
+     - SimilarityCutoffPostprocessor  → drop nodes below similarity threshold
+     - LLMRerank                       → re-score and reorder remaining nodes
+     - MetadataReplacementPostprocessor → swap .text with metadata window field
+  2. ResponseSynthesizer:
+     - compact:        batch nodes into context windows → 1–N LLM calls
+     - refine:         sequential node-by-node → N LLM calls, growing answer
+     - tree_summarize: parallel batch → recursive reduce → final answer
+     - accumulate:     independent per-node → concatenate answers
+     - simple_summarize: truncate + 1 LLM call
+
+OUTPUTS:
+  - Response.response: str             — the generated answer
+  - Response.source_nodes: List[NodeWithScore]  — nodes used in synthesis
+  - Response.metadata: dict            — synthesis metadata (token counts, etc.)
+```
+
+**Observability — what to log, trace, and measure:**
+
+| Signal | What to capture | Why |
+|--------|----------------|-----|
+| `response_mode` | Which synthesis mode was used | Required for per-mode cost and latency analysis |
+| `nodes_before_postprocess` | Count before NodePostprocessors run | Baseline retrieval volume |
+| `nodes_after_postprocess` | Count after NodePostprocessors run | Postprocessor effectiveness |
+| `synthesis_llm_calls` | Number of LLM calls made by synthesizer | Primary cost driver; varies by mode and n_nodes |
+| `synthesis_tokens_total` | Total tokens sent to LLM during synthesis | Direct cost proxy |
+| `response_latency_ms` | Wall-clock time from query to response | SLA compliance |
+| `source_nodes_count` | Number of nodes cited in `response.source_nodes` | Low count (0–1) → likely hallucination risk |
+| `similarity_score_min` | Minimum similarity score of nodes used | Low min score → postprocessor cutoff too permissive |
+
+**Failure points — where it breaks and how it shows up:**
+
+1. **`compact` splits across LLM calls silently** — Nodes collectively exceed the LLM context window. `compact` splits into multiple calls, each seeing only part of the evidence. The second call doesn't know what the first call saw. *How it shows up:* answer correctly addresses part of the question but ignores information from later nodes. Setting `verbose=True` on the synthesizer reveals the split.
+
+2. **`refine` running answer grows to overflow** — In `refine` mode, the running answer is passed to every subsequent call. After 5 iterations, the running answer + current node + prompt may exceed the context window. The LLM silently truncates early content. *How it shows up:* information from nodes 1–2 disappears from the final answer even though those nodes were relevant. Check `synthesis_tokens_p95` — if it exceeds 80% of the LLM's context window, use `compact` or reduce `top_k`.
+
+3. **`LLMRerank` dropping relevant nodes** — `LLMRerank` asks the LLM to score relevance and keeps only `top_n`. If the ranker's relevance criteria doesn't match the user's intent, it may discard nodes that contain the actual answer. *How it shows up:* query engine produces confident-sounding answers that miss specific facts. Debug by logging nodes before/after reranking and comparing with ground truth.
+
+4. **Missing `MetadataReplacementNodePostprocessor`** — You used `SentenceWindowNodeParser` (which stores ±k context sentences in `metadata["window"]`) but forget to include `MetadataReplacementNodePostprocessor` in the query engine's postprocessors. The LLM only sees the raw 1-sentence node text — not the surrounding context it needs. *How it shows up:* answers are technically correct but lack sufficient context; they feel like sentence fragments rather than complete explanations.
+
+---
+
+### 5. System Design Flavor [Intermediate]
+
+**Key components and interfaces:**
+
+```python
+from llama_index.core import VectorStoreIndex, get_response_synthesizer
+from llama_index.core.query_engine import RetrieverQueryEngine
+from llama_index.core.response_synthesizers import ResponseMode
+from llama_index.core.postprocessor import (
+    SimilarityCutoffPostprocessor,
+    LLMRerank,
+    MetadataReplacementNodePostprocessor,
+    KeywordNodePostprocessor,
+)
+from llama_index.core.prompts import PromptTemplate
+
+# ── Option A: One-liner defaults (compact mode, top_k=2) ──────────────────────
+query_engine = index.as_query_engine(
+    similarity_top_k=5,
+    response_mode="compact",
+)
+response = query_engine.query("What is the refund policy?")
+print(response.response)
+print(f"Sources: {[n.node.metadata.get('source') for n in response.source_nodes]}")
+
+# ── Option B: Full composition with RetrieverQueryEngine ──────────────────────
+retriever = index.as_retriever(similarity_top_k=10)
+
+postprocessors = [
+    SimilarityCutoffPostprocessor(cutoff=0.70),     # drop low-quality nodes
+    LLMRerank(top_n=5),                             # LLM reranks remaining to top 5
+]
+
+synthesizer = get_response_synthesizer(
+    response_mode=ResponseMode.REFINE,
+    verbose=True,                                   # logs each refine call
+)
+
+query_engine = RetrieverQueryEngine(
+    retriever=retriever,
+    response_synthesizer=synthesizer,
+    node_postprocessors=postprocessors,
+)
+response = query_engine.query("Describe the indemnification clauses.")
+print(response)
+
+# ── Option C: Custom prompt template ──────────────────────────────────────────
+custom_qa_prompt = PromptTemplate(
+    "You are a legal analyst. Use the following contract excerpts to answer "
+    "the question. Note any contradictions across sections.\n\n"
+    "Context:\n{context_str}\n\nQuestion: {query_str}\n\nAnalysis:"
+)
+synthesizer_custom = get_response_synthesizer(
+    response_mode=ResponseMode.COMPACT,
+    text_qa_template=custom_qa_prompt,
+)
+
+# ── Option D: tree_summarize with async for speed ─────────────────────────────
+import asyncio
+tree_engine = index.as_query_engine(
+    similarity_top_k=30,
+    response_mode="tree_summarize",
+)
+# Sync (slow — sequential batches):
+# response = tree_engine.query("Summarize all risk factors.")
+# Async (fast — parallel batches):
+response = asyncio.run(tree_engine.aquery("Summarize all risk factors."))
+
+# ── Option E: Streaming response ──────────────────────────────────────────────
+streaming_engine = index.as_query_engine(
+    similarity_top_k=5,
+    response_mode="compact",
+    streaming=True,
+)
+streaming_response = streaming_engine.query("What is the return window?")
+for token in streaming_response.response_gen:
+    print(token, end="", flush=True)        # stream tokens to UI as they arrive
+
+# ── Option F: SentenceWindow with MetadataReplacement ─────────────────────────
+# (for indexes built with SentenceWindowNodeParser)
+window_engine = RetrieverQueryEngine(
+    retriever=index.as_retriever(similarity_top_k=5),
+    node_postprocessors=[
+        MetadataReplacementNodePostprocessor(target_metadata_key="window"),
+    ],
+    response_synthesizer=get_response_synthesizer(response_mode=ResponseMode.COMPACT),
+)
+```
+
+**Key tradeoffs:**
+
+| Tradeoff | Option A | Option B | When to choose |
+|----------|----------|----------|----------------|
+| **Speed vs. thoroughness** | `compact` (1–2 LLM calls, fast) | `refine` (N calls, iterative) | `compact` for < 3s SLA. `refine` when iterative correction across nodes matters (contradictions, multi-section analysis). |
+| **Cost vs. quality for summarization** | `simple_summarize` ($0 marginal — 1 call, truncates) | `tree_summarize` (O(n log n) calls, no truncation) | `simple_summarize` only if all nodes fit in 1 context window. `tree_summarize` for production summarization at any scale. |
+| **Reranking cost vs. retrieval precision** | No reranking (fast, relies solely on ANN similarity) | `LLMRerank` (1 extra LLM call, higher precision) | Skip reranking for simple factual Q&A. Add `LLMRerank` when query intent is subtle or ANN similarity alone returns noisy results. |
+
+**Scaling consideration (10x query volume):**
+At 10× query volume (e.g., 100K → 1M queries/month):
+- **Synthesis token cost dominates.** Switch from `refine` to `compact` where possible — it reduces LLM calls from O(n) to O(n/context_window_size). At `chunk_size=512` and 4K context, `compact` uses 8× fewer calls than `refine`.
+- **Async synthesis becomes mandatory.** `tree_summarize` and multi-call synthesis must use `aquery()` with parallel batch calls — async reduces wall-clock time proportional to the number of parallel LLM calls supported by your rate limit.
+- **Streaming for perceived latency.** Add `streaming=True` to all user-facing query engines — the first token arrives in ~200ms even if the full response takes 3 seconds. Users perceive significantly lower latency.
+- **Cache responses.** For recurring queries (FAQ-style), cache `(query_str_hash, index_version) → Response` in Redis with a TTL matching your freshness SLA. Eliminates synthesis cost entirely for cache hits.
+
+---
+
+### 6. Common Mistakes + Debugging [Beginner → Intermediate]
+
+#### Mistake 1: Using `refine` for Simple Q&A — Paying 5× for No Quality Gain
+
+**Symptom:** Query latency is 4–6 seconds for simple factual questions. LLM API costs are unexpectedly high. The answers are no better than `compact` mode would produce.
+
+**Likely cause:** `response_mode="refine"` was set as the default and never reviewed. For point-lookup Q&A over 5 retrieved nodes, `refine` makes 5 sequential LLM calls when 1 (compact) would produce the same quality answer.
+
+**First debugging step:**
+```python
+# Add verbose=True to synthesizer to see each refine call
+synthesizer = get_response_synthesizer(
+    response_mode="refine",
+    verbose=True,
+)
+# Count how many "Refining response" log lines appear per query
+# If the 2nd–Nth calls aren't meaningfully changing the answer → switch to compact
+# Rough rule: use refine only when answer changes meaningfully between iterations
+```
+
+---
+
+#### Mistake 2: Forgetting `source_nodes` — No Citation Capability
+
+**Symptom:** The RAG system produces good answers but the UI shows no source citations. When users ask "where did this come from?", the system can't answer. Trust is low.
+
+**Likely cause:** The application code only uses `response.response` (the text string) and discards `response.source_nodes`. The provenance data is there — it's just not being used.
+
+**First debugging step:**
+```python
+response = query_engine.query("What is the cancellation policy?")
+print(f"Answer: {response.response[:200]}")
+print(f"\nSources ({len(response.source_nodes)} nodes):")
+for node in response.source_nodes:
+    print(f"  [{node.score:.3f}] {node.node.metadata.get('source', 'unknown')} "
+          f"— {node.node.text[:80].strip()!r}")
+# Wire this output into your UI as a "Sources" section
+```
+
+---
+
+#### Mistake 3: `SimilarityCutoffPostprocessor` Too Aggressive — 0 Nodes Reach Synthesis
+
+**Symptom:** For unusual or out-of-distribution queries, the system returns "I couldn't find relevant information" even though related content exists in the index.
+
+**Likely cause:** `SimilarityCutoffPostprocessor(cutoff=0.80)` is too high. For queries that are phrased differently from the training corpus, similarity scores legitimately drop to 0.65–0.75. All nodes are dropped; synthesis receives an empty list.
+
+**First debugging step:**
+```python
+# Retrieve without postprocessor first to see raw scores
+raw_results = index.as_retriever(similarity_top_k=5).retrieve("unusual query here")
+scores = [r.score for r in raw_results]
+print(f"Raw similarity scores: {scores}")
+# If max score < your cutoff → lower the cutoff or make it adaptive
+# Adaptive approach: only apply cutoff if max_score > 0.75, else pass all nodes through
+max_score = max(scores) if scores else 0
+threshold = 0.72 if max_score > 0.75 else 0.50
+```
+
+---
+
+### 7. Hands-On Lab [Pro]
+
+#### Build — Compare Response Modes on the Same Retrieved Nodes
+
+```python
+# query_engine_lab.py
+# pip install llama-index-core
+# Note: LLM calls require an API key (OpenAI / Anthropic).
+# For cost-free testing, use a mock LLM via llama_index.core.llms.MockLLM
+
+from llama_index.core import Document, VectorStoreIndex, Settings
+from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.query_engine import RetrieverQueryEngine
+from llama_index.core import get_response_synthesizer
+from llama_index.core.response_synthesizers import ResponseMode
+from llama_index.core.postprocessor import SimilarityCutoffPostprocessor
+from llama_index.core.llms import MockLLM    # cost-free for structural testing
+
+# Use MockLLM for structural testing (replace with OpenAI for real synthesis)
+Settings.llm = MockLLM(max_tokens=256)
+
+# ── Sample corpus ──────────────────────────────────────────────────────────────
+DOCS = [
+    Document(text="The standard return window is 30 days from the date of purchase. "
+                  "Items must be in original condition. Digital products are non-refundable.",
+             metadata={"source": "return_policy_v3.pdf", "section": "returns"}),
+    Document(text="International orders have a 45-day return window due to shipping times. "
+                  "Customs fees are non-refundable. The customer is responsible for return shipping.",
+             metadata={"source": "international_policy.pdf", "section": "international"}),
+    Document(text="Annual plan subscribers may request a pro-rated refund within 60 days. "
+                  "Monthly plans are non-refundable after the billing cycle starts.",
+             metadata={"source": "subscription_policy.pdf", "section": "subscriptions"}),
+    Document(text="Damaged or defective items are eligible for full refund or replacement "
+                  "regardless of the standard return window. Contact support within 7 days.",
+             metadata={"source": "defective_items_policy.pdf", "section": "defective"}),
+    Document(text="Gift purchases may be returned for store credit within 90 days. "
+                  "The original purchaser must initiate the return. Photo ID required.",
+             metadata={"source": "gift_policy.pdf", "section": "gifts"}),
+]
+
+# Build index
+parser = SentenceSplitter(chunk_size=256, chunk_overlap=32)
+nodes  = parser.get_nodes_from_documents(DOCS)
+index  = VectorStoreIndex(nodes)
+print(f"Index built: {len(nodes)} nodes")
+
+# ── Compare synthesis modes ────────────────────────────────────────────────────
+QUERY = "What is the refund policy for international annual plan subscribers?"
+
+def run_mode(mode_str, top_k=5):
+    qe = index.as_query_engine(
+        similarity_top_k=top_k,
+        response_mode=mode_str,
+    )
+    import time
+    t0 = time.perf_counter()
+    response = qe.query(QUERY)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+
+    print(f"\n{'='*60}")
+    print(f"Mode: {mode_str} | top_k={top_k} | {elapsed_ms:.0f}ms")
+    print(f"Response: {response.response[:200].strip()!r}")
+    print(f"Source nodes: {len(response.source_nodes)}")
+    for n in response.source_nodes:
+        print(f"  [{n.score:.3f}] {n.node.metadata.get('source')} — {n.node.metadata.get('section')}")
+    return response
+
+r_compact   = run_mode("compact")
+r_refine    = run_mode("refine")
+r_accum     = run_mode("accumulate")
+r_tree      = run_mode("tree_summarize")
+r_simple    = run_mode("simple_summarize")
+
+# ── RetrieverQueryEngine with postprocessors ───────────────────────────────────
+print("\n" + "="*60)
+print("RetrieverQueryEngine with SimilarityCutoffPostprocessor")
+
+retriever = index.as_retriever(similarity_top_k=5)
+postprocessors = [SimilarityCutoffPostprocessor(cutoff=0.0)]  # 0.0 = pass all for MockLLM
+synthesizer = get_response_synthesizer(response_mode=ResponseMode.COMPACT)
+
+rqe = RetrieverQueryEngine(
+    retriever=retriever,
+    response_synthesizer=synthesizer,
+    node_postprocessors=postprocessors,
+)
+response_rqe = rqe.query(QUERY)
+print(f"RQE response sources: {[n.node.metadata.get('source') for n in response_rqe.source_nodes]}")
+
+# ── Streaming response ─────────────────────────────────────────────────────────
+print("\n" + "="*60)
+print("Streaming response (tokens arrive incrementally):")
+stream_engine = index.as_query_engine(
+    similarity_top_k=3,
+    response_mode="compact",
+    streaming=True,
+)
+stream_resp = stream_engine.query("What is the standard return window?")
+for token in stream_resp.response_gen:
+    print(token, end="", flush=True)
+print()  # newline after stream
+```
+
+---
+
+#### Break — Force the Failure Modes
+
+```python
+# BREAK 1: SimilarityCutoff too high → 0 nodes reach synthesis
+from llama_index.core.postprocessor import SimilarityCutoffPostprocessor
+
+strict_qe = RetrieverQueryEngine(
+    retriever=index.as_retriever(similarity_top_k=5),
+    node_postprocessors=[SimilarityCutoffPostprocessor(cutoff=0.999)],  # impossible threshold
+    response_synthesizer=get_response_synthesizer(response_mode=ResponseMode.COMPACT),
+)
+response_empty = strict_qe.query("What is the return policy?")
+print(f"\nBREAK 1 — Cutoff=0.999:")
+print(f"  Source nodes: {len(response_empty.source_nodes)}")
+print(f"  Response: {response_empty.response!r}")
+# Expected: 0 source nodes, empty or "no relevant information" response
+# In prod: users report "system can't answer anything" after cutoff was tightened
+
+# ──────────────────────────────────────────────────────────────────────────────
+
+# BREAK 2: Forget source_nodes — provenance lost
+response_no_citation = index.as_query_engine(similarity_top_k=5).query(QUERY)
+answer_only = response_no_citation.response   # only .response used
+print(f"\nBREAK 2 — No citation:")
+print(f"  Answer: {answer_only[:120]!r}")
+print(f"  Source nodes available but unused: {len(response_no_citation.source_nodes)}")
+# Fix: always render response.source_nodes in the UI
+
+# ──────────────────────────────────────────────────────────────────────────────
+
+# BREAK 3: simple_summarize with nodes exceeding context → silent truncation
+# Create a query engine with many large nodes
+large_docs = [Document(text="Policy text " * 200, metadata={"source": f"doc_{i}"})
+              for i in range(10)]
+large_nodes = SentenceSplitter(chunk_size=512).get_nodes_from_documents(large_docs)
+large_index = VectorStoreIndex(large_nodes)
+simple_qe = large_index.as_query_engine(
+    similarity_top_k=10,
+    response_mode="simple_summarize",
+)
+response_simple = simple_qe.query("Summarize all policies.")
+print(f"\nBREAK 3 — simple_summarize with large corpus:")
+print(f"  Source nodes retrieved: 10")
+print(f"  Source nodes in response: {len(response_simple.source_nodes)}")
+# simple_summarize truncates to fit 1 context window — some nodes silently dropped
+# Fix: use tree_summarize for large corpora
+```
+
+---
+
+#### Measure
+
+```python
+import time
+
+modes = ["compact", "refine", "accumulate", "tree_summarize", "simple_summarize"]
+print("\n── Response Mode Comparison ──")
+print(f"{'Mode':20s} {'Time(ms)':>10} {'Sources':>8}")
+print("-" * 42)
+
+for mode in modes:
+    qe = index.as_query_engine(similarity_top_k=5, response_mode=mode)
+    t0 = time.perf_counter()
+    resp = qe.query(QUERY)
+    ms = (time.perf_counter() - t0) * 1000
+    print(f"{mode:20s} {ms:>10.0f} {len(resp.source_nodes):>8}")
+
+# Expected pattern (with real LLM, not MockLLM):
+# compact          ~900ms    5 nodes   (1 LLM call)
+# refine          ~4500ms    5 nodes   (5 sequential calls)
+# accumulate      ~4500ms    5 nodes   (5 sequential calls)
+# tree_summarize  ~1200ms    5 nodes   (async: parallel batches, fast)
+# simple_summarize ~800ms    5 nodes   (1 call, but may truncate)
+```
+
+---
+
+#### Explain — Why It Works This Way
+
+The `ResponseSynthesizer` exists because retrieval and generation have fundamentally different failure modes. A retriever can be right (it found the correct nodes) and a synthesis step can still fail (it ignored half of them, hallucinated a connection, or truncated key content).
+
+The `compact` mode solves a specific problem: naive systems call the LLM once per retrieved node (like `refine` or `accumulate`), multiplying LLM call count by `top_k`. `compact` is smarter — it packs as many nodes as possible per call, honoring the LLM's context window limit. This is exactly what you'd do if you were summarizing research manually: read several pages at once instead of one sentence at a time.
+
+`source_nodes` is not a debug feature — it's a trust mechanism. Every production RAG system must expose source nodes to users, either as inline citations or a "Sources" panel. Without it, users have no way to verify the answer, and confidence in the system erodes over time. Making provenance first-class in the UI is as important as the answer quality itself.
+
+---
+
+### 8. Active Recall (Spaced Repetition) [Beginner → Pro]
+
+**Q1 [Beginner]:** What are the three stages of a `QueryEngine` pipeline and what does each do?
+
+> **A:** (1) **Retriever** — finds the `top_k` most relevant `TextNode` objects from the index given the query. (2) **NodePostprocessors** — filter, rerank, or transform the retrieved nodes before synthesis (e.g., drop low-similarity nodes, LLM rerank, replace text with window metadata). (3) **ResponseSynthesizer** — takes the processed nodes + original query, calls the LLM according to the chosen `response_mode`, and returns a `Response` with `.response`, `.source_nodes`, and `.metadata`.
+
+---
+
+**Q2 [Beginner]:** What is the difference between `compact` and `refine` synthesis modes? When would you choose each?
+
+> **A:** `compact` packs as many retrieved nodes as possible into each LLM context window before calling — minimizes LLM calls (often just 1–2). Best for: < 3s SLA, point-lookup Q&A, cost-sensitive deployments. `refine` reads nodes one-at-a-time, passing a running answer to each subsequent call — O(n) sequential LLM calls. Best for: multi-section analysis where iterative correction matters (contradictions across nodes, legal/contract analysis, complex multi-part questions).
+
+---
+
+**Q3 [Intermediate]:** A user reports: *"The system answered my unusual query with 'no relevant information found' but I know the docs contain the answer."* What is the most likely cause and how do you debug it?
+
+> **A:** Most likely cause: `SimilarityCutoffPostprocessor` with a threshold that's too high. The retrieved nodes have cosine similarity scores in the 0.60–0.70 range (lower for unusual phrasing) but the cutoff is set to 0.75+, so all nodes are dropped before reaching the synthesizer. Debug: retrieve without the postprocessor, print raw similarity scores, then choose a cutoff that keeps at least the top-2 nodes for all query types in your test set.
+
+---
+
+**Q4 [Intermediate]:** What is `RetrieverQueryEngine` and why would you use it instead of `index.as_query_engine()`?
+
+> **A:** `RetrieverQueryEngine` is the composition entry point — it accepts an explicit `BaseRetriever`, an explicit `ResponseSynthesizer`, and an explicit list of `NodePostprocessors`. Use it when you need to: (1) swap in a different retriever type (e.g., `BM25Retriever` instead of ANN), (2) use a custom-configured synthesizer with a custom prompt template or non-default response_mode, (3) add specific postprocessors in a specific order. `index.as_query_engine()` is a convenience shortcut with sensible defaults but no composability.
+
+---
+
+**Q5 [Pro]:** A research summarization query over 200 nodes takes 45 seconds and costs $0.18 per query. How do you reduce both to under 5 seconds and $0.02?
+
+> **A:** Three changes: (1) **Add `LLMRerank(top_n=15)` postprocessor** — reduce from 200 nodes to 15 before synthesis. Cost reduction: 200→15 = 13× fewer synthesis tokens. (2) **Switch to `aquery()` (async)** — `tree_summarize` with 15 nodes ÷ ~10/batch = 2 batch calls, runnable in parallel. Wall-clock drops from sequential to ~1 second. (3) **Use a cheaper LLM for batch summarization** — switch synthesis to GPT-3.5 / Claude Haiku for the intermediate tree_summarize batches; reserve GPT-4 only for the final reduce step. Combined: < 5 seconds, < $0.02/query.
+
+---
+
+### 9. Practice
+
+**Mini-exercise:** You're building a compliance bot over 500 policy documents. Users ask two types of questions: (a) *"What does section 4.2 say about data retention?"* (precise, needs exact citation) and (b) *"Summarize all GDPR-related policies."* (broad, needs full-corpus synthesis). Design the query engine for each type, including mode, postprocessors, and how you'd display the answer in the UI.
+
+> **Suggested answer:**
+> - **Type (a):** `RetrieverQueryEngine` with `VectorIndexRetriever(top_k=5)` + `SimilarityCutoffPostprocessor(cutoff=0.70)` + `compact` mode + custom prompt requesting exact quotes. UI: answer text + 2–3 source cards showing filename, page number, and the exact quoted sentence.
+> - **Type (b):** `VectorIndexRetriever(top_k=50, filters=[MetadataFilter(key="category", value="gdpr")])` + `LLMRerank(top_n=20)` + `tree_summarize` via `aquery()`. UI: structured summary (3–5 paragraphs) + expandable "Sources" list showing 5 top-cited docs.
+> - **Router:** `RouterQueryEngine` with `LLMSingleSelector` — tool A for specific section lookups, tool B for GDPR summaries.
+
+---
+
+**Capstone system design question:** Design the full query layer for a medical knowledge assistant used by doctors. Requirements: (1) must cite exact source document and page; (2) answers must not fabricate — prefer "not found" over hallucination; (3) must handle both precise questions (*"What is the dosage for metformin in CKD patients?"*) and synthesis questions (*"What are the common contraindications across all diabetes medications?"*); (4) response time < 3s for precise, < 10s for synthesis.
+
+> **Answer outline:**
+> - **Precise queries:** `VectorStoreIndex` → `VectorIndexRetriever(top_k=8)` → `SimilarityCutoffPostprocessor(cutoff=0.75)` → `LLMRerank(top_n=4)` → `compact` mode with a prompt that includes *"If the answer is not explicitly stated in the provided context, respond: 'Not found in available references.'"* → UI displays answer + source card with document name, section, and char offset range.
+> - **Synthesis queries:** same index → `VectorIndexRetriever(top_k=80, filters=[category=drugs])` → `LLMRerank(top_n=25)` → `tree_summarize` via `aquery()` → structured output prompt.
+> - **Anti-hallucination:** `SimilarityCutoffPostprocessor(cutoff=0.75)` ensures synthesis only happens over high-confidence nodes. Custom prompt explicitly disallows speculation. Monitor `source_nodes_count = 0` as a hallucination-risk signal.
+> - **Router:** `RouterQueryEngine` with `LLMSingleSelector`. Tool descriptions carefully worded so the LLM reliably routes dosage/specific-drug questions to precise mode.
+> - **Latency:** Precise: ~50ms retrieval + ~900ms LLM (1 call) = ~1s. Synthesis: 25 nodes ÷ 10/batch = 3 async calls ≈ 2.5s wall-clock. Both within SLA.
+
+---
+
+### 10. Production Reality Check (Mandatory) ✅
+
+**If this fails in prod, what's the first thing we inspect?**
+
+> **Check `response.source_nodes` count and minimum similarity score immediately after the query.**
+>
+> ```python
+> response = query_engine.query(user_query)
+> n_sources = len(response.source_nodes)
+> min_score  = min((n.score for n in response.source_nodes), default=0.0)
+> print(f"source_nodes={n_sources}, min_score={min_score:.3f}")
+> ```
+>
+> - `n_sources = 0` → postprocessor cutoff dropped everything; the response is a hallucination or "not found." Lower the cutoff or debug the metadata filter.
+> - `n_sources > 0` but `min_score < 0.60` → retrieval is pulling in poorly-matched nodes; synthesis is working from weak evidence. Tighten the cutoff or increase `chunk_size` for better embedding granularity.
+> - `n_sources = top_k` but answer misses key information → synthesis mode is truncating. Switch from `simple_summarize` to `compact` or `tree_summarize`.
+>
+> `source_nodes` count + similarity scores are the two-signal triage for 80% of production query engine failures.
+
+---
+
+### 11. Curiosity Bridge (Mandatory) ✅
+
+You now have full control of the retrieval → postprocess → synthesis pipeline. But retrieval itself has a precision ceiling: ANN similarity search on embeddings alone misses exact-keyword matches, struggles with sparse terminology, and can't surface results for queries that use completely different vocabulary from the indexed text.
+
+The next question is: **what happens when dense vector retrieval isn't enough — and how do you combine it with sparse (BM25/keyword) retrieval, reranking models, and hybrid search to push recall higher without sacrificing precision?**
+
+That's what **14.2.b: Retrieval Modes — Dense, Sparse, Hybrid, and Reranking** covers. The synthesis pipeline you just built plugs directly into whichever retriever you give it — and upgrading the retriever is the highest-leverage way to improve end-to-end answer quality.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit check:** You're done with 14.2.a when you can choose between `compact`, `refine`, `tree_summarize`, `accumulate`, and `simple_summarize` for a given query type and latency/cost constraint, compose a `RetrieverQueryEngine` with two postprocessors from scratch, explain why `source_nodes` must always be surfaced in production UIs, and debug a "0 source_nodes" failure using the similarity score check.
+
+---
+
+**Carry-Forward Review (interleaved recall from 14.1.d):**
+
+*Q: You run an incremental ingestion pipeline nightly. After 3 months, users report confident answers from content deleted from the source 6 weeks ago. What is the root cause and what is the precise fix?*
+
+> **A:** Root cause: the delete step was never implemented. Incremental ingestion only adds/updates nodes (hash-dedup skips unchanged docs) but has no mechanism to remove nodes for source documents that were deleted. Ghost nodes accumulate indefinitely. Fix: (1) At the end of every ingestion run, fetch the set of current source `doc_ids`. (2) Compare with `docstore.docs.keys()` → compute ghost_ids = stored - current. (3) Call `index.delete_ref_doc(ghost_id, delete_from_docstore=True)` for each ghost. (4) Persist the updated docstore. This must run on every ingestion cycle going forward.
+
+---
+
+## Subtopic 14.2.b: Retriever Customization and Fusion
+
+### Reading Path + Level Tags
+
+- **Beginner:** Read sections 1–2 and the Active Recall.
+- **Intermediate:** Add sections 3–5 and the Hands-On Lab Build step.
+- **Pro:** Complete the full Hands-On Lab (Build → Break → Measure → Explain) plus the capstone practice question.
+
+---
+
+### 0. Pre-Question Hook [Beginner]
+
+**Pause:** Your vector retriever returns 5 nodes for the query *"What are the HIPAA penalties for a data breach?"* — but none of them contain the word "HIPAA" or "penalty" because the indexed documents use synonyms like "PHI violation" and "civil monetary fines." ANN similarity retrieval returns near-zero scores. Before reading — how would you fix this without re-ingesting all your documents?
+
+Think for 30 seconds. Then read on.
+
+---
+
+### 1. The Intuition (Plain English) [Beginner]
+
+A retriever answers one question: *"Which nodes are most relevant to this query?"* There are fundamentally two approaches to answering that question, and they fail in opposite directions:
+
+| Approach | How it finds matches | Fails when |
+|----------|---------------------|------------|
+| **Dense (ANN)** | Embed query → find similar vectors | Query uses different vocabulary from indexed text |
+| **Sparse (BM25/keyword)** | Count exact term overlaps | Query uses different vocabulary but same meaning |
+
+**Hybrid retrieval** combines both — dense catches semantic similarity, sparse catches exact terminology. **Fusion** merges the ranked lists from multiple retrievers into one final ranking.
+
+The mental model:
+
+```
+Query
+  ├─► Dense Retriever   (VectorIndexRetriever)  → ranked list A
+  ├─► Sparse Retriever  (BM25Retriever)          → ranked list B
+  └─► Fusion            (QueryFusionRetriever)   → merged + re-ranked list
+                                                    → ResponseSynthesizer
+```
+
+Beyond dense/sparse, you can build **custom retrievers** (subclass `BaseRetriever`), do **query rewriting** (generate multiple query variants to increase recall), and apply **cross-encoder reranking** (a separate ML model that scores each (query, node) pair independently — more accurate than cosine similarity alone).
+
+**Key terms (first use):**
+
+- **`VectorIndexRetriever`** — dense ANN retriever backed by the index's vector store; retrieves top-k by cosine similarity between query embedding and node embeddings.
+- **`BM25Retriever`** — sparse keyword retriever implementing the BM25 term-frequency/inverse-document-frequency scoring formula; no embeddings needed; exact-term match.
+- **`QueryFusionRetriever`** — combines multiple retrievers via Reciprocal Rank Fusion (RRF); the default fusion strategy in LlamaIndex.
+- **Reciprocal Rank Fusion (RRF)** — a rank merging formula: each node's fused score = Σ 1/(rank_in_list_i + k); nodes appearing highly in multiple lists score highest; k=60 is the standard constant.
+- **`BaseRetriever`** — abstract base class for all retrievers; requires one method: `_retrieve(query_bundle: QueryBundle) → List[NodeWithScore]`.
+- **Cross-encoder reranking** — a separate model (e.g., `ms-marco-MiniLM`) that takes a (query, passage) pair as joint input and outputs a relevance score; more accurate than bi-encoder cosine similarity but slower (O(k) model calls per query).
+- **`SentenceTransformerRerank`** — LlamaIndex postprocessor wrapping a cross-encoder reranker; applied as a `NodePostprocessor` after initial retrieval.
+- **Query rewriting** — generating multiple paraphrased variants of the original query before retrieval; each variant retrieves its own set of nodes; all sets are merged; increases recall for ambiguous or terse queries.
+- **`QueryFusionRetriever.mode`** — `"reciprocal_rerank"` (default RRF), `"dist_based_score"` (normalised cosine-score merge), or `"simple"` (union + sort by score).
+
+**Analogy:** Hybrid retrieval is like searching a library with two strategies simultaneously: one librarian searches by topic meaning (dense), another searches the exact index cards for matching words (sparse). A third librarian (fusion) combines both stacks, bumping up books that appear in both lists. The analogy breaks down here: a real librarian can weigh authority and recency; RRF is purely rank-based — a node ranked 1st in a weak retriever gets the same fusion boost as a node ranked 1st in a strong retriever. Cross-encoder reranking is the corrective step that accounts for actual (query, passage) relevance.
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+```mermaid
+flowchart TD
+    Q["User Query\n'HIPAA penalties for data breach'"]
+
+    subgraph Retrieval["Retrieval Layer"]
+        QR["Query Rewriter\n(optional)\nGenerates N query variants"]
+        DR["VectorIndexRetriever\n(Dense ANN)\nEmbeds query → top-k by cosine similarity"]
+        SR["BM25Retriever\n(Sparse keyword)\nExact term overlap score"]
+        CR["Custom BaseRetriever\n(e.g., SQL lookup,\nAPI call, graph traversal)"]
+    end
+
+    subgraph Fusion["Fusion / Merge"]
+        RRF["QueryFusionRetriever\nReciprocal Rank Fusion (RRF)\n─────────────────────────\nMerges ranked lists\nBoosts nodes in multiple lists\nDe-duplicates by node_id"]
+    end
+
+    subgraph Rerank["Post-Retrieval Reranking"]
+        CE["SentenceTransformerRerank\n(Cross-Encoder)\n─────────────────────────\nScores each (query, node) pair\nMore accurate than cosine alone\nO(top_n) model calls"]
+    end
+
+    subgraph Synth["Synthesis"]
+        RS["ResponseSynthesizer\n→ Final Answer + source_nodes"]
+    end
+
+    Q --> QR
+    QR -->|variant 1| DR
+    QR -->|variant 2| SR
+    Q --> DR & SR & CR
+    DR & SR & CR --> RRF
+    RRF --> CE
+    CE --> RS
+```
+
+**Key insight:** Each component is independently optional. You can use dense-only, add BM25 only for certain query types, skip reranking for latency-sensitive paths, or add a custom retriever for a specialized data source — all without changing the synthesis layer.
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+#### Scenario A: Healthcare Compliance Assistant — Hybrid Retrieval for Exact Regulatory Terms
+
+**Context:** A compliance platform indexes 5,000 regulatory documents (HIPAA, HITECH, CMS guidelines). Users ask questions using both formal regulatory terminology (*"42 CFR Part 2"*) and plain English (*"rules about substance abuse records"*). Dense-only retrieval misses exact citation lookups; sparse-only retrieval misses paraphrased questions.
+
+**How hybrid retrieval fits in:**
+- `VectorIndexRetriever(similarity_top_k=10)` handles semantic queries: *"What are the rules for disclosing patient records?"* → finds nodes about HIPAA privacy even if the nodes use different wording.
+- `BM25Retriever(top_k=10)` handles exact-term queries: *"42 CFR Part 2 disclosure requirements"* → exact citation match that dense retrieval would score poorly (the query embedding for "42 CFR Part 2" is far from generic "patient privacy" embeddings).
+- `QueryFusionRetriever([dense_ret, bm25_ret], similarity_top_k=5, mode="reciprocal_rerank")` merges both lists; nodes appearing in both rank highest.
+- `SentenceTransformerRerank(model="cross-encoder/ms-marco-MiniLM-L-6-v2", top_n=5)` as a final postprocessor re-scores the top-5 merged nodes against the original query — catching cases where RRF promoted a node that isn't actually the most relevant.
+
+**Constraints:**
+- **Latency:** Dense retrieval ~50ms + BM25 (in-memory) ~5ms + RRF merge ~1ms + cross-encoder reranking ~200ms = ~260ms retrieval. Still within a 3s total SLA.
+- **Cost:** BM25 is free (no embedding API calls). Cross-encoder reranking uses a local `sentence-transformers` model — zero API cost, ~5ms per (query, node) pair × 10 nodes = 50ms on CPU. No marginal per-query cost once the model is loaded.
+- **Recall improvement:** On a healthcare compliance test set, dense-only achieves Recall@5 = 0.71. Dense+BM25 hybrid achieves Recall@5 = 0.88. Cross-encoder reranking improves NDCG@5 from 0.74 to 0.84. Each layer compounds quality.
+- **What "good" looks like:** A query for *"42 CFR Part 2"* retrieves the exact regulation section as node #1. A paraphrased query retrieves semantically equivalent content even without the citation string. Both paths go through the same `QueryFusionRetriever`.
+
+---
+
+#### Scenario B: E-Commerce Product Search — Query Rewriting for Sparse Queries
+
+**Context:** A retail platform indexes 200,000 product listings. Users submit terse queries like *"red sneakers under $50"* or *"wireless headphones noise canceling"*. These queries are too short for dense retrieval to produce stable embeddings. Different users phrase the same need differently.
+
+**How query rewriting fits in:**
+- `QueryFusionRetriever` with `num_queries=4` and `mode="reciprocal_rerank"`:
+  - The retriever internally calls the LLM to generate 4 query variants: the original + 3 paraphrases (*"affordable red athletic shoes"*, *"low-cost running shoes red color"*, *"budget red sport footwear"*).
+  - Each variant retrieves its own top-10 nodes from `VectorIndexRetriever`.
+  - RRF merges all 4 × 10 = 40 candidate sets (with deduplication) into 1 ranked list.
+- Result: a terse query like *"red sneakers $50"* now has 4× the retrieval surface area. Products that match any paraphrase are surfaced.
+- `SentenceTransformerRerank(top_n=10)` applied after fusion to re-score the top-10 merged products against the original query.
+
+**Constraints:**
+- **Latency:** 4 query variants × 1 dense retrieval each = 4 × 50ms = 200ms parallel (async) + RRF 1ms + cross-encoder 50ms = ~260ms. Acceptable for search (target < 500ms).
+- **Cost:** Query rewriting requires 1 LLM call per query to generate variants (~200 tokens/call). At $0.002/1K tokens ≈ $0.0004/query. At 10M queries/month → $4,000/month just for rewriting. Evaluate whether the recall improvement justifies the cost at scale — use a smaller/cheaper model (GPT-3.5 / Haiku) for rewriting.
+- **Failure mode:** LLM-generated query variants can hallucinate product categories that don't exist in the index. The RRF merge handles this gracefully — if a variant returns no relevant results, its contribution to the fused list is simply zero for those nodes.
+- **What "good" looks like:** Recall@10 improves from 0.62 (single query, dense) to 0.85 (4 variants, hybrid). Users find what they're looking for on the first page 35% more often.
+
+---
+
+#### Scenario C: Internal Developer Tool — Custom Retriever for SQL + Vector Hybrid
+
+**Context:** An engineering team wants an assistant that answers questions from both unstructured documentation (vector index) and structured database records (sprint tickets, deployment logs). The query *"Show me all failed deployments for service X in the last 7 days"* can't be answered by a vector retriever — it's a structured SQL query.
+
+**How custom retrieval fits in:**
+- A custom `SQLRetriever` subclasses `BaseRetriever` and implements `_retrieve()` by: (1) calling an LLM to translate the natural language query into SQL, (2) executing the SQL against a PostgreSQL deployment log table, (3) wrapping each row as a `TextNode` with metadata (`service`, `timestamp`, `status`).
+- `QueryFusionRetriever([vector_retriever, sql_retriever], mode="simple")` merges results — `"simple"` mode (union + sort by score) is appropriate here since the two retrievers have no overlap; fusion de-duplicates and passes all results through.
+- `RetrieverQueryEngine` wires the fused retriever to a `compact` synthesizer that presents structured and unstructured information together in a coherent answer.
+
+**Constraints:**
+- **Latency:** LLM SQL generation ~800ms + SQL execution ~50ms + vector retrieval ~50ms = ~900ms retrieval path (SQL is the bottleneck). Async execution of SQL and vector retrieval in parallel reduces to max(800+50, 50) = 850ms.
+- **Security:** The LLM-generated SQL must be validated before execution. The SQL retriever must use a read-only database user and parameterized queries — never execute raw LLM output directly. A schema-constrained SQL generation prompt limits the LLM to SELECT-only queries on allowed tables.
+- **Failure mode:** LLM generates syntactically valid but semantically wrong SQL. The retriever returns wrong data confidently. Mitigation: run generated SQL through a schema validator before execution; log all generated queries for audit.
+- **What "good" looks like:** *"Show me failed deployments for service X"* returns rows from the deployment log alongside relevant architecture documentation — all in one coherent answer.
+
+---
+
+### 4. System View (Think Like a Systems Engineer) [Intermediate]
+
+**Inputs → Transformations → Outputs for the retrieval layer:**
+
+```
+INPUTS:
+  - query_str: str
+  - retriever configs: top_k, mode, num_queries, model
+  - index/docstore backends
+
+TRANSFORMATIONS:
+  1. [Optional] Query rewriting: LLM(query) → N paraphrased variants
+  2. Per-retriever execution (parallel):
+     - VectorIndexRetriever: embed(query) → ANN search → List[NodeWithScore]
+     - BM25Retriever:        tokenize(query) → BM25 score → List[NodeWithScore]
+     - Custom retriever:     _retrieve(query) → List[NodeWithScore]
+  3. Fusion (QueryFusionRetriever):
+     - Collect all ranked lists
+     - De-duplicate by node_id (keep highest score)
+     - Apply RRF: score(node) = Σ 1/(rank_i + 60) for each list
+     - Re-sort by fused score, return top similarity_top_k
+  4. [Optional] Cross-encoder reranking:
+     - For each (query, node.text) pair: cross_encoder.predict() → score
+     - Re-sort by cross-encoder score, return top_n
+
+OUTPUTS:
+  - List[NodeWithScore] — the final ranked candidate nodes for synthesis
+```
+
+**Observability — what to log, trace, and measure:**
+
+| Signal | What to capture | Why |
+|--------|----------------|-----|
+| `retriever_type` | Which retrievers ran | Per-retriever latency and hit-rate tracking |
+| `dense_recall@k` | % of ground-truth nodes in dense top-k | Baseline dense quality; compare against hybrid |
+| `sparse_hit_rate` | % of BM25 results overlapping with dense | High overlap → BM25 adding little value; low overlap → BM25 is complementary |
+| `fusion_node_count` | Nodes in merged list before reranking | Low count = one retriever is returning 0 results |
+| `reranker_score_delta` | Avg score change after cross-encoder vs RRF | Positive = reranker adding value; near-zero = skip it to save latency |
+| `query_variants_generated` | Count of LLM-generated query rewrites | Non-k count = rewriting LLM failed or returned fewer than expected |
+| `retrieval_latency_p95` | Wall-clock time for full retrieval pipeline | Regression catch; reranker is usually the bottleneck |
+
+**Failure points — where it breaks and how it shows up:**
+
+1. **BM25Retriever index not rebuilt after re-ingestion** — `BM25Retriever` builds an in-memory term index from the nodes at construction time. If new nodes are added to the `VectorStoreIndex` but the `BM25Retriever` is not rebuilt, the two retrievers are now out of sync. BM25 silently misses new documents. *How it shows up:* hybrid retrieval finds documents added before the last re-ingestion but not after; sparse results lag behind dense results.
+
+2. **Cross-encoder reranker reversing a correct RRF order** — RRF promoted a highly relevant node to rank 1, but the cross-encoder model (trained on a general domain) gives it a low score because the domain is specialized (medical, legal, code). The final answer misses the best node. *How it shows up:* hybrid retrieval quality was higher without reranking. Debug by logging RRF ranking vs cross-encoder ranking for known queries.
+
+3. **Query rewriting generating off-topic variants** — The LLM rewrites *"latency p99"* as *"99th percentile of request delays"*, *"slowest 1% of API calls"*, and *"timeout issues in microservices"*. The third variant is semantically adjacent but retrieves irrelevant ops troubleshooting docs for an unrelated service. *How it shows up:* hybrid results contain irrelevant nodes in the 3rd–5th positions despite good top-1 precision. RRF cannot distinguish on-topic from off-topic variants. Mitigation: validate variant count, prompt-constrain topic scope, or lower `num_queries` to 2–3.
+
+4. **`QueryFusionRetriever` with mismatched `similarity_top_k`** — The fusion retriever's `similarity_top_k` is set to 3, but each sub-retriever returns 10. The fusion merges 20 candidates then aggressively cuts to 3. Relevant nodes ranked 4th–5th are discarded. The synthesizer only sees 3 nodes and misses key information. *How it shows up:* hybrid retrieval is worse than single-retriever for recall. Fix: set fusion `similarity_top_k` ≥ max(sub-retriever top-k values) before passing to cross-encoder; only cut down after reranking.
+
+---
+
+### 5. System Design Flavor [Intermediate]
+
+**Key components and interfaces:**
+
+```python
+from llama_index.core import VectorStoreIndex
+from llama_index.core.retrievers import VectorIndexRetriever, QueryFusionRetriever
+from llama_index.retrievers.bm25 import BM25Retriever
+from llama_index.core.postprocessor import SentenceTransformerRerank
+from llama_index.core.query_engine import RetrieverQueryEngine
+from llama_index.core import get_response_synthesizer
+from llama_index.core.schema import QueryBundle
+
+# ── Dense retriever ────────────────────────────────────────────────────────────
+dense_retriever = VectorIndexRetriever(
+    index=index,
+    similarity_top_k=10,
+)
+
+# ── Sparse retriever (BM25) ────────────────────────────────────────────────────
+# pip install llama-index-retrievers-bm25
+# BM25Retriever is built from nodes — must be rebuilt when index changes
+nodes = list(index.docstore.docs.values())
+bm25_retriever = BM25Retriever.from_defaults(
+    nodes=nodes,
+    similarity_top_k=10,
+)
+
+# ── Hybrid fusion with query rewriting ────────────────────────────────────────
+hybrid_retriever = QueryFusionRetriever(
+    retrievers=[dense_retriever, bm25_retriever],
+    similarity_top_k=10,           # final fused list size
+    num_queries=3,                 # 1 original + 2 LLM-generated variants
+    mode="reciprocal_rerank",      # RRF fusion
+    use_async=True,                # run sub-retrievers in parallel
+    verbose=True,                  # logs generated query variants
+)
+
+# ── Cross-encoder reranking postprocessor ─────────────────────────────────────
+# pip install sentence-transformers
+reranker = SentenceTransformerRerank(
+    model="cross-encoder/ms-marco-MiniLM-L-6-v2",  # fast, general-purpose
+    top_n=5,
+)
+
+# ── Full RetrieverQueryEngine with hybrid + reranking ─────────────────────────
+query_engine = RetrieverQueryEngine(
+    retriever=hybrid_retriever,
+    node_postprocessors=[reranker],
+    response_synthesizer=get_response_synthesizer(response_mode="compact"),
+)
+response = query_engine.query("HIPAA penalties for a data breach involving PHI")
+print(response.response)
+for n in response.source_nodes:
+    print(f"  [{n.score:.3f}] {n.node.metadata.get('source')} — {n.node.text[:80]!r}")
+
+# ── Dense-only baseline (for A/B comparison) ──────────────────────────────────
+dense_only_engine = RetrieverQueryEngine(
+    retriever=dense_retriever,
+    response_synthesizer=get_response_synthesizer(response_mode="compact"),
+)
+
+# ── Custom BaseRetriever (e.g., SQL lookup) ───────────────────────────────────
+from llama_index.core.retrievers import BaseRetriever
+from llama_index.core.schema import NodeWithScore, TextNode, QueryBundle
+from typing import List
+
+class SQLRetriever(BaseRetriever):
+    """Translates query to SQL, executes, returns rows as TextNodes."""
+
+    def __init__(self, db_conn, llm, table_name: str):
+        self._db = db_conn
+        self._llm = llm
+        self._table = table_name
+        super().__init__()
+
+    def _retrieve(self, query_bundle: QueryBundle) -> List[NodeWithScore]:
+        # Step 1: LLM generates SQL (constrained to SELECT + known schema)
+        sql_prompt = (
+            f"Generate a SELECT-only SQL query for this question: "
+            f"'{query_bundle.query_str}'\n"
+            f"Table: {self._table}. Columns: service, status, timestamp, message.\n"
+            f"Return ONLY the SQL query, nothing else."
+        )
+        sql = self._llm.complete(sql_prompt).text.strip()
+
+        # Step 2: Validate (must start with SELECT, no semicolons in middle)
+        if not sql.upper().startswith("SELECT") or sql.count(";") > 1:
+            return []
+
+        # Step 3: Execute with read-only connection
+        cursor = self._db.cursor()
+        cursor.execute(sql)
+        rows = cursor.fetchall()
+
+        # Step 4: Wrap rows as TextNodes
+        nodes = []
+        for row in rows[:20]:  # cap at 20 rows
+            text = f"Service: {row[0]} | Status: {row[1]} | Time: {row[2]} | {row[3]}"
+            node = TextNode(text=text, metadata={"source": self._table, "sql": sql})
+            nodes.append(NodeWithScore(node=node, score=1.0))
+        return nodes
+
+# ── Fusion of vector + SQL retrievers ─────────────────────────────────────────
+# sql_ret = SQLRetriever(db_conn, llm, "deployments")
+# fused = QueryFusionRetriever(
+#     retrievers=[dense_retriever, sql_ret],
+#     mode="simple",      # union + sort; no RRF needed for non-overlapping sources
+#     similarity_top_k=15,
+# )
+```
+
+**Key tradeoffs:**
+
+| Tradeoff | Option A | Option B | When to choose |
+|----------|----------|----------|----------------|
+| **Dense vs hybrid** | Dense-only (fast, cheap, 1 embedding call) | Dense + BM25 hybrid (slower, marginal cost, higher recall) | Dense-only when vocabulary in queries closely matches indexed text. Hybrid when queries use exact terminology, citations, product codes, or acronyms that dense retrieval misses. |
+| **RRF vs cross-encoder reranking** | RRF fusion (O(1) merge, no model call) | Cross-encoder (O(k) model calls, ~200ms CPU, higher precision) | RRF alone for latency < 100ms SLAs. Cross-encoder when precision matters more than the extra 100–300ms (medical, legal, compliance). |
+| **Query rewriting vs no rewriting** | No rewriting (1 query, fast, deterministic) | Query rewriting (LLM call + N retrievals, higher recall, adds 200ms + LLM cost) | No rewriting for short-form Q&A with well-phrased queries. Rewriting for search UIs where users type terse or ambiguous queries. |
+
+**Scaling consideration (10x query volume):**
+At 10× query volume, three changes dominate:
+- **Async sub-retriever execution** is no longer optional. `use_async=True` on `QueryFusionRetriever` runs dense and BM25 retrievals concurrently — wall-clock time is max(dense_latency, bm25_latency) instead of their sum.
+- **BM25 index caching** — rebuilding `BM25Retriever` from all nodes on every process start becomes expensive at 1M+ nodes. Cache the tokenized term index to disk (pickle/JSON) and reload it; only rebuild incrementally when new nodes are added.
+- **Cross-encoder reranking GPU offload** — at high QPS, CPU-based cross-encoder becomes the latency bottleneck. Move to GPU inference (single T4 GPU handles ~200 rerank calls/second) or switch to a lighter cross-encoder (`cross-encoder/ms-marco-TinyBERT-L-2-v2`) that trades slight quality for 4× speed.
+
+---
+
+### 6. Common Mistakes + Debugging [Beginner → Intermediate]
+
+#### Mistake 1: Forgetting to Rebuild `BM25Retriever` After Re-Ingestion
+
+**Symptom:** New documents were added to the `VectorStoreIndex` and are correctly returned by dense retrieval, but hybrid retrieval never returns them. Users notice the gap — recent documents are "invisible" to keyword search.
+
+**Likely cause:** `BM25Retriever` was built once from the initial node list and not updated when new nodes were added. It indexes a stale snapshot of the corpus.
+
+**First debugging step:**
+```python
+# Compare node counts
+bm25_node_count = len(bm25_retriever._nodes)
+index_node_count = len(list(index.docstore.docs.values()))
+print(f"BM25 node count: {bm25_node_count}")
+print(f"Index node count: {index_node_count}")
+# If they differ → BM25 is stale
+# Fix: rebuild after every ingestion run
+nodes = list(index.docstore.docs.values())
+bm25_retriever = BM25Retriever.from_defaults(nodes=nodes, similarity_top_k=10)
+```
+
+---
+
+#### Mistake 2: Setting `similarity_top_k` Too Low on `QueryFusionRetriever`
+
+**Symptom:** Adding hybrid retrieval makes results *worse* than dense-only. The top-3 results with hybrid are less relevant than with plain dense retrieval.
+
+**Likely cause:** `QueryFusionRetriever(similarity_top_k=3)` is cutting the merged list to 3 *before* cross-encoder reranking. Each sub-retriever returns 10 nodes (20 candidates), but fusion discards 17 of them before the reranker even sees them. The 3 RRF-top nodes may not be the 3 best cross-encoder nodes.
+
+**First debugging step:**
+```python
+# Check fusion output count before and after reranking
+hybrid_retriever = QueryFusionRetriever(
+    retrievers=[dense_retriever, bm25_retriever],
+    similarity_top_k=15,   # keep 15 through to reranker
+    verbose=True,
+)
+reranker = SentenceTransformerRerank(model="...", top_n=5)  # reranker cuts to 5
+# Now fusion keeps 15 → reranker cuts to 5 → synthesizer uses 5
+# Rule: fusion top_k should be >= max(sub-retriever top_k) before reranking
+```
+
+---
+
+#### Mistake 3: Query Rewriting Diluting Precision for Specific Terminology Queries
+
+**Symptom:** For queries containing exact product codes or regulation citations (*"CFR 45 164.312"*), hybrid retrieval returns a mix of directly relevant and tangentially related results. Precision is lower than dense-only.
+
+**Likely cause:** `num_queries=4` causes the LLM to generate general paraphrases like *"data security standards"* and *"electronic health record protection"* — correct semantically but not what the user needs. BM25 exact-match should dominate for these queries, but the RRF merge dilutes its signal with dense/rewritten results.
+
+**First debugging step:**
+```python
+# Inspect generated query variants
+hybrid_retriever = QueryFusionRetriever(
+    retrievers=[dense_retriever, bm25_retriever],
+    num_queries=4,
+    verbose=True,   # prints the generated variants
+)
+_ = hybrid_retriever.retrieve("CFR 45 164.312")
+# Check: are the generated variants still specific, or too general?
+# Fix: either reduce num_queries=1 for this query type,
+# or route exact-term queries (detected by regex) to BM25-only
+```
+
+---
+
+### 7. Hands-On Lab [Pro]
+
+#### Build — Dense vs Sparse vs Hybrid vs Reranked Comparison
+
+```python
+# retriever_fusion_lab.py
+# pip install llama-index-core llama-index-retrievers-bm25 sentence-transformers
+# Note: query rewriting requires an LLM API key; disable with num_queries=1 for offline testing
+
+import time
+from llama_index.core import Document, VectorStoreIndex, Settings
+from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.retrievers import VectorIndexRetriever, QueryFusionRetriever
+from llama_index.core.query_engine import RetrieverQueryEngine
+from llama_index.core import get_response_synthesizer
+from llama_index.core.llms import MockLLM
+
+Settings.llm = MockLLM(max_tokens=128)  # cost-free for structural testing
+
+# ── Corpus: mix of semantic and exact-term content ────────────────────────────
+DOCS = [
+    Document(text="HIPAA Privacy Rule requires covered entities to implement safeguards "
+                  "to protect PHI from unauthorized access or disclosure.",
+             metadata={"source": "hipaa_privacy.txt", "topic": "compliance"}),
+    Document(text="Under 45 CFR 164.312, covered entities must implement technical "
+                  "security measures to guard against unauthorized access to PHI "
+                  "transmitted over electronic communications networks.",
+             metadata={"source": "cfr_45_164.txt", "topic": "compliance"}),
+    Document(text="Civil monetary penalties for HIPAA violations range from $100 to "
+                  "$50,000 per violation, with a maximum of $1.9 million per year "
+                  "for identical provisions.",
+             metadata={"source": "hipaa_penalties.txt", "topic": "penalties"}),
+    Document(text="Data breach notification under HITECH Act requires notification "
+                  "to affected individuals within 60 days of discovery.",
+             metadata={"source": "hitech_breach.txt", "topic": "breach"}),
+    Document(text="The Office for Civil Rights (OCR) enforces HIPAA rules and can "
+                  "investigate complaints, conduct compliance reviews, and impose "
+                  "civil money penalties.",
+             metadata={"source": "ocr_enforcement.txt", "topic": "enforcement"}),
+]
+
+# Build index and nodes
+parser = SentenceSplitter(chunk_size=256, chunk_overlap=32)
+nodes  = parser.get_nodes_from_documents(DOCS)
+index  = VectorStoreIndex(nodes)
+print(f"Index built: {len(nodes)} nodes\n")
+
+# ── Build retrievers ───────────────────────────────────────────────────────────
+dense_ret = VectorIndexRetriever(index=index, similarity_top_k=5)
+
+try:
+    from llama_index.retrievers.bm25 import BM25Retriever
+    bm25_ret = BM25Retriever.from_defaults(nodes=nodes, similarity_top_k=5)
+    bm25_available = True
+except ImportError:
+    print("[WARN] llama-index-retrievers-bm25 not installed — skipping BM25 tests")
+    bm25_available = False
+
+# ── Test queries ───────────────────────────────────────────────────────────────
+QUERIES = [
+    "What are the financial penalties for HIPAA violations?",   # semantic query
+    "45 CFR 164.312 technical safeguards",                       # exact-term citation
+    "PHI breach notification timeline",                          # mixed
+]
+
+def run_retriever(retriever, query, label):
+    t0 = time.perf_counter()
+    results = retriever.retrieve(query)
+    ms = (time.perf_counter() - t0) * 1000
+    print(f"\n  [{label}] {ms:.0f}ms — {len(results)} nodes")
+    for r in results:
+        print(f"    [{r.score:.3f}] {r.node.metadata.get('source')} — {r.node.text[:70].strip()!r}")
+    return results
+
+for q in QUERIES:
+    print(f"\n{'='*65}")
+    print(f"QUERY: {q!r}")
+    dense_results = run_retriever(dense_ret, q, "Dense")
+    if bm25_available:
+        bm25_results  = run_retriever(bm25_ret, q, "BM25 Sparse")
+
+# ── Hybrid fusion retriever ────────────────────────────────────────────────────
+if bm25_available:
+    hybrid_ret = QueryFusionRetriever(
+        retrievers=[dense_ret, bm25_ret],
+        similarity_top_k=5,
+        num_queries=1,     # set to 1 to disable LLM rewriting for offline testing
+        mode="reciprocal_rerank",
+        use_async=False,
+    )
+    print(f"\n{'='*65}")
+    print("HYBRID FUSION (RRF, num_queries=1):")
+    for q in QUERIES:
+        print(f"\n  QUERY: {q!r}")
+        run_retriever(hybrid_ret, q, "Hybrid RRF")
+
+# ── Cross-encoder reranking ────────────────────────────────────────────────────
+try:
+    from llama_index.core.postprocessor import SentenceTransformerRerank
+    reranker = SentenceTransformerRerank(
+        model="cross-encoder/ms-marco-MiniLM-L-6-v2",
+        top_n=3,
+    )
+    # Apply manually to dense results for one query
+    test_query = "financial penalties for HIPAA violations"
+    raw_nodes = dense_ret.retrieve(test_query)
+    print(f"\n{'='*65}")
+    print(f"Cross-encoder reranking: {test_query!r}")
+    print(f"Before reranking ({len(raw_nodes)} nodes):")
+    for n in raw_nodes:
+        print(f"  [{n.score:.3f}] {n.node.metadata.get('source')}")
+
+    from llama_index.core.schema import QueryBundle
+    reranked = reranker.postprocess_nodes(raw_nodes, query_bundle=QueryBundle(test_query))
+    print(f"After reranking (top {len(reranked)} nodes):")
+    for n in reranked:
+        print(f"  [{n.score:.3f}] {n.node.metadata.get('source')}")
+
+except ImportError:
+    print("[WARN] sentence-transformers not installed — skipping reranking test")
+```
+
+---
+
+#### Break — Force the Failure Modes
+
+```python
+# BREAK 1: BM25 stale — add new doc, BM25 doesn't see it
+new_doc = Document(
+    text="State attorneys general may also bring HIPAA enforcement actions "
+         "and retain a portion of collected civil penalties.",
+    metadata={"source": "state_enforcement.txt", "topic": "enforcement"}
+)
+new_nodes = parser.get_nodes_from_documents([new_doc])
+# Add to VectorStoreIndex
+for node in new_nodes:
+    index.insert_nodes([node])   # dense index updated
+
+print("\nBREAK 1 — Stale BM25 after new doc added:")
+if bm25_available:
+    bm25_stale = bm25_ret.retrieve("state attorney general HIPAA")
+    print(f"  BM25 (stale) results for 'state attorney general HIPAA': {len(bm25_stale)}")
+    # Expected: 0 results — state_enforcement.txt not in BM25 index
+    dense_fresh = dense_ret.retrieve("state attorney general HIPAA")
+    print(f"  Dense (fresh) results: {len(dense_fresh)}")
+    # Fix: rebuild BM25
+    all_nodes = list(index.docstore.docs.values())
+    bm25_fresh = BM25Retriever.from_defaults(nodes=all_nodes, similarity_top_k=5)
+    bm25_rebuilt = bm25_fresh.retrieve("state attorney general HIPAA")
+    print(f"  BM25 (rebuilt) results: {len(bm25_rebuilt)}")
+
+# ──────────────────────────────────────────────────────────────────────────────
+
+# BREAK 2: fusion top_k too small — relevant nodes cut before reranking
+if bm25_available:
+    tight_fusion = QueryFusionRetriever(
+        retrievers=[dense_ret, bm25_ret],
+        similarity_top_k=2,   # cuts to 2 before reranker sees them
+        num_queries=1,
+        mode="reciprocal_rerank",
+    )
+    loose_fusion = QueryFusionRetriever(
+        retrievers=[dense_ret, bm25_ret],
+        similarity_top_k=8,   # keeps 8 through to reranker
+        num_queries=1,
+        mode="reciprocal_rerank",
+    )
+    q = "HIPAA civil monetary penalties"
+    tight_r = tight_fusion.retrieve(q)
+    loose_r = loose_fusion.retrieve(q)
+    print(f"\nBREAK 2 — fusion top_k comparison:")
+    print(f"  Tight (top_k=2): {[r.node.metadata.get('source') for r in tight_r]}")
+    print(f"  Loose (top_k=8): {[r.node.metadata.get('source') for r in loose_r]}")
+    # hipaa_penalties.txt should appear in loose but may be cut from tight
+```
+
+---
+
+#### Measure
+
+```python
+# Measure recall@k for dense vs hybrid on the test query set
+# (simplified — in prod, measure against human-labeled relevance judgments)
+
+GROUND_TRUTH = {
+    "What are the financial penalties for HIPAA violations?": ["hipaa_penalties.txt"],
+    "45 CFR 164.312 technical safeguards": ["cfr_45_164.txt"],
+    "PHI breach notification timeline": ["hitech_breach.txt"],
+}
+
+def recall_at_k(retriever, gt_map, k=3):
+    hits = 0
+    for query, relevant in gt_map.items():
+        results = retriever.retrieve(query)[:k]
+        retrieved_sources = {r.node.metadata.get("source") for r in results}
+        if any(rel in retrieved_sources for rel in relevant):
+            hits += 1
+    return hits / len(gt_map)
+
+print("\n── Recall@3 Comparison ──")
+print(f"  Dense-only  : {recall_at_k(dense_ret, GROUND_TRUTH):.2f}")
+if bm25_available:
+    print(f"  BM25-only   : {recall_at_k(bm25_ret, GROUND_TRUTH):.2f}")
+    print(f"  Hybrid (RRF): {recall_at_k(hybrid_ret, GROUND_TRUTH):.2f}")
+
+# Expected: hybrid ≥ dense ≥ depends on query type
+# For exact-term queries (CFR citations), BM25 alone often wins
+# For semantic queries, dense alone or hybrid wins
+```
+
+---
+
+#### Explain — Why It Works This Way
+
+Dense and sparse retrieval fail in complementary ways. Dense retrieval embeds the query into a continuous vector space — semantically similar text ends up nearby even with different words. But exact terms (citation numbers, product codes, medical codes) are often *not* near their semantic neighbors in embedding space because the training data didn't teach the model that "45 CFR 164.312" and "technical safeguards for electronic PHI" are the same concept. BM25 inverts this — it excels at exact term matching but fails when the query and document use different vocabulary.
+
+RRF fusion works because it's rank-based, not score-based. It doesn't matter that BM25 scores are on a completely different scale from cosine similarity scores. What matters is that a node ranked 1st by BM25 and 4th by dense gets a high fused score regardless of the raw numbers. This scale-invariance is why RRF is the default fusion strategy.
+
+Cross-encoder reranking is the most accurate step in the pipeline — a (query, passage) pair fed jointly into the model allows it to attend to query-specific relevance signals that bi-encoder retrieval simply can't capture. But it's also the most expensive: O(k) model calls per query. The standard pattern is: retrieve broadly (top-20 or top-50) using cheap dense/hybrid retrieval, then rerank to top-5 using the expensive cross-encoder. This concentrates accuracy where it matters most — the final set sent to synthesis.
+
+---
+
+### 8. Active Recall (Spaced Repetition) [Beginner → Pro]
+
+**Q1 [Beginner]:** What is the fundamental difference between dense and sparse retrieval, and what is each one's primary failure mode?
+
+> **A:** Dense retrieval embeds the query and finds nodes by vector similarity — fails when query and documents use different vocabulary for the same concept (synonym mismatch). Sparse (BM25) retrieval scores by exact term overlap — fails when query and documents use different vocabulary (e.g., paraphrases, domain-specific synonyms). They fail in opposite directions, which is why combining them (hybrid) improves recall over either alone.
+
+---
+
+**Q2 [Beginner]:** What is Reciprocal Rank Fusion (RRF) and why is it used instead of a weighted average of scores?
+
+> **A:** RRF merges multiple ranked lists by computing `score(node) = Σ 1/(rank_in_list_i + 60)` for each list. A node appearing highly in *multiple* lists gets a high fused score. It's preferred over weighted score averaging because dense (cosine) and sparse (BM25) scores are on completely different scales — directly averaging them would require manual calibration of weights that changes with the corpus. RRF is scale-invariant: only rank positions matter, not raw score magnitudes.
+
+---
+
+**Q3 [Intermediate]:** You added 500 new documents to your `VectorStoreIndex` overnight. Your hybrid retrieval system (dense + BM25) starts returning stale results for keyword queries. What is the root cause and the precise fix?
+
+> **A:** Root cause: `BM25Retriever` was built from the node list at construction time. The 500 new nodes were added to the `VectorStoreIndex` (dense index updated) but the `BM25Retriever` still holds the old node snapshot. Fix: after every ingestion run that adds nodes, rebuild the `BM25Retriever`: `nodes = list(index.docstore.docs.values()); bm25_retriever = BM25Retriever.from_defaults(nodes=nodes, similarity_top_k=10)`. Wire this rebuild step into your ingestion pipeline's post-processing.
+
+---
+
+**Q4 [Intermediate]:** When does cross-encoder reranking hurt retrieval quality rather than help it?
+
+> **A:** Cross-encoder reranking hurts quality when: (1) The cross-encoder model was trained on a general domain (e.g., MS MARCO web queries) but your corpus is highly specialized (medical codes, legal citations, code). The model may score domain-specific terminology poorly because it's out-of-distribution. (2) `QueryFusionRetriever.similarity_top_k` is too small — the reranker is given a pre-cut set of 3 nodes instead of the full 10–15, so it can't recover nodes that were incorrectly eliminated by RRF. (3) The cross-encoder scores near-uniformly (small variance) → re-ranking introduces random noise. Detect by logging `reranker_score_delta`; if it's near zero, skip reranking.
+
+---
+
+**Q5 [Pro]:** Design a retrieval pipeline for a codebase assistant that must answer: (a) semantic questions (*"How does the auth module handle token expiry?"*) and (b) exact-symbol lookups (*"Find all usages of `UserService.createSession()`"*). What retrievers, fusion strategy, and postprocessors would you use?
+
+> **A:** (1) **Dense retriever** (`VectorIndexRetriever`, top_k=10) on chunked code + docstrings — handles semantic questions. (2) **Custom `CodeSymbolRetriever`** subclassing `BaseRetriever` — uses a tree-sitter or AST index for exact symbol lookups; `_retrieve()` returns all files/lines containing the exact symbol string. (3) **`QueryFusionRetriever([dense, code_symbol], mode="simple", similarity_top_k=15)`** — `"simple"` mode (union + sort) is appropriate because the two retrievers return non-overlapping node types; RRF not needed. (4) **`SentenceTransformerRerank(top_n=5)`** — final reranking on the fused set against the original query. (5) Routing layer: if the query contains a camelCase symbol pattern (regex), skip dense entirely and route directly to `CodeSymbolRetriever`.
+
+---
+
+### 9. Practice
+
+**Mini-exercise:** You're building a legal research tool over 10,000 case files. Users ask two types of queries: (a) *"Smith v. Jones 2019 ruling"* (exact citation), (b) *"precedents for contract breach in software licensing"* (semantic). Design the retriever stack with BM25 + dense + fusion and explain why each component is needed.
+
+> **Suggested answer:**
+> - **Dense (`VectorIndexRetriever`, top_k=15):** handles semantic queries (b). Finds nodes semantically related to "contract breach" and "software licensing" even if they use different wording.
+> - **BM25 (`BM25Retriever`, top_k=15):** handles exact citation queries (a). "Smith v. Jones 2019" will have very high BM25 score for nodes containing that exact string; dense would likely miss it.
+> - **`QueryFusionRetriever([dense, bm25], mode="reciprocal_rerank", similarity_top_k=10, num_queries=2):** RRF merges; for citation queries BM25 dominates; for semantic queries dense dominates; for middle-ground queries both contribute.
+> - **`SentenceTransformerRerank(top_n=5)`:** Final precision step. Legal domain — precision matters more than latency.
+> - **Rebuild BM25** on every nightly ingestion run: wire into the pipeline's post-ingestion hook.
+
+---
+
+**Capstone system design question:** Design the full retrieval layer for a financial services knowledge base serving 50K queries/day. The corpus has 500K nodes (earnings reports, SEC filings, internal policies). Queries range from *"EBITDA definition"* to *"Goldman Sachs 10-K 2023 risk factors"* to *"compare revenue growth across all Q3 2024 reports."* Latency SLA: < 2 seconds. Budget constraint: < $500/month on LLM API for retrieval.
+
+> **Answer outline:**
+> - **Tier 1 (semantic):** `VectorIndexRetriever(top_k=20)` with `PineconeVectorStore` (handles 500K nodes at low query latency).
+> - **Tier 2 (exact-term):** `BM25Retriever(top_k=20)` rebuilt nightly after ingestion. Handles SEC citation lookups (*"10-K 2023"*, *"Rule 10b-5"*).
+> - **Fusion:** `QueryFusionRetriever([dense, bm25], mode="reciprocal_rerank", similarity_top_k=20, num_queries=1, use_async=True)`. `num_queries=1` disables LLM rewriting to stay within budget. Async runs dense + BM25 in parallel.
+> - **Reranking:** `SentenceTransformerRerank(model="cross-encoder/ms-marco-MiniLM-L-6-v2", top_n=8)` on local GPU (T4). Zero marginal API cost.
+> - **Synthesis:** `compact` mode, top_n=8 nodes → ~1 LLM call/query. At 50K queries/day × $0.002/query ≈ $3K/month synthesis (acceptable). Retrieval LLM cost: $0 (rewriting disabled).
+> - **Latency budget:** Dense (async) ~60ms + BM25 (async) ~10ms = max ~60ms + RRF ~1ms + reranking ~50ms (GPU) + synthesis ~800ms = ~920ms. Within 2s SLA.
+> - **Comparison queries:** Route queries containing "compare" / "across all" via `RouterQueryEngine` to a `SummaryIndex` path with 80-node pre-filter. Different synthesis mode (`tree_summarize`, async).
+
+---
+
+### 10. Production Reality Check (Mandatory) ✅
+
+**If this fails in prod, what's the first thing we inspect?**
+
+> **Check `sparse_hit_rate` and `fusion_node_count` per retriever.**
+>
+> ```python
+> # After every retrieval, log per-retriever contribution:
+> dense_ids  = {n.node_id for n in dense_ret.retrieve(query)}
+> bm25_ids   = {n.node_id for n in bm25_ret.retrieve(query)} if bm25_available else set()
+> overlap    = dense_ids & bm25_ids
+> hybrid_ids = {n.node_id for n in hybrid_ret.retrieve(query)}
+>
+> print(f"Dense nodes: {len(dense_ids)}")
+> print(f"BM25 nodes:  {len(bm25_ids)}")
+> print(f"Overlap:     {len(overlap)} ({100*len(overlap)/max(len(dense_ids),1):.0f}%)")
+> print(f"Fused nodes: {len(hybrid_ids)}")
+> ```
+>
+> - `BM25 nodes = 0` → BM25 retriever is stale or broken; rebuild from current node list.
+> - `Overlap = 100%` → BM25 adds no new candidates; corpus vocabulary matches embeddings well enough that dense alone is sufficient — remove BM25 to save complexity.
+> - `Fused nodes < expected` → `similarity_top_k` on fusion is too small; nodes are being cut before synthesis.
+> - `Dense nodes = 0` → embedding model or vector store connection failure; alert immediately.
+>
+> The overlap percentage is the primary signal for whether hybrid retrieval is actually helping. If overlap is persistently > 80%, dense-only is probably sufficient and you can simplify the pipeline.
+
+---
+
+### 11. Curiosity Bridge (Mandatory) ✅
+
+You now have a fully customizable retrieval layer: dense, sparse, hybrid fusion, custom retrievers, and cross-encoder reranking. Every query finds the right nodes as reliably as the pipeline allows.
+
+But some questions can't be answered by retrieving *existing* nodes — they require *reasoning across* retrieved information, *decomposing* the question into sub-questions, or *iterating* over multiple retrieval cycles. The next question is: **what happens when a single retrieval-synthesis pass isn't enough — and how do you build query engines that break a complex question into sub-questions, retrieve independently for each, and synthesize a unified answer?**
+
+That's **14.2.c: Sub-Question Query Engine and Query Decomposition** — where retrieval becomes a multi-step reasoning loop rather than a single shot.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit check:** You're done with 14.2.b when you can explain why dense and sparse retrieval fail in opposite directions, implement a `QueryFusionRetriever` with BM25 + dense + RRF from scratch, explain why RRF is scale-invariant compared to score averaging, identify when cross-encoder reranking hurts rather than helps, and debug a stale BM25 index using the overlap percentage check.
+
+---
+
+**Carry-Forward Review (interleaved recall from 14.2.a):**
+
+*Q: What is the difference between `compact` and `tree_summarize` synthesis modes, and when would a 200-node corpus force you to switch from compact to tree_summarize?*
+
+> **A:** `compact` packs as many nodes as possible into each LLM context window — O(n/ctx_window) calls, typically 1–3 for small corpora. `tree_summarize` builds a bottom-up summarization tree — O(n log n) LLM calls but parallelizable via async. Switch from `compact` to `tree_summarize` when: the total tokens of all nodes exceed the LLM's context window (compact would have to split into many sequential calls with no cross-call coherence), or when you need a *synthesized summary* rather than a direct answer (tree_summarize produces more cohesive long-form answers). At 200 nodes × 512 tokens = 102K tokens, even a 128K context model runs at 80% capacity — `tree_summarize` with async batches is both safer and faster.
+
+---
+
+
+## Subtopic 14.2.c: Workflow Orchestration in Data-Heavy Applications
+
+### Reading Path + Level Tags
+
+- **Beginner:** Read sections 1–2 and the Active Recall.
+- **Intermediate:** Add sections 3–5 and the Hands-On Lab Build step.
+- **Pro:** Complete the full Hands-On Lab (Build → Break → Measure → Explain) plus the capstone practice question.
+
+---
+
+### 0. Pre-Question Hook [Beginner]
+
+**Pause:** You've built a LlamaIndex RAG pipeline: load documents, parse nodes, embed, index, query. It works in a script. But now you need to: (1) fan-out loading across 10 sources in parallel, (2) pause for human review of flagged documents before indexing them, and (3) retry failed embeddings without re-running the whole pipeline. A `for` loop and an `IngestionPipeline` can't do any of that cleanly. Before reading — what abstraction would you reach for?
+
+---
+
+### 1. The Intuition (Plain English) [Beginner]
+
+A pipeline is linear: A → B → C → D. But real data workflows branch, wait, retry, and loop. **Workflow orchestration** is the layer that manages *how steps connect*, not just *what each step does*.
+
+LlamaIndex v0.10 introduced a first-class **`Workflow`** abstraction — an event-driven, step-based execution model:
+
+- Each **step** is a Python function decorated with `@step`
+- Steps communicate by **emitting and consuming typed Events** (not by calling each other directly)
+- The workflow engine routes events to the correct step automatically
+- Steps can run **in parallel** if they consume the same event type
+- A **`Context`** object (`ctx`) provides shared state across all steps in a run
+
+Think of it like a message bus inside your data pipeline: steps post events onto the bus and subscribe to events they can handle. This decoupling means steps don't know about each other — they only know about event types.
+
+**Analogy:** An airport terminal. Each gate (step) handles passengers (events) of a certain flight type. The dispatch system (workflow engine) routes each passenger to the right gate. Gates don't communicate directly — they just accept the right boarding pass and emit the next one (departure confirmation). The analogy breaks down when steps need to *wait* for multiple event types simultaneously (a gate that won't open until both ground crew AND pilot confirm ready) — that's handled by `ctx.collect_events()`, which has no clean airport equivalent.
+
+**Key terms (first use):**
+
+- **`Workflow`** — LlamaIndex's event-driven orchestration class; wraps a set of `@step`-decorated functions and manages event routing between them.
+- **`@step`** — decorator that marks a function as a workflow step; the function signature's type hints declare which event type(s) it consumes and produces.
+- **`StartEvent`** — built-in event that triggers the first step; the input you pass to `workflow.run()`.
+- **`StopEvent`** — built-in event that terminates the workflow; the value passed to `StopEvent(result=...)` becomes the workflow's final return value.
+- **`Event`** — Pydantic-based base class for all custom events; fields carry data between steps.
+- **`Context` (`ctx`)** — per-run shared state object passed to every step; use `await ctx.get("key")` / `await ctx.set("key", value)` for cross-step data sharing; use `ctx.send_event()` to fan-out.
+- **`IngestionPipeline`** — simpler, linear alternative to `Workflow`; a fixed sequence of `Transformation` objects (parsers, embedders, metadata extractors) applied to documents; no branching or event routing.
+- **`handler.run()`** — async method that starts a workflow run; returns a coroutine that resolves to the `StopEvent.result` value.
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+```mermaid
+flowchart TD
+    S["StartEvent\n(raw_documents: List[Document])"]
+
+    subgraph Workflow["LlamaIndex Workflow Engine (event router)"]
+        V["@step validate_docs\nConsumes: StartEvent\nEmits: ValidEvent | FlaggedEvent\n─────────────────────────\nChecks metadata completeness\nRoutes: valid → index\nFlagged → human review"]
+
+        H["@step human_review\nConsumes: FlaggedEvent\nEmits: ValidEvent | DropEvent\n─────────────────────────\nPauses for external signal\nctx.send_event(ValidEvent) or\nctx.send_event(DropEvent)"]
+
+        I["@step index_nodes\nConsumes: ValidEvent\nEmits: IndexedEvent\n─────────────────────────\nSentenceSplitter → embed\nVectorStoreIndex.insert_nodes()"]
+
+        Q["@step build_query_engine\nConsumes: IndexedEvent\nEmits: StopEvent\n─────────────────────────\nRetrieverQueryEngine setup\nStopEvent(result=engine)"]
+
+        DROP["@step drop_doc\nConsumes: DropEvent\nEmits: nothing (silent)\n─────────────────────────\nLogs rejected doc_id\nNo-op"]
+    end
+
+    S --> V
+    V -->|valid| I
+    V -->|flagged| H
+    H -->|approved| I
+    H -->|rejected| DROP
+    I --> Q
+    Q --> DONE["Workflow returns QueryEngine"]
+
+    style H fill:#fff3cd,stroke:#856404
+    style DROP fill:#f8d7da,stroke:#842029
+```
+
+**Key insight:** Steps are **decoupled**. `validate_docs` doesn't import `index_nodes` — it just emits a `ValidEvent`. The workflow engine delivers it. This means you can insert a new step (e.g., `PII_RedactionStep`) between validate and index without modifying either surrounding step.
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+#### Scenario A: Document Ingestion with Human Review Gate — Healthcare Records Platform
+
+**Context:** A healthcare platform ingests 10,000 clinical notes per night. Before indexing, PHI-sensitive documents must be flagged by a compliance model and routed to a human reviewer. Non-flagged documents should proceed to embedding immediately. Reviewers may take up to 24 hours — the pipeline must *pause and resume* rather than block a thread.
+
+**How Workflow fits in:**
+- `StartEvent` carries a batch of `Document` objects (100 at a time, fan-out via `ctx.send_event()` in a loop).
+- `@step validate_docs`: runs a local PHI classifier (e.g., `presidio-analyzer`). Emits `ValidEvent` for clean docs and `FlaggedEvent` for PHI-positive ones.
+- `@step human_review`: stores the flagged document to a review queue (Redis/DB), then suspends by awaiting a webhook callback (`await ctx.get("review_decision_{doc_id}")`). A separate reviewer UI calls back and sets the key. The step resumes and emits `ValidEvent` or `DropEvent`.
+- `@step index_nodes`: `SentenceSplitter → SentenceTransformerEmbeddings → PineconeVectorStore.insert_nodes()`. Parallelised: because 100 `ValidEvent`s are emitted, the workflow runs 100 instances of this step concurrently.
+
+**Constraints:**
+- **Latency:** Async parallelism: 100 documents embedded concurrently — 100 × 50ms = 5s sequentially vs ~0.5s with concurrency. Human review adds 0–24h but doesn't block the non-flagged path.
+- **Reliability:** Each step emits its result as an event — if a crash occurs mid-workflow, completed steps don't re-run. In production, pair with an external orchestrator (Prefect) that persists the event log to durable storage.
+- **Cost:** PHI classifier runs locally — no LLM API cost per document. Only embedding calls incur cost (1 call per chunked node). A 10,000-document batch at 3 nodes/doc = 30,000 embedding calls × $0.0001 = $3/night.
+- **What "good" looks like:** PHI-flagged documents are never indexed without human approval. Non-flagged documents complete indexing within 2 minutes. Rejected documents are logged with `doc_id` and rejection reason for audit.
+
+---
+
+#### Scenario B: Multi-Source Research Aggregator — Fan-Out Document Loading
+
+**Context:** A financial research platform aggregates earnings reports from 50 SEC EDGAR feeds, internal analyst notes, and news APIs. Each source has different latency (SEC API: 2–5s, internal DB: <100ms, news API: 500ms–3s). Processing them sequentially wastes wall-clock time.
+
+**How Workflow fits in:**
+- `StartEvent(sources=["sec", "internal_db", "news"])` triggers a fan-out step.
+- `@step dispatch_sources`: loops over sources, emitting one `LoadSourceEvent(source_type=s)` per source. All 3 fire concurrently.
+- Three `@step load_*` functions each consume `LoadSourceEvent` and return `RawDocsEvent(documents=[...])`.
+- `@step merge_and_parse`: collects all 3 `RawDocsEvent`s using `ctx.collect_events(ev, [RawDocsEvent]*3, wait_for=3)`, merges docs, runs `SentenceSplitter`.
+- `@step embed_and_index` → `StopEvent`.
+
+**Constraints:**
+- **Latency:** Sequential: 5s + 0.1s + 3s = 8.1s. Parallel (workflow fan-out): max(5s, 0.1s, 3s) = 5s. 38% faster with zero code change to the load steps.
+- **Failure mode:** One source (news API) times out. `load_news` catches the exception and emits a `SourceFailedEvent`. `merge_and_parse` uses `ctx.collect_events(ev, [RawDocsEvent]*2 + [SourceFailedEvent]*1)` to proceed with partial data.
+- **What "good" looks like:** Workflow completes with 49 of 50 sources when 1 fails; a `SourceFailedEvent` is logged with the failed source ID; alert is sent for the failed source.
+
+---
+
+#### Scenario C: Production Batch Re-Indexing — External Orchestrator Integration
+
+**Context:** An enterprise knowledge base re-ingests all 500,000 documents weekly. This cannot run as a long-lived Python process — it must be scheduled, retried on failure, and reported on in a dashboard.
+
+**How external orchestration fits in:**
+- **LlamaIndex Workflow** handles the *per-batch* processing logic (validate → chunk → embed → upsert). It's the execution unit.
+- **Prefect** (or Apache Airflow) handles *scheduling, orchestration, and retry* of those batches:
+  - A Prefect `@flow` breaks 500K documents into 500 batches of 1,000.
+  - Each batch runs as a Prefect `@task` that instantiates and runs a `LlamaIndexIngestionWorkflow`.
+  - Prefect provides: retry on failure (3 attempts with exponential backoff), concurrent batch execution (10 batches at a time), persistent run history, failure alerts.
+
+**Constraints:**
+- **Cost control:** Embedding 500K docs × 3 nodes/doc × $0.0001 = $150/run. Cap concurrency at 10 batches to avoid API rate limits.
+- **Idempotency:** Each batch upserts by `doc_id`. Re-running a failed batch doesn't duplicate nodes.
+- **What "good" looks like:** Weekly re-indexing completes in < 4 hours, costs < $150, failed batches are retried automatically.
+
+---
+
+### 4. System View (Think Like a Systems Engineer) [Intermediate]
+
+**Inputs → Transformations → Outputs:**
+
+```
+INPUTS:
+  - StartEvent payload (documents, config, source IDs)
+  - Workflow definition (set of @step functions + event type wiring)
+  - ctx shared state (KV store, per-run)
+
+STEP EXECUTION MODEL (asyncio-based):
+  - When a step emits Event(X) → engine schedules all steps consuming X as asyncio.Task
+  - Fan-out: ctx.send_event(X) in a loop → N concurrent step instances
+  - Fan-in: ctx.collect_events(ev, [EventType]*N, wait_for=N) → blocks until N arrive
+  - Shared state: ctx.get("key") / ctx.set("key", value) → asyncio-safe KV
+
+OUTPUTS:
+  - StopEvent.result → return value of workflow.run()
+  - Side effects: nodes inserted into vector store, logs, metrics
+
+IngestionPipeline (simpler linear alternative):
+  INPUTS:  List[Document] + List[Transformation]
+  TRANSFORMATIONS: sequential doc → T1 → T2 → ... → List[BaseNode]
+                   IngestionCache: skips nodes whose content hash hasn't changed
+  OUTPUTS: List[BaseNode] upserted to vector store
+  LIMITATIONS: No branching, no events, no human-in-the-loop
+```
+
+**Observability — what to log, trace, and measure:**
+
+| Signal | What to capture | Why |
+|--------|----------------|-----|
+| `step_name` + `event_type` | Which step processed which event | Latency per step; bottleneck identification |
+| `step_duration_ms` | Wall-clock time per step instance | p95 per step; regression detection |
+| `events_emitted_count` | Number of events emitted per step | Fan-out ratio; detects unexpected collapse |
+| `workflow_run_id` | UUID per workflow invocation | Correlate all steps in a run for tracing |
+| `nodes_processed` | Cumulative count of nodes indexed | Progress tracking |
+| `retry_count` | Number of retries per step | Flaky step detection |
+| `ctx_state_size_bytes` | Size of shared state in ctx | Detect context bloat |
+
+**Failure points:**
+
+1. **Fan-in deadlock** — `ctx.collect_events(wait_for=N)` never receives all N events because one parallel branch crashed silently. Workflow hangs until timeout. *Fix:* every step must `except → ctx.send_event(FailedEvent(...))`.
+
+2. **`ctx.set()` key collision in fan-out** — 50 parallel steps all write to `ctx.set("count", x)` — last writer wins. *Fix:* scope keys by doc_id: `ctx.set(f"count_{doc_id}", x)`.
+
+3. **IngestionCache stale after embedding model upgrade** — cache key is content hash only; model change not reflected. Old embeddings returned silently. *Fix:* clear cache before any model version bump.
+
+4. **Step LLM call with no timeout** — LLM call hangs; asyncio event loop blocked; other step instances starved. *Fix:* `asyncio.wait_for(llm.acomplete(...), timeout=30.0)`.
+
+---
+
+### 5. System Design Flavor [Intermediate]
+
+**Key components and code:**
+
+```python
+# workflow_design.py
+# pip install llama-index-core
+
+import asyncio
+from llama_index.core.workflow import (
+    Workflow, StartEvent, StopEvent, Event, step, Context,
+)
+from llama_index.core import Document
+from llama_index.core.node_parser import SentenceSplitter
+
+# ── Custom Event types ─────────────────────────────────────────────────────────
+class ValidEvent(Event):
+    doc: Document
+
+class FlaggedEvent(Event):
+    doc: Document
+    reason: str
+
+class ParsedEvent(Event):
+    nodes: list   # List[TextNode]
+
+class IndexedEvent(Event):
+    doc_count: int
+    node_count: int
+
+# ── Workflow definition ────────────────────────────────────────────────────────
+class DataIngestionWorkflow(Workflow):
+
+    @step
+    async def validate_docs(self, ctx: Context, ev: StartEvent) -> ValidEvent | FlaggedEvent:
+        docs = ev.documents
+        await ctx.set("total_docs", len(docs))
+        for doc in docs:
+            if not doc.metadata.get("source"):
+                ctx.send_event(FlaggedEvent(doc=doc, reason="missing_source"))
+            else:
+                ctx.send_event(ValidEvent(doc=doc))
+        return ValidEvent(doc=docs[0])  # ignored by engine when send_event used
+
+    @step
+    async def handle_flagged(self, ctx: Context, ev: FlaggedEvent) -> None:
+        print(f"[FLAGGED] doc_id={ev.doc.doc_id[:8]} reason={ev.reason}")
+        # Production: write to review queue; await human callback
+
+    @step
+    async def parse_nodes(self, ctx: Context, ev: ValidEvent) -> ParsedEvent:
+        parser = SentenceSplitter(chunk_size=256, chunk_overlap=32)
+        nodes = parser.get_nodes_from_documents([ev.doc])
+        return ParsedEvent(nodes=nodes)
+
+    @step
+    async def index_nodes(self, ctx: Context, ev: ParsedEvent) -> IndexedEvent:
+        await asyncio.sleep(0.01)   # simulate embedding latency
+        indexed = await ctx.get("indexed_count", default=0)
+        await ctx.set("indexed_count", indexed + len(ev.nodes))
+        return IndexedEvent(doc_count=1, node_count=len(ev.nodes))
+
+    @step
+    async def finalize(self, ctx: Context, ev: IndexedEvent) -> StopEvent | None:
+        total_docs = await ctx.get("total_docs", default=0)
+        completed = await ctx.get("completed_docs", default=0) + ev.doc_count
+        await ctx.set("completed_docs", completed)
+        if completed >= total_docs:
+            total_nodes = await ctx.get("indexed_count", default=0)
+            return StopEvent(result={"docs": completed, "nodes": total_nodes})
+        return None  # keep waiting for remaining docs
+
+
+# ── IngestionPipeline (simpler linear alternative) ─────────────────────────────
+from llama_index.core.ingestion import IngestionPipeline
+
+def run_ingestion_pipeline(docs):
+    pipeline = IngestionPipeline(
+        transformations=[
+            SentenceSplitter(chunk_size=256, chunk_overlap=32),
+            # Production: add SentenceTransformerEmbeddings() here
+        ]
+    )
+    nodes = pipeline.run(documents=docs, show_progress=True)
+    print(f"[IngestionPipeline] {len(docs)} docs -> {len(nodes)} nodes")
+    return nodes
+```
+
+**Key tradeoffs:**
+
+| Tradeoff | `IngestionPipeline` | `Workflow` | When to choose |
+|----------|--------------------|-----------|----|
+| **Complexity vs capability** | Dead simple (list of transforms, `run()`) | Full event routing, branching, fan-out | Pipeline for pure linear ETL; Workflow when you need conditional logic, parallelism, or human gates |
+| **Error handling** | Fails entire pipeline on any error | Each branch handles its own exceptions independently | Workflow for partial-success tolerance; Pipeline for all-or-nothing jobs |
+| **State management** | Stateless (transforms are pure functions) | `ctx` provides cross-step shared state | Workflow when steps need intermediate results; Pipeline when transforms are independent |
+
+**Scaling consideration (10x document volume):**
+At 10x, three changes dominate:
+- **Async embedding**: use `async_embed_nodes()` in batches of 100 — reduces wall-clock time from O(N) to O(N/batch_size).
+- **External orchestration**: move from in-process `Workflow.run()` to Prefect/Airflow tasks for scheduling, retries, and cost tracking across 10+ parallel batch workers.
+- **`IngestionCache` content-hash filtering**: at 500K docs with ~5% change weekly, the cache skips 95% of embedding API calls — reducing cost from $150/run to ~$7.50/run.
+
+---
+
+### 6. Common Mistakes + Debugging [Beginner → Intermediate]
+
+#### Mistake 1: Fan-in Step Never Completes (Deadlock)
+
+**Symptom:** Workflow runs forever with no output. Step logs are visible, but `StopEvent` is never emitted.
+
+**Likely cause:** `ctx.collect_events(wait_for=N)` is waiting for N events, but only N-1 were emitted — one parallel branch crashed silently (exception swallowed, no error event emitted).
+
+**First debugging step:**
+```python
+# Add a global workflow timeout and verbose mode
+wf = DataIngestionWorkflow(timeout=60, verbose=True)
+# verbose=True logs every event emission and step entry
+# Count emitted events per type in the log output
+# If N emitted but only N-1 received by collect_events → silent crash
+# Fix: add except block in every step that emits a FailedEvent
+@step
+async def parse_nodes(self, ctx: Context, ev: ValidEvent) -> ParsedEvent | FailedEvent:
+    try:
+        ...
+        return ParsedEvent(nodes=nodes)
+    except Exception as e:
+        return FailedEvent(doc_id=ev.doc.doc_id, error=str(e))
+```
+
+---
+
+#### Mistake 2: ctx Key Collision in Fan-Out (Race Condition)
+
+**Symptom:** Final `indexed_count` is the count from a single document, not the sum of all documents.
+
+**Likely cause:** Each of the N parallel `index_nodes` steps does `await ctx.set("indexed_count", len(ev.nodes))` — overwriting the key. Last writer wins.
+
+**First debugging step:**
+```python
+# WRONG: last writer wins
+await ctx.set("indexed_count", len(ev.nodes))
+
+# RIGHT: scope by doc_id, sum in finalize
+await ctx.set(f"indexed_{ev.doc.doc_id}", len(ev.nodes))
+
+# In finalize:
+total = sum(
+    await ctx.get(f"indexed_{doc_id}", default=0)
+    for doc_id in all_doc_ids
+)
+```
+
+---
+
+#### Mistake 3: IngestionCache Stale After Embedding Model Upgrade
+
+**Symptom:** After upgrading the embedding model, retrieval quality drops despite the cache showing a high hit rate.
+
+**Likely cause:** `IngestionCache` keys are content hashes of node text — the embedding model version is not part of the key. Cached nodes have stale embeddings from the old model.
+
+**First debugging step:**
+```python
+# Simplest fix: clear cache before running with a new model version
+pipeline = IngestionPipeline(transformations=[...])
+pipeline.cache.clear()
+# Document this in your model upgrade runbook:
+# "Always clear IngestionCache after changing embedding model"
+```
+
+---
+
+### 7. Hands-On Lab [Pro]
+
+#### Build — Event-Driven Ingestion Workflow
+
+```python
+# workflow_lab.py
+# pip install llama-index-core
+
+import asyncio
+from llama_index.core.workflow import (
+    Workflow, StartEvent, StopEvent, Event, step, Context,
+)
+from llama_index.core import Document
+from llama_index.core.node_parser import SentenceSplitter
+
+class ValidDoc(Event):
+    doc: Document
+
+class ParsedNodes(Event):
+    doc_id: str
+    node_count: int
+
+class FlaggedDoc(Event):
+    doc_id: str
+    reason: str
+
+DOCS = [
+    Document(text="HIPAA requires covered entities to safeguard PHI.", metadata={"source": "hipaa.txt"}),
+    Document(text="Revenue for Q3 2024 was $4.2B, up 12% YoY.", metadata={"source": "earnings.txt"}),
+    Document(text="No metadata document.", metadata={}),
+    Document(text="HITECH Act breach notification within 60 days.", metadata={"source": "hitech.txt"}),
+    Document(text="Another flagged doc.", metadata={}),
+]
+
+class SimpleIngestionWorkflow(Workflow):
+
+    @step
+    async def validate(self, ctx: Context, ev: StartEvent) -> ValidDoc | FlaggedDoc:
+        docs = ev.documents
+        await ctx.set("total", len(docs))
+        await ctx.set("valid_count", 0)
+        for doc in docs:
+            if not doc.metadata.get("source"):
+                ctx.send_event(FlaggedDoc(doc_id=doc.doc_id, reason="missing_source"))
+            else:
+                ctx.send_event(ValidDoc(doc=doc))
+        return FlaggedDoc(doc_id="dummy", reason="dummy")  # ignored
+
+    @step
+    async def handle_flagged(self, ctx: Context, ev: FlaggedDoc) -> None:
+        flagged = await ctx.get("flagged", default=[])
+        flagged.append(ev.doc_id)
+        await ctx.set("flagged", flagged)
+        print(f"  [flagged] {ev.doc_id[:8]}... reason={ev.reason}")
+
+    @step
+    async def parse(self, ctx: Context, ev: ValidDoc) -> ParsedNodes:
+        parser = SentenceSplitter(chunk_size=128, chunk_overlap=16)
+        nodes = parser.get_nodes_from_documents([ev.doc])
+        print(f"  [parse] {ev.doc.metadata['source']} -> {len(nodes)} nodes")
+        return ParsedNodes(doc_id=ev.doc.doc_id, node_count=len(nodes))
+
+    @step
+    async def finalize(self, ctx: Context, ev: ParsedNodes) -> StopEvent | None:
+        vc = await ctx.get("valid_count", default=0) + 1
+        await ctx.set("valid_count", vc)
+        total = await ctx.get("total", default=0)
+        flagged = await ctx.get("flagged", default=[])
+        valid_expected = total - len(flagged)
+        if vc >= valid_expected:
+            return StopEvent(result={
+                "valid": vc, "flagged": len(flagged), "total": total
+            })
+        return None
+
+async def run_workflow():
+    wf = SimpleIngestionWorkflow(timeout=30, verbose=False)
+    result = await wf.run(documents=DOCS)
+    print(f"\n[result] {result}")
+
+asyncio.run(run_workflow())
+# Expected: {'valid': 3, 'flagged': 2, 'total': 5}
+```
+
+---
+
+#### Break — Force the Fan-In Deadlock
+
+```python
+# BREAK: crash silently in parse step -> finalize never gets all ParsedNodes -> hangs
+
+class BrokenWorkflow(Workflow):
+
+    @step
+    async def validate(self, ctx: Context, ev: StartEvent) -> ValidDoc:
+        await ctx.set("total", len(ev.documents))
+        for doc in ev.documents:
+            ctx.send_event(ValidDoc(doc=doc))
+        return ValidDoc(doc=ev.documents[0])
+
+    @step
+    async def parse(self, ctx: Context, ev: ValidDoc) -> ParsedNodes:
+        # BUG: KeyError for docs without 'source' metadata -> silent crash
+        _ = ev.doc.metadata["source"]
+        nodes = SentenceSplitter(chunk_size=128).get_nodes_from_documents([ev.doc])
+        return ParsedNodes(doc_id=ev.doc.doc_id, node_count=len(nodes))
+
+    @step
+    async def finalize(self, ctx: Context, ev: ParsedNodes) -> StopEvent | None:
+        total = await ctx.get("total", default=0)
+        vc = await ctx.get("vc", default=0) + 1
+        await ctx.set("vc", vc)
+        if vc >= total:
+            return StopEvent(result={"processed": vc})
+        return None
+
+async def run_broken():
+    wf = BrokenWorkflow(timeout=5, verbose=True)
+    try:
+        result = await wf.run(documents=DOCS)
+    except Exception as e:
+        print(f"\n[BREAK] Timed out or failed: {e}")
+        # -> finalize waited for 5 events but only 3 arrived (2 crashed silently)
+
+asyncio.run(run_broken())
+```
+
+---
+
+#### Measure
+
+```python
+import time
+
+async def compare_sequential_vs_parallel():
+    from llama_index.core.ingestion import IngestionPipeline
+
+    # Sequential: IngestionPipeline
+    t0 = time.perf_counter()
+    pipeline = IngestionPipeline(transformations=[SentenceSplitter(chunk_size=256)])
+    nodes = pipeline.run(documents=DOCS)
+    seq_ms = (time.perf_counter() - t0) * 1000
+    print(f"IngestionPipeline (sequential): {seq_ms:.0f}ms -> {len(nodes)} nodes")
+
+    # Parallel: Workflow fan-out
+    t0 = time.perf_counter()
+    wf = SimpleIngestionWorkflow(timeout=30, verbose=False)
+    result = await wf.run(documents=DOCS)
+    par_ms = (time.perf_counter() - t0) * 1000
+    print(f"Workflow (parallel fan-out):    {par_ms:.0f}ms -> {result}")
+    # With I/O-bound steps (embeddings, DB writes), workflow is significantly faster
+    # With CPU-bound steps on a small corpus, event-routing overhead dominates
+
+asyncio.run(compare_sequential_vs_parallel())
+```
+
+---
+
+#### Explain — Why It Works This Way
+
+The LlamaIndex `Workflow` engine runs on asyncio. Each `@step` is an `async def` function; event routing is done by the engine's internal event broker. When a step emits an event via `return EventType(...)` or `ctx.send_event(EventType(...))`, the broker schedules all steps that accept that event type as `asyncio.Task` instances. This means all steps that can run concurrently *do* run concurrently without explicit `asyncio.gather()` calls — the engine handles it transparently.
+
+The key design insight is that steps are **decoupled at the type level**: `validate_docs` doesn't import `parse_nodes` — it just emits a `ValidEvent`. You can insert a `PII_RedactionStep` that consumes `ValidEvent` and emits `RedactedEvent`, then update `parse_nodes` to consume `RedactedEvent` — without touching any other step.
+
+The fan-in deadlock failure mode exists because asyncio `Task` exceptions that are not explicitly awaited are silently swallowed by the runtime. The workflow engine cannot distinguish "step is still running" from "step crashed and will never emit." This is why every step must have a `try/except` that emits a typed `FailedEvent` — it's the workflow equivalent of a circuit breaker pattern.
+
+---
+
+### 8. Active Recall (Spaced Repetition) [Beginner → Pro]
+
+**Q1 [Beginner]:** What is the fundamental difference between `IngestionPipeline` and `Workflow` in LlamaIndex?
+
+> **A:** `IngestionPipeline` is a linear transformation chain (Document → Transform1 → Transform2 → Nodes); no branching, no events, no state. `Workflow` is event-driven and step-based; steps communicate via typed Events; supports fan-out (one step emits many events for parallel processing), fan-in (a step waits for N events), branching (different event types for different paths), and human-in-the-loop gates. Use Pipeline for pure linear ETL; use Workflow for anything requiring conditional logic, parallelism, or external signals.
+
+---
+
+**Q2 [Beginner]:** What does `StopEvent` do, and what happens if no step ever emits it?
+
+> **A:** `StopEvent` terminates the workflow and returns `StopEvent.result` as the return value of `workflow.run()`. If no step emits `StopEvent`, the workflow runs indefinitely until the `timeout` parameter triggers an exception — or until the process is killed. The most common cause: a fan-in step has a completion condition that's never satisfied because one parallel branch crashed without emitting its expected event.
+
+---
+
+**Q3 [Intermediate]:** You have a fan-out of 50 parallel `parse_nodes` steps. Each writes `await ctx.set("node_count", len(nodes))`. What goes wrong and how do you fix it?
+
+> **A:** All 50 steps share the same ctx key — each step overwrites whatever the previous step set. Final value is from whichever step ran last, not the sum. Fix: scope the key by document ID (`ctx.set(f"node_count_{doc_id}", len(nodes))`) and sum the per-document values in the finalize step. Never use a shared accumulator key in fan-out steps without explicit locking or scoping.
+
+---
+
+**Q4 [Intermediate]:** When would you add Prefect or Apache Airflow on top of a LlamaIndex Workflow?
+
+> **A:** Use an external orchestrator when you need: (1) **scheduling** — cron-based triggers; Workflow has no scheduler. (2) **durable retry** — Prefect/Airflow persist run state to a database; Workflow state is lost on process crash. (3) **concurrency management** — running 500 batches with rate limiting across multiple workers. (4) **monitoring and alerting** — dashboard, Slack/PagerDuty on failure. The LlamaIndex Workflow is the execution unit per batch; the orchestrator manages *when*, *how many*, and *what to do on failure*.
+
+---
+
+**Q5 [Pro]:** Design a workflow that loads from 3 sources (API A: 3s, API B: 1s, API C: 5s) and must proceed with partial results if any source times out. What events, steps, and ctx patterns do you use?
+
+> **A:** Events: `StartEvent(sources)`, `LoadedEvent(source, docs)`, `SourceTimedOut(source)`, `ParsedEvent(source, node_count)`, `StopEvent(result)`. Steps: (1) `@step dispatch` — emits `LoadSourceEvent` for each source (3 concurrent). (2) `@step load_source` — wraps API call in `asyncio.wait_for(..., timeout=4.0)`; success → `LoadedEvent`; `TimeoutError` → `SourceTimedOut`. (3) `@step parse(ev: LoadedEvent)` → `ParsedEvent`. (4) `@step finalize` — uses `ctx.collect_events(ev, [ParsedEvent, SourceTimedOut], wait_for=3)`; builds result from received events; API C (5s) hits 4s timeout → `SourceTimedOut`; finalize receives 2 `ParsedEvent` + 1 `SourceTimedOut` = 3 total → `StopEvent` fires with partial results.
+
+---
+
+### 9. Practice
+
+**Mini-exercise:** You're building an ingestion workflow for 1,000 research papers from 3 S3 buckets (US-East, EU-West, GCS). Each bucket reader takes ~200ms/paper. Sketch the workflow (event types, steps) that processes all 3 buckets in parallel and merges the results.
+
+> **Suggested answer:**
+> - Events: `StartEvent(buckets)`, `LoadBucketEvent(bucket)`, `BucketLoadedEvent(bucket, docs)`, `ParsedEvent(bucket, nodes)`, `StopEvent(result)`.
+> - `@step dispatch_buckets`: for each bucket, `ctx.send_event(LoadBucketEvent(bucket=b))`. Fires 3 concurrent load operations.
+> - `@step load_bucket(ev: LoadBucketEvent)` → `BucketLoadedEvent(bucket, docs)`.
+> - `@step parse_docs(ev: BucketLoadedEvent)` → `ParsedEvent(bucket, nodes)`.
+> - `@step merge(ev: ParsedEvent)`: `ctx.collect_events(ev, [ParsedEvent]*3, wait_for=3)`. Merge all nodes. Insert to index. Return `StopEvent(result=counts_by_bucket)`.
+> - Wall-clock: max(333 papers × 200ms) = ~66s per bucket in parallel, vs 3 × 66s = 198s sequential. 3x speedup.
+
+---
+
+**Capstone system design question:** Design an end-to-end data-heavy GenAI system for a global enterprise ingesting 1M documents/month from 50 sources (SharePoint, APIs, databases). Requirements: (1) partial success (one source failure doesn't fail all), (2) human review for flagged documents, (3) scheduled weekly re-indexing, (4) < $500/month embedding cost, (5) audit trail of every document's outcome.
+
+> **Answer outline:**
+> - **Orchestration layer:** Prefect `@flow` schedules weekly re-indexing. Parallelizes across 50 source-specific tasks (10 concurrent). Each task runs an independent `LlamaIndexIngestionWorkflow` for that source. Prefect provides: 3-retry with exponential backoff, failure isolation per source, cost metrics dashboard.
+> - **Per-source LlamaIndex Workflow:** `StartEvent` → fan-out load (async S3/API/DB) → validate (flag sensitive/malformed docs via local classifier) → human review queue for flagged docs → `SentenceSplitter` → local `sentence-transformers` embedding (zero API cost) → upsert to Pinecone by doc_id (idempotent).
+> - **Human review gate:** flagged docs written to DB. Reviewers approve/reject via UI. On decision, webhook sets ctx key or re-triggers the workflow for that doc with `approved=True`.
+> - **Cost control:** local embedding model (`all-MiniLM-L6-v2`): $0 marginal cost. 1M docs × 3 nodes/doc × $0 = $0 for embedding. GPU T4 instance: ~$150/month. Total embedding cost < $200/month. Optional: route high-value docs to OpenAI embeddings for higher quality.
+> - **Audit trail:** every document emits `AuditEvent(doc_id, source, outcome, timestamp)` to an append-only audit table. Written asynchronously by `@step audit_log` on every branch — valid, flagged, rejected, indexed.
+> - **Failure isolation:** each source is an independent Prefect task. A failed SharePoint connector (retried 3x) is marked failed in the dashboard without affecting Salesforce, Confluence, or database sources.
+
+---
+
+### 10. Production Reality Check (Mandatory)
+
+**If this fails in prod, what's the first thing we inspect?**
+
+> **Check whether every branch of your workflow emits a terminal event — specifically, enable `verbose=True` and count events emitted vs events received per step type.**
+>
+> A workflow that hangs in production is almost always a fan-in step waiting for events that will never arrive. The debugging protocol:
+>
+> ```python
+> # Step 1: Enable verbose mode
+> wf = DataIngestionWorkflow(timeout=60, verbose=True)
+> # Verbose output shows: "Emitting event: ValidDoc" × N
+> # And: "Step parse_nodes received ValidDoc" × M
+> # If N != M -> silent crash in parse_nodes step
+>
+> # Step 2: Add FailedEvent to every step's except block
+> @step
+> async def parse_nodes(self, ctx: Context, ev: ValidDoc) -> ParsedNodes | FailedEvent:
+>     try:
+>         ...
+>         return ParsedNodes(...)
+>     except Exception as e:
+>         return FailedEvent(doc_id=ev.doc.doc_id, error=str(e))
+> # Now finalize can collect FailedEvent + ParsedNodes together
+> # Workflow completes even when some branches fail
+> ```
+>
+> The number-one production rule for LlamaIndex Workflows: **every step must catch exceptions and emit a typed FailedEvent.** Silent crashes equal fan-in deadlocks equal hung workflows equal silent data gaps in your index.
+
+---
+
+### 11. Curiosity Bridge (Mandatory)
+
+You now have three layers working: ingestion workflows that fan-out and fan-in across sources (14.2.c), retrieval pipelines with hybrid fusion (14.2.b), and response synthesis (14.2.a). Each layer is independently orchestrated.
+
+But what if a step in your workflow isn't just transforming data — what if it needs to *decide* what to do next, *call tools*, and *loop* until a goal is satisfied? The event-driven workflow becomes an **agent loop**. The next question is: what happens when a `@step` in your workflow wraps a `ReActAgent` that can invoke query engines, APIs, and custom tools to make multi-step decisions?
+
+That's **14.3.a: LlamaIndex Agents and ReActAgent** — where your workflow scaffold becomes the foundation for autonomous, goal-directed reasoning over data.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit check:** You're done with 14.2.c when you can explain the difference between `IngestionPipeline` and `Workflow`, implement a fan-out/fan-in workflow with typed events and `ctx` shared state, identify and fix a fan-in deadlock, and explain when to add Prefect or Airflow on top of a LlamaIndex Workflow.
+
+---
+
+**Carry-Forward Review (interleaved recall from 14.2.b):**
+
+*Q: Your hybrid retriever (dense + BM25) is performing worse than dense-only for queries like "GDPR Article 17 right to erasure." What's the most likely cause and first debugging step?*
+
+> **A:** Most likely cause: `QueryFusionRetriever.similarity_top_k` is set too small (e.g., 3), cutting the merged list before the cross-encoder reranker can re-score it. BM25 may have correctly retrieved the exact GDPR article at rank 4–5, but the tight fusion cut eliminated it. First debug step: run `BM25Retriever.retrieve("GDPR Article 17 right to erasure")` in isolation — if it returns the correct node, the issue is the fusion top_k discarding it. Fix: set `similarity_top_k=15` on `QueryFusionRetriever` and let `SentenceTransformerRerank(top_n=5)` do the final cut.
+
+
 ## Module Glossary
 
 | Term | Definition |
@@ -2492,49 +4532,87 @@ But getting data *in* is only half the problem. **Getting the right data *out* �
 | **`BaseReader`** | Abstract base class for all LlamaIndex readers; requires one method: `load_data() → List[Document]` |
 | **`Document`** | LlamaIndex's core ingestion unit; wraps raw text with `metadata` dict, `doc_id`, and metadata exclusion keys |
 | **LlamaHub** | Community registry of 100+ pre-built LlamaIndex readers for external sources (Notion, Slack, GitHub, S3, databases, etc.) |
-| **`IngestionPipeline`** | LlamaIndex v0.10+ abstraction that chains transformations (splitting, embedding, metadata extraction) over Documents; supports dedup via docstore and caching |
-| **`excluded_llm_metadata_keys`** | Document field listing metadata keys to omit from LLM prompt context (e.g., internal IDs, PII, debug fields) |
-| **`excluded_embed_metadata_keys`** | Document field listing metadata keys to omit from the text used for embedding (reduces noise in embedding space) |
-| **`doc_id`** | Unique identifier for a Document; the deduplication key in docstore-backed pipelines; must be deterministic (hash-based) for re-ingestion safety |
-| **`TextNode`** | The chunk-level unit produced after splitting a Document through a node parser; carries inherited metadata from its parent Document |
-| **Deterministic `doc_id`** | A `doc_id` derived from a stable content attribute (file path, URL hash, DB primary key) so the same document gets the same ID across re-ingestion runs |
-| **Dead-letter queue** | A holding queue for documents that failed to load or validate; enables retry and audit without blocking the main ingestion pipeline |
-| **Metadata schema drift** | Silent failure mode where an upstream API changes field names, causing metadata keys to be `None` or absent in newly ingested Documents |
-| **`NodeParser`** | Base class for all LlamaIndex splitting strategies; takes `List[Document]` and returns `List[BaseNode]` |
-| **`SentenceSplitter`** | Node parser that splits on sentence boundaries while respecting a `chunk_size` token limit; the most common general-purpose parser |
-| **`TokenTextSplitter`** | Node parser that splits purely by token count with a fixed overlap; fast and deterministic, ignores semantic boundaries |
-| **`SemanticSplitterNodeParser`** | Node parser that uses embedding cosine similarity between adjacent sentences to find natural topic-shift boundaries; produces variable-size but semantically coherent chunks |
-| **`HierarchicalNodeParser`** | Node parser that produces multi-level node trees (e.g., 2048→512→128 tokens); enables small-to-big retrieval via `AutoMergingRetriever` |
-| **`SentenceWindowNodeParser`** | Node parser that produces 1-sentence nodes with ±k surrounding sentences stored in `metadata["window"]`; used with `MetadataReplacementNodePostProcessor` |
-| **`NodeRelationship`** | Enum linking a TextNode to its SOURCE document, PREVIOUS sibling, NEXT sibling, PARENT, and CHILDREN nodes |
-| **`MetadataExtractor`** | IngestionPipeline transformation that calls an LLM to enrich each node's metadata (titles, summaries, keywords, hypothetical questions) |
-| **`TitleExtractor`** | MetadataExtractor that infers a section title from node content using surrounding context nodes |
-| **`SummaryExtractor`** | MetadataExtractor that generates a 1-sentence LLM summary per node; useful for SummaryIndex and improving embedding quality |
-| **`KeywordExtractor`** | MetadataExtractor that generates top-N keywords per node; improves BM25/sparse retrieval recall |
-| **`QuestionsAnsweredExtractor`** | MetadataExtractor that generates N hypothetical questions each node answers; most powerful for Q&A retrieval (HyDE-like effect) |
-| **`chunk_size`** | Maximum token count per TextNode; the primary lever for the precision-recall tradeoff in retrieval |
-| **`chunk_overlap`** | Number of tokens repeated at the boundary between adjacent chunks; prevents context from being cut off mid-sentence |
-| **`AutoMergingRetriever`** | Retriever for `HierarchicalNodeParser`; retrieves leaf nodes but merges up to parent when enough siblings match the same query |
-| **`start_char_idx` / `end_char_idx`** | Character offsets recording the exact position of a TextNode's text within the original Document; enables precise citation and UI highlighting |
-| **Small-to-big retrieval** | Pattern using HierarchicalNodeParser: retrieve small leaf nodes for precision, expand to parent nodes for richer generation context |
-| **`VectorStoreIndex`** | LlamaIndex's primary index; embeds nodes, stores vectors, retrieves via ANN top-k; default choice for point-lookup RAG workloads |
-| **`SummaryIndex`** | (formerly `ListIndex`) Reads every node at query time; best for summarization and aggregation queries requiring full corpus coverage |
-| **`KnowledgeGraphIndex`** | Extracts (subject, predicate, object) triples via LLM and stores in a graph; best for multi-hop relational queries |
-| **`as_retriever()`** | Index method returning a `BaseRetriever`; composable low-level interface returning `List[NodeWithScore]` |
-| **`as_query_engine()`** | Index method returning a `BaseQueryEngine`; end-to-end pipeline (retrieve + synthesize) returning a `Response` |
-| **`MetadataFilters`** | Applied at retrieval time to hard-filter ANN search candidates by exact-match metadata field values; primary data-isolation mechanism |
-| **`RetrieverQueryEngine`** | Query engine accepting a custom retriever + response synthesizer; enables mixing index types in one pipeline |
+| **`IngestionPipeline`** | LlamaIndex v0.10+ abstraction chaining transformations (split, extract, embed) over Documents; supports dedup via docstore and caching |
+| **`excluded_llm_metadata_keys`** | Document field listing metadata keys to omit from LLM prompt context |
+| **`excluded_embed_metadata_keys`** | Document field listing metadata keys to omit from the text used for embedding |
+| **`doc_id`** | Unique identifier for a Document; the deduplication key in docstore-backed pipelines; must be deterministic (hash-based) |
+| **`TextNode`** | The chunk-level retrieval unit produced by a NodeParser; carries inherited metadata and NodeRelationship links |
+| **Deterministic `doc_id`** | A `doc_id` derived from a stable content attribute so the same document gets the same ID across re-ingestion runs |
+| **Dead-letter queue** | A holding queue for documents that failed to load/validate; enables retry without blocking the main pipeline |
+| **Metadata schema drift** | Silent failure where an upstream API changes field names, making metadata keys `None` in newly ingested Documents |
+| **`NodeParser`** | Base class for splitting strategies; takes `List[Document]` → `List[BaseNode]` |
+| **`SentenceSplitter`** | Node parser splitting on sentence boundaries up to `chunk_size` tokens; most common general-purpose parser |
+| **`TokenTextSplitter`** | Node parser splitting purely by token count; fast, deterministic, ignores semantic boundaries |
+| **`SemanticSplitterNodeParser`** | Node parser using embedding similarity between adjacent sentences to find natural topic boundaries; variable-size coherent chunks |
+| **`HierarchicalNodeParser`** | Node parser producing multi-level trees (e.g., 2048→512→128 tokens); enables small-to-big retrieval via `AutoMergingRetriever` |
+| **`SentenceWindowNodeParser`** | Node parser producing 1-sentence nodes with ±k surrounding sentences in `metadata["window"]` |
+| **`NodeRelationship`** | Enum linking a TextNode to SOURCE, PREVIOUS, NEXT, PARENT, and CHILDREN nodes |
+| **`MetadataExtractor`** | Pipeline transformation calling an LLM to enrich node metadata (titles, summaries, keywords, hypothetical questions) |
+| **`TitleExtractor`** | MetadataExtractor inferring section title from surrounding node context |
+| **`SummaryExtractor`** | MetadataExtractor generating a 1-sentence LLM summary per node |
+| **`KeywordExtractor`** | MetadataExtractor generating top-N keywords per node; improves sparse retrieval recall |
+| **`QuestionsAnsweredExtractor`** | MetadataExtractor generating N hypothetical questions each node answers; HyDE-like effect for Q&A retrieval |
+| **`chunk_size`** | Maximum token count per TextNode; primary lever for the precision-recall tradeoff |
+| **`chunk_overlap`** | Tokens repeated at chunk boundaries; prevents context from being severed across adjacent nodes |
+| **`AutoMergingRetriever`** | Retriever pairing with `HierarchicalNodeParser`; merges leaf nodes up to parent when enough siblings match the query |
+| **`start_char_idx` / `end_char_idx`** | Char offsets locating a TextNode's text within its source Document; enables precise citation and UI highlighting |
+| **Small-to-big retrieval** | Pattern using HierarchicalNodeParser: retrieve small nodes for precision, expand to parent for generation context |
+| **`VectorStoreIndex`** | Primary LlamaIndex index; embeds nodes, stores vectors, retrieves via ANN top-k; default for point-lookup RAG |
+| **`SummaryIndex`** | Reads every node at query time; best for summarization and full-corpus aggregation queries |
+| **`KnowledgeGraphIndex`** | Extracts (subject, predicate, object) triples via LLM; best for multi-hop relational queries |
+| **`as_retriever()`** | Index method returning a `BaseRetriever` (composable, returns `List[NodeWithScore]`) |
+| **`as_query_engine()`** | Index method returning a `BaseQueryEngine` (end-to-end retrieve + synthesize → `Response`) |
+| **`MetadataFilters`** | Hard pre-filters applied before ANN search; restrict candidates by exact metadata field values |
+| **`RetrieverQueryEngine`** | QueryEngine subclass accepting explicit retriever + synthesizer + postprocessors; the primary composition entry point |
 | **`RouterQueryEngine`** | Dispatches each query to the most appropriate `QueryEngineTool` via LLM or embedding selector |
 | **Retrieval mode** | `VectorIndexRetriever` parameter: `default` (embedding similarity), `llm` (LLM-reranked), or `hybrid` (sparse + dense) |
-| **`SimpleVectorStore`** | Default in-memory vector store; lost on process restart; suitable only for development and CI tests |
-| **`ChromaVectorStore`** | Persistent local vector store backed by ChromaDB; good for single-machine production deployments |
-| **`PineconeVectorStore`** | Managed cloud vector store with multi-tenant namespaces and horizontal scaling; best for high-QPS cloud production |
+| **`SimpleVectorStore`** | Default in-memory vector store; lost on restart; development and CI only |
+| **`ChromaVectorStore`** | Persistent local vector store backed by ChromaDB; single-machine production |
+| **`PineconeVectorStore`** | Managed cloud vector store with multi-tenant namespaces; high-QPS production |
 | **`pgvector`** | PostgreSQL extension for vector similarity search; best when Postgres is already in the stack |
-| **`SimpleDocumentStore`** | In-memory docstore keyed by `doc_id`; used for deduplication; can be persisted to JSON on disk |
-| **Incremental ingestion** | Re-processing only new or changed documents since the last run; scales cost with change rate, not corpus size |
-| **Full re-ingestion** | Discarding the existing index and rebuilding from scratch; guarantees correctness after schema changes; expensive at scale |
-| **Change-data capture (CDC)** | Database pattern streaming row-level changes to a queue (e.g., Debezium → Kafka); enables real-time per-row incremental ingestion |
-| **`IngestionCache`** | Optional cache for `IngestionPipeline` transformation outputs, keyed by node content hash; avoids re-running LLM extraction on unchanged nodes |
-| **Ghost node** | A TextNode that remains in the index for a source document that has been deleted; causes confident answers from stale or revoked content |
-| **Source freshness** | Metric tracking time since last successful ingestion per source; primary SLA signal for data-centric RAG systems |
-| **`index.delete_ref_doc()`** | LlamaIndex method to remove all nodes associated with a `doc_id` from the vector store and optionally the docstore; required for ghost-node cleanup |
+| **`SimpleDocumentStore`** | In-memory docstore keyed by `doc_id`; used for deduplication; persistable to JSON |
+| **Incremental ingestion** | Re-processing only new or changed documents; scales cost with change rate, not corpus size |
+| **Full re-ingestion** | Rebuilding the index from scratch; guarantees correctness after schema changes; expensive at scale |
+| **Change-data capture (CDC)** | Pattern streaming row-level DB changes (Debezium → Kafka) for real-time incremental ingestion |
+| **`IngestionCache`** | Caches transformation outputs by node content hash; avoids re-running LLM extraction on unchanged nodes |
+| **Ghost node** | A TextNode remaining in the index for a source document that has since been deleted; causes stale confident answers |
+| **Source freshness** | Metric tracking time since last successful ingestion per source; primary freshness SLA signal |
+| **`index.delete_ref_doc()`** | Removes all nodes for a `doc_id` from vector store and optionally docstore; required for ghost-node cleanup |
+| **`QueryEngine`** | End-to-end pipeline: query string → retriever → postprocessors → synthesizer → `Response` |
+| **`ResponseSynthesizer`** | Component combining retrieved nodes + query via LLM to produce the final answer; controlled by `response_mode` |
+| **`response_mode`** | Synthesis strategy: `compact`, `refine`, `tree_summarize`, `accumulate`, or `simple_summarize` |
+| **`compact`** | Synthesis mode packing nodes into minimal LLM calls; O(n/ctx) calls; default; best for point-lookup Q&A |
+| **`refine`** | Synthesis mode reading nodes sequentially, passing a growing answer to each call; O(n) calls; best for iterative multi-section analysis |
+| **`tree_summarize`** | Synthesis mode building a bottom-up summarization tree; O(n log n) calls, parallelizable; best for large-corpus synthesis |
+| **`accumulate`** | Synthesis mode calling LLM independently on each node and concatenating; O(n) calls; best for per-source granularity |
+| **`simple_summarize`** | Synthesis mode truncating all nodes into 1 LLM call; O(1) call; only safe when all nodes fit in context |
+| **`NodePostprocessor`** | Pipeline step transforming retrieved nodes before synthesis: filtering, reranking, or metadata replacement |
+| **`SimilarityCutoffPostprocessor`** | Drops nodes below a similarity score threshold before synthesis; prevents low-quality evidence reaching the LLM |
+| **`LLMRerank`** | Postprocessor calling an LLM to re-score and reorder retrieved nodes; improves precision at the cost of 1 extra LLM call |
+| **`MetadataReplacementNodePostprocessor`** | Swaps node `.text` with a metadata field value (e.g., `window`); required for `SentenceWindowNodeParser` workflows |
+| **`source_nodes`** | `List[NodeWithScore]` attached to every `Response`; the provenance trail enabling citations in production UIs |
+| **Streaming response** | Query engine returns a generator (`response_gen`) yielding tokens as they arrive; reduces perceived latency for UIs |
+
+---
+
+| **`VectorIndexRetriever`** | Dense ANN retriever backed by the index's vector store; retrieves top-k nodes by cosine similarity between query embedding and node embeddings |
+| **`BM25Retriever`** | Sparse keyword retriever using BM25 TF-IDF scoring; no embeddings required; exact-term match; must be rebuilt when nodes are added |
+| **`QueryFusionRetriever`** | Combines multiple retrievers via Reciprocal Rank Fusion (RRF); supports query rewriting with `num_queries`; deduplicates by node_id |
+| **Reciprocal Rank Fusion (RRF)** | Rank merging formula: `score(node) = Σ 1/(rank_i + 60)` across all retriever lists; scale-invariant — works regardless of raw score magnitudes from different retriever types |
+| **`BaseRetriever`** | Abstract base class for all LlamaIndex retrievers; subclass and implement `_retrieve(query_bundle) → List[NodeWithScore]` to build custom retrievers |
+| **Cross-encoder reranking** | A (query, passage) pair is jointly encoded by a separate ML model that outputs a relevance score; more accurate than cosine similarity but O(k) model calls per query |
+| **`SentenceTransformerRerank`** | LlamaIndex postprocessor wrapping a cross-encoder model (e.g., `ms-marco-MiniLM`); applied after initial retrieval to re-score top-n nodes |
+| **Query rewriting** | Generating N paraphrased variants of the original query via LLM; each variant retrieves independently; results merged by RRF; increases recall for terse/ambiguous queries |
+| **Hybrid retrieval** | Combining dense (ANN) and sparse (BM25) retrievers; dense catches semantic similarity, sparse catches exact terminology; the two failure modes are complementary |
+| **`sparse_hit_rate`** | Monitoring metric: % overlap between BM25 and dense retriever results; high overlap → BM25 adds little; low overlap → BM25 is complementary and valuable |
+| **`Workflow`** | LlamaIndex's event-driven orchestration class; wraps `@step`-decorated functions and routes typed Events between them via an asyncio event broker |
+| **`@step`** | Decorator marking a function as a workflow step; type hints on the signature declare which Event type(s) the step consumes and produces |
+| **`StartEvent`** | Built-in workflow event that triggers the first step; passed as input to `workflow.run()` |
+| **`StopEvent`** | Built-in workflow event that terminates the workflow; `StopEvent.result` becomes the return value of `workflow.run()` |
+| **`Event`** | Pydantic-based base class for all custom workflow events; fields carry typed data between steps |
+| **`Context` (workflow ctx)** | Per-run shared state object passed to every step; `await ctx.get("key")` / `await ctx.set("key", value)` for cross-step KV; `ctx.send_event()` for fan-out |
+| **Fan-out** | A step emits multiple events of the same type (via `ctx.send_event()` in a loop) → multiple downstream step instances run concurrently |
+| **Fan-in** | A step waits for N events of a given type using `ctx.collect_events(ev, [EventType]*N, wait_for=N)` before proceeding |
+| **Fan-in deadlock** | When a `collect_events` step waits for N events but fewer than N are emitted (because one parallel branch crashed without emitting a typed error event); workflow hangs until timeout |
+| **`IngestionPipeline`** | LlamaIndex's simpler linear workflow; a fixed sequence of `Transformation` objects applied to documents in order; no branching, events, or shared state |
+| **`IngestionCache`** | Content-hash-based cache layer in `IngestionPipeline`; skips nodes whose text hash is already in the cache; must be cleared after embedding model upgrades |
