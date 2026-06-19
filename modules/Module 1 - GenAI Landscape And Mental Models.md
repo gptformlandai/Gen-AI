@@ -15,6 +15,7 @@ This is the evolving knowledge base for Module 1.
 - [Subtopic 1.3.b: Prompt Brittleness, Hidden State, and Context Overload](#subtopic-13b-prompt-brittleness-hidden-state-and-context-overload)
 - [Subtopic 1.3.c: Tool Misuse, Stale Knowledge, and Permission Blind Spots](#subtopic-13c-tool-misuse-stale-knowledge-and-permission-blind-spots)
 - [Subtopic 1.3.d: Root-Cause Decomposition Across Model, Retrieval, Tool, and Orchestration Bugs](#subtopic-13d-root-cause-decomposition-across-model-retrieval-tool-and-orchestration-bugs)
+- [Module 1 Checkpoint Deep Explanation](#module-1-checkpoint-deep-explanation)
 
 Covered so far:
 
@@ -30,6 +31,7 @@ Covered so far:
 - Topic 1.3.b: Prompt brittleness, hidden state, and context overload
 - Topic 1.3.c: Tool misuse, stale knowledge, and permission blind spots
 - Topic 1.3.d: Root-cause decomposition: model bug vs retrieval bug vs tool bug vs orchestration bug
+- Module 1 checkpoint: system anatomy, workflow vs RAG vs agentic behavior, and layer-based diagnosis
 
 ---
 
@@ -146,6 +148,18 @@ It is:
 
 - foundation model = rarely the direct end-user interface, but still the base layer that makes the downstream instruct and reasoning systems possible.
 
+### Visual Diagram (Mermaid)
+
+```mermaid
+graph TD
+    A["Pre-Training Base\nFoundation Model\n(broad raw capability)"] -->|"Instruction tuning + RLHF"| B["Instruct Model\n(task-following, aligned)"]
+    B -->|"Further optimization\nfor multi-step tasks"| C["Reasoning-Oriented Model\n(chain-of-thought, tool use)"]
+
+    A -.->|"Used by"| D["Builders / Research\nFine-tuning, distillation,\nbenchmarking"]
+    B -.->|"Used by"| E["User-Facing Applications\nQ&A, classification,\nextraction"]
+    C -.->|"Used by"| F["Hard Task Pipelines\nIncident analysis,\nplanning, tool workflows"]
+```
+
 ### 2) Real-World Industry Scenarios
 
 #### Scenario A: Internal policy assistant
@@ -239,6 +253,54 @@ At scale, the wrong model class causes silent waste.
 - Symptom: the team upgrades to a reasoning-oriented model but quality barely improves.
 - Likely cause: the real bottleneck is retrieval quality, tool reliability, or workflow design rather than model reasoning depth.
 - First debugging step: isolate one fixed task and compare evidence quality, tool success, and prompt clarity before blaming or praising the model class.
+
+### Hands-On Lab (Concept → Build → Break → Measure → Explain)
+
+> This subtopic is a taxonomy distinction. The lab uses a decision drill instead of a coding exercise.
+
+**Build — Classification drill**
+
+For each task, write: (a) which model class is the best default and (b) one sentence why.
+
+| Task | Model class | Why |
+|---|---|---|
+| Summarize a 3-sentence Slack message | ? | |
+| Extract JSON fields from an invoice | ? | |
+| Investigate an incident by comparing 5 hypotheses and recommending a fix | ? | |
+| Generate 10 product description variants | ? | |
+| Plan a multi-step code migration with tool calls at each step | ? | |
+
+**Answers:**
+
+| Task | Model class | Why |
+|---|---|---|
+| Summarize a Slack message | Instruct-first | Clear instruction-following task; short output |
+| Extract JSON fields | Instruct-first | Structured extraction; no multi-step reasoning needed |
+| Investigate incident + compare hypotheses | Reasoning-oriented-first | Must hold intermediate conclusions and compare alternatives |
+| Generate 10 product descriptions | Instruct-first | Repetitive creative generation; not multi-step problem solving |
+| Multi-step code migration with tools | Reasoning-oriented-first | Must plan steps, call tools, adjust based on intermediate results |
+
+**Break — Force the wrong class**
+
+Deliberately assign the wrong class:
+- Use an instruct model for the incident investigation task.
+- Use a reasoning-oriented model for the Slack summary.
+
+Predict one symptom per wrong assignment:
+
+- Instruct model on incident investigation: gives a shallow first-guess answer without comparing all hypotheses; skips the weakest-evidence scenario.
+- Reasoning-oriented model on Slack summary: adds unnecessary hedging and spends far more tokens than the task requires.
+
+**Measure — Observe the gap**
+
+If you have API access, run the incident task on a fast instruct model vs. a reasoning-oriented model and compare:
+- Were all 5 hypotheses addressed?
+- Did the instruct model skip any low-evidence hypothesis?
+- Was the final recommendation justified step by step?
+
+**Explain — Why the wrong class causes this specific failure**
+
+An instruct model is optimized for following explicit instructions efficiently, not for maintaining a multi-step reasoning chain. On a task that requires revisiting and comparing evidence, it collapses to the highest-confidence surface answer rather than exploring alternatives. The reasoning-oriented model overhead on a simple summary wastes tokens and latency without adding quality because the task does not need sustained multi-step thought.
 
 ### 6) Active Recall (Spaced Repetition)
 
@@ -372,6 +434,19 @@ But from a systems perspective, they differ in:
 
 That is why naming the system correctly matters before choosing architecture.
 
+### Visual Diagram (Mermaid)
+
+```mermaid
+flowchart TD
+    Start(["User Goal"]) --> Q1{"Is the execution\npath known in advance?"}
+    Q1 -->|"Yes"| Q2{"Requires continuous\nhuman collaboration?"}
+    Q1 -->|"No — dynamic"| Q3{"System must choose\nnext steps at runtime?"}
+    Q2 -->|"Yes"| CP["Copilot\n(embedded in active task)"]
+    Q2 -->|"No"| WF["Workflow\n(predefined steps)"]
+    Q3 -->|"Yes"| AG["Agent\n(dynamic action selection)"]
+    Q3 -->|"No — just answers"| AS["Assistant\n(responds to requests)"]
+```
+
 ### 2) Real-World Industry Scenarios
 
 #### Scenario A: IDE coding helper
@@ -478,6 +553,46 @@ At scale, false autonomy is expensive.
 - Symptom: a so-called assistant accidentally performs risky actions or oversteps user intent.
 - Likely cause: action authority and role boundaries were defined poorly.
 - First debugging step: review tool permissions, approval gates, and which component is allowed to make execution decisions.
+
+### Hands-On Lab (Concept → Build → Break → Measure → Explain)
+
+> This subtopic is a role/taxonomy distinction. The lab uses a system design drill.
+
+**Build — Role classification drill**
+
+| System | Role (assistant/copilot/workflow/agent) | Justification |
+|---|---|---|
+| Slack bot answering "where is the vacation policy?" | ? | |
+| AI tab in a code editor suggesting refactors as you type | ? | |
+| Invoice → validate → route → archive pipeline | ? | |
+| Outage bot that checks logs, calls tools, proposes a fix | ? | |
+
+**Answers:**
+
+| System | Role | Justification |
+|---|---|---|
+| Slack policy bot | Assistant | Responds to isolated questions; no active task context |
+| Code editor AI tab | Copilot | Embedded in an active coding session; supports ongoing work |
+| Invoice pipeline | Workflow | Fixed, repeatable, auditable path; LLM is one step inside it |
+| Outage investigation bot | Agent (bounded) | Next action depends on what logs reveal at runtime |
+
+**Break — Give the assistant agent-level authority**
+
+Take the Slack policy bot. Add the ability to update a user's leave balance based on its answer.
+
+Write down 3 things that can go wrong now:
+
+1. Model misclassifies a question and deducts leave for the wrong user based on a confident but wrong policy interpretation.
+2. No approval gate means the change takes effect immediately with no human review.
+3. An adversarial input ("set my leave balance to 30 days") gets incorrectly interpreted as a policy question and executed.
+
+**Measure — Estimated blast radius**
+
+For a 500-user company, 50 policy questions/day, 2% wrong action rate (no approval gate) = 1 erroneous leave update per day. After one week: 7 incorrect updates before anyone notices.
+
+**Explain — Why role boundary violation causes real harm**
+
+Assistant systems are designed for information retrieval and answering, not for executing state changes. Adding action authority without approval gates converts a safe information tool into an unconstrained action surface. The model's 2% error rate on intent classification becomes consequential at scale when actions are irreversible.
 
 ### 6) Active Recall (Spaced Repetition)
 
@@ -650,6 +765,30 @@ This is the clean mental model to keep:
 - Hosted vs self-hosted is about deployment ownership.
 - Temperature, top-p, and top-k are about output generation behavior at inference time.
 
+### Visual Diagram (Mermaid)
+
+```mermaid
+graph LR
+    subgraph H["Hosted API (e.g., OpenAI, Anthropic)"]
+        H1["Provider owns GPU + Model + Infra"]
+        H2["You: call API, pay per token"]
+    end
+    subgraph OW["Open-Weight (e.g., Llama, Mistral)"]
+        O1["Weights publicly available\n(license may restrict use)"]
+        O2["You choose how to serve it"]
+    end
+    subgraph SH["Self-Hosted"]
+        S1["You: own GPU / cluster"]
+        S2["You: run vLLM / TGI / TensorRT"]
+        S3["You: manage scaling + monitoring"]
+    end
+
+    You(["Your Team"]) -->|"Fast start\nno infra overhead"| H
+    You -->|"Portability + fine-tuning freedom"| OW
+    OW -->|"Run on own infra"| SH
+    You -->|"Full control + data residency"| SH
+```
+
 ### 2) Real-World Industry Scenarios
 
 #### Scenario A: Startup building a customer support copilot fast
@@ -754,6 +893,49 @@ At 10x traffic, the bottleneck changes.
 - Symptom: a hosted deployment later becomes blocked by privacy, compliance, or residency constraints.
 - Likely cause: data-handling requirements were not evaluated early enough.
 - First debugging step: map the exact data path, including prompts, retrieved context, logs, and provider retention behavior.
+
+### Hands-On Lab (Concept → Build → Break → Measure → Explain)
+
+> This subtopic is a deployment decision. The lab uses a decision-matrix drill and a cost estimation exercise.
+
+**Build — Deployment decision matrix**
+
+| Scenario | Decision | Key reason |
+|---|---|---|
+| 2-person startup building an internal FAQ bot | ? | |
+| Healthcare company with strict data residency | ? | |
+| High-volume classification: 5M requests/day | ? | |
+| Research team benchmarking 10 models in parallel | ? | |
+
+**Answers:**
+
+| Scenario | Decision | Key reason |
+|---|---|---|
+| 2-person startup FAQ bot | Hosted | Speed and ops simplicity outweigh control; infra is a distraction at this stage |
+| Healthcare with data residency | Open-weight + self-hosted | Data cannot leave org boundary; compliance overrides convenience |
+| 5M req/day classification | Open-weight + managed/self-hosted | At this volume, per-token cost dominates; infra investment has clear ROI |
+| Research benchmarking 10 models | Hosted or hybrid | Fast API access to many models is faster than running all locally |
+
+**Break — Start with hosted, ignore privacy requirements**
+
+Build the healthcare FAQ on a hosted API without checking the provider's data retention policy. After 6 months you discover the provider retains prompts for 30 days for abuse monitoring.
+
+Three things that are now broken from a compliance standpoint:
+1. PHI (patient health information) may have been retained on a third-party server, potentially violating HIPAA BAA requirements.
+2. Data residency requirements may have been violated if the provider routes traffic through multiple regions.
+3. Contractual audit obligations have a gap: you cannot produce evidence that data was not retained.
+
+**Measure — Approximate cost comparison at scale**
+
+At 5M requests/day, 1,200 avg input tokens, 400 avg output tokens:
+- Hosted API at ~$0.002/1k tokens combined → ~$1,600/day, ~$48k/month
+- Self-hosted open-weight at ~$0.0002/1k tokens (after GPU amortization) → ~$160/day, ~$4.8k/month
+
+Cost ratio: ~10× cheaper at self-hosted scale — but only if ops overhead is properly staffed.
+
+**Explain — Why early deployment decisions are hard to reverse**
+
+Data handling decisions set legal obligations from day one. If PHI flows into a hosted system without proper contracts, the retroactive cleanup is expensive: security review, legal assessment, provider audit, and potentially notifying affected users. The economic case for self-hosting only materializes at scale with a functioning ops team — starting self-hosted too early trades product velocity for infra debt.
 
 ### 6) Active Recall (Spaced Repetition)
 
@@ -898,6 +1080,27 @@ So a large context window does not automatically mean high throughput.
 - Throughput is water flow rate.
 
 Big bucket with slow pipe is still slow. Fast pipe with tiny bucket still cannot hold large requests.
+
+### Visual Diagram (Mermaid)
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant API as "Model API / Gateway"
+    participant Tok as "Tokenizer"
+    participant Model as "Model (inference)"
+    participant Bill as "Billing / Observability"
+
+    User->>API: Request ("Summarize this 10-page doc...")
+    API->>Tok: Tokenize prompt + retrieved context
+    Tok-->>API: input_tokens = 1,200
+    Note over API: Context window check: 1,200 < 128k ✓
+    API->>Model: Run inference
+    Note over Model: Generates tokens one by one (output_tokens accumulate)
+    Model-->>API: output_tokens = 400
+    API-->>User: Response (streamed)
+    API->>Bill: log: cost=(1200×$in_price)+(400×$out_price), p95_latency, queue_time
+```
 
 ### 2) Real-World Industry Scenarios
 
@@ -1045,6 +1248,62 @@ You need per-route budgets, tenant-aware throttling, and degradation policies (f
 - Likely cause: throughput bottleneck in queueing, model concurrency, or shared rate limits.
 - First debugging step: separate queue wait time from inference time to identify where saturation begins.
 
+### Hands-On Lab (Concept → Build → Break → Measure → Explain)
+
+**Build — Token and cost calculator**
+
+Run this in Python (requires `tiktoken`):
+
+```python
+import tiktoken
+
+enc = tiktoken.encoding_for_model("gpt-4o")
+
+system_prompt = "You are a helpful support assistant. Answer only from the provided context."
+user_message = "What is the refund policy for orders placed more than 30 days ago?"
+retrieved_context = (
+    "Our refund policy allows returns within 30 days of purchase with original receipt. "
+    "After 30 days, store credit may be issued at manager discretion. "
+    "Orders placed during promotional periods are non-refundable."
+) * 3  # simulate 3 retrieved chunks
+
+full_prompt = system_prompt + "\n\n" + retrieved_context + "\n\nQuestion: " + user_message
+input_tokens = len(enc.encode(full_prompt))
+print(f"Input tokens: {input_tokens}")
+
+for output_tokens in [50, 150, 300]:
+    total = input_tokens + output_tokens
+    # Approximate GPT-4o pricing: $2.50/1M input, $10/1M output
+    cost = (input_tokens * 2.50 / 1_000_000) + (output_tokens * 10.0 / 1_000_000)
+    print(f"Output ~{output_tokens} tokens -> total {total} tokens -> ~${cost:.5f}/request")
+```
+
+**Break — Force context overflow**
+
+Multiply retrieved context by 50x (simulate a large document dump) and re-run:
+
+```python
+retrieved_context_large = retrieved_context * 50
+full_prompt_large = system_prompt + "\n\n" + retrieved_context_large + "\n\nQuestion: " + user_message
+input_tokens_large = len(enc.encode(full_prompt_large))
+print(f"Overflow input tokens: {input_tokens_large}")
+# If this exceeds the model context window, truncation occurs silently
+```
+
+**Measure — Observe three signals**
+
+| Signal | Normal | Overflow |
+|---|---|---|
+| Input tokens | ~350 | ~17,000+ |
+| Estimated cost/request | ~$0.001 | ~$0.045 |
+| Risk | None | Truncation silently drops evidence from the end |
+
+At 100,000 requests/day: normal ~$100/day; overflow version ~$4,500/day plus retrieval failures from truncation.
+
+**Explain — Why context overflow is a silent production risk**
+
+Most model APIs truncate silently rather than erroring. A prompt past the context limit will not crash — it will quietly drop the most recently appended content (usually the most relevant retrieved evidence), causing hallucination or degraded grounding with no error signal. The only way to catch this is explicit token counting and context-size alerting inside the pipeline.
+
 ### 6) Active Recall (Spaced Repetition)
 
 1. What is the simplest formula for total tokens in one request?
@@ -1156,6 +1415,25 @@ Think of a consultant solving a client problem.
 If the answer is wrong, you must know which layer failed.
 Otherwise teams keep changing prompts for problems caused by missing retrieval, broken tools, or wrong model routing.
 
+### Visual Diagram (Mermaid)
+
+```mermaid
+graph TD
+    Req(["User Request"]) --> Orch["Orchestration\n(classify + route)"]
+    Orch --> PL["Prompt Layer\n(framing, constraints,\noutput format, policies)"]
+    Orch --> RL["Retrieval Layer\n(external knowledge,\ncitations, freshness checks)"]
+    Orch --> TL["Tool Layer\n(APIs, databases,\ncalculators, external actions)"]
+    PL --> ML["Model Layer\n(reasoning + generation)"]
+    RL --> ML
+    TL --> ML
+    ML --> Out(["Response + Citations\n+ Tool Results\n+ Trace Metadata"])
+
+    style ML fill:#e3f9e8
+    style RL fill:#f9f0e3
+    style TL fill:#f9e3e3
+    style PL fill:#e3f0f9
+```
+
 ### 2) Real-World Industry Scenarios
 
 #### Scenario A: Policy assistant with citations
@@ -1265,6 +1543,43 @@ Define stable interfaces between retrieval, prompting, and tool invocation so ea
 - Likely cause: all requests follow the same expensive path (heavy retrieval + tool calls + large model) without routing.
 - First debugging step: add request classification and route simple vs complex tasks to different layer budgets.
 
+### Hands-On Lab (Concept → Build → Break → Measure → Explain)
+
+**Build — Layer-based failure triage drill**
+
+A finance assistant gives this response:
+> "Employees hired after January 2024 are eligible for the enhanced 401k match starting on day 1."
+
+But the actual policy says: "Enhanced match starts after 90-day probationary period for all employees."
+
+Map the failure to each layer:
+
+| Layer | Hypothesis | Initial confidence |
+|---|---|---|
+| Model layer | Model hallucinated the start date | Low |
+| Prompt layer | Prompt asked for a direct answer with no citation rule | Medium |
+| Retrieval layer | The correct policy chunk was not retrieved | High |
+| Tool layer | N/A | Not applicable |
+
+**Break — Isolate the retrieval layer**
+
+Run retrieval in isolation: query your vector store for "401k enhanced match eligibility 2024". Check if the correct policy chunk appears in the top-5 results.
+
+- If it does NOT appear → the bug is in retrieval (chunking, embedding, indexing).
+- If it appears but was not used → the bug is in context assembly (prompt packing) or attention positioning.
+
+**Measure — Count failure rate per layer**
+
+Try 10 similar policy queries. Count:
+- Queries where the correct policy was NOT in the top-5 retrieved chunks.
+- Queries where policy was in context but still answered wrongly.
+
+If more than 50% fail at retrieval, fix retrieval first before touching the prompt or model.
+
+**Explain — Why layer ownership prevents prompt-first debugging waste**
+
+The most common debugging waste in GenAI is changing prompts for retrieval failures. If the model never received the correct policy chunk, no prompt instruction will fix it — you can only instruct the model to use evidence it already has. Starting with layer-level triage before changing anything prevents expensive prompt iteration on problems the prompt literally cannot solve.
+
 ### 6) Active Recall (Spaced Repetition)
 
 1. What does each of the four layers primarily own?
@@ -1368,6 +1683,28 @@ Think of a high-performing support engineer.
 Without memory, each conversation restarts from zero.
 Without grounding, memory can amplify errors.
 Without feedback loops, the same failure repeats at scale.
+
+### Visual Diagram (Mermaid)
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant System
+    participant WM as "Working Memory (current turn)"
+    participant EM as "Episodic Memory (user history)"
+    participant GR as "Retrieval / Grounding (authoritative source)"
+    participant FB as "Feedback Pipeline"
+
+    User->>System: Question
+    System->>WM: Load session context
+    System->>EM: Load user preferences
+    System->>GR: Fetch current source evidence
+    Note over System: Fresh retrieval outranks stale memory for facts
+    System-->>User: Grounded response with citations
+    User->>FB: Feedback (thumbs up/down/correction)
+    FB->>FB: Filter noise → offline evaluation
+    FB-->>EM: Update only after review + validation
+```
 
 ### 2) Real-World Industry Scenarios
 
@@ -1478,6 +1815,49 @@ You need write policies, retention rules, and offline evaluation before promotin
 - Likely cause: noisy feedback is being written directly into behavior policies without filtering.
 - First debugging step: gate feedback ingestion with confidence thresholds and offline replay evaluation.
 
+### Hands-On Lab (Concept → Build → Break → Measure → Explain)
+
+> This subtopic is a design-decision drill focused on memory placement and freshness control.
+
+**Build — Memory triage design**
+
+For an HR assistant, decide: working memory, episodic memory, semantic memory, or "re-ground every time":
+
+| Data point | Memory type | Why |
+|---|---|---|
+| User's preferred response language | ? | |
+| Today's maternity leave policy | ? | |
+| User corrected the bot's summary of their team name | ? | |
+| User's preferred response length (concise vs. detailed) | ? | |
+| Current fiscal year holiday calendar | ? | |
+
+**Answers:**
+
+| Data point | Memory type | Why |
+|---|---|---|
+| Preferred response language | Episodic memory | Low-risk stable preference; improves UX safely |
+| Today's maternity leave policy | Re-ground every time | Policy updates frequently; must always retrieve current version |
+| Team name correction | Working memory (this session) | Relevant only for the current conversation; do not persist |
+| Preferred response length | Episodic memory | Stable preference; safe to persist |
+| Holiday calendar | Re-ground every time | Subject to change; stale calendar creates real user harm |
+
+**Break — Write stale data into persistent memory**
+
+Simulate this bug: the bot caches "Parental leave = 12 weeks" in episodic memory from a January conversation. In March, the policy changes to 16 weeks. In April, no cache invalidation runs.
+
+Failure chain:
+1. Memory returns "12 weeks" for any parental leave question.
+2. Retrieval for the updated policy is never called because memory was trusted first.
+3. Employees get incorrect guidance for 3 months — a compliance and trust issue.
+
+**Measure — Freshness failure rate**
+
+If policy changes quarterly and the cache has no TTL, ~500 queries over 3 months all receive stale guidance before someone flushes the cache manually.
+
+**Explain — Why freshness priority must be enforced architecturally**
+
+Memory is correct for preferences but architecturally wrong for mutable facts. The correct pattern: use memory for preferences and conversational continuity; always retrieve for factual claims from external authoritative sources. This hierarchy must be enforced in code, not described in a prompt.
+
 ### 6) Active Recall (Spaced Repetition)
 
 1. What is the difference between memory and grounding in a GenAI system?
@@ -1586,6 +1966,26 @@ Think of aircraft operations.
 Without evaluation, you ship broken things.
 Without tracing, you cannot debug fast enough.
 Without safety, a failure becomes a catastrophe.
+
+### Visual Diagram (Mermaid)
+
+```mermaid
+graph LR
+    Req(["Request"]) --> T1["Trace Start (assign request ID)"]
+    T1 --> Ret["Retrieval + Tools (traced with scores)"]
+    Ret --> Mod["Model Generation (traced with prompt version)"]
+    Mod --> SG{"Safety Gate (policy check)"}
+    SG -->|"Pass"| Ev["Evaluation (correctness + efficiency)"]
+    SG -->|"Fail"| Bl["Block / Escalate (audit log)"]
+    Ev --> Resp(["Response"])
+    Ev --> Mtr["Quality Metrics (drift detection)"]
+    Mtr -->|"Regression detected"| Al["Alert + Auto Rollback"]
+
+    style SG fill:#f9f0e3
+    style Bl fill:#f9e3e3
+    style Al fill:#f9e3e3
+    style Resp fill:#e3f9e8
+```
 
 ### 2) Real-World Industry Scenarios
 
@@ -1697,6 +2097,49 @@ Manual review cannot keep up, so you need statistical tests, drift detectors, an
 - Symptom: safety gates block legitimate requests from power users.
 - Likely cause: one-size-fits-all safety policy does not account for user/context/risk profiles.
 - First debugging step: segment safety rules by user tier and use-case risk level.
+
+### Hands-On Lab (Concept → Build → Break → Measure → Explain)
+
+**Build — Minimal observability payload**
+
+Define the minimal set of fields to track per request for a support assistant:
+
+```python
+import time, uuid
+
+def observe_request(prompt, retrieved_chunks, response, expected_answer=None):
+    return {
+        "request_id": str(uuid.uuid4()),
+        "timestamp": time.time(),
+        "input_tokens": len(prompt.split()),      # proxy; use tiktoken in production
+        "output_tokens": len(response.split()),
+        "retrieved_chunk_count": len(retrieved_chunks),
+        "top_chunk_score": retrieved_chunks[0]["score"] if retrieved_chunks else 0,
+        "safety_flagged": contains_policy_violation(response),
+        "correct": (response.strip() == expected_answer.strip()) if expected_answer else None,
+    }
+
+def contains_policy_violation(text):
+    forbidden = ["I guarantee", "definitely eligible", "100% certain"]
+    return any(phrase in text for phrase in forbidden)
+```
+
+**Break — Remove safety gate and tracing**
+
+Remove `safety_flagged` and `correct` from the payload. Simulate 1,000 requests.
+
+What is now invisible:
+- Whether the model is making overconfident claims ("I guarantee you are eligible")
+- Whether answer quality is drifting from the expected baseline
+- Which requests are failing policy — you learn only when a user escalates
+
+**Measure — Impact of missing observability**
+
+With 1,000 requests/day and a 3% estimated policy violation rate: ~30 violations per day go undetected. Within one week: ~210 policy-violating records with no audit trail.
+
+**Explain — Why evaluation and safety must be system components, not afterthoughts**
+
+When evaluation and tracing are left out of the pipeline, the system appears to work until a user escalates or a compliance audit surfaces violations. First-class evaluation from day one gives immediate alerting on quality drift, direct evidence for rollback decisions, and a safety audit trail required for regulated use cases.
 
 ### 6) Active Recall (Spaced Repetition)
 
@@ -1814,6 +2257,23 @@ Think of a ride-sharing app.
 
 GenAI systems follow the same physics.
 
+### Visual Diagram (Mermaid)
+
+```mermaid
+graph TD
+    Req(["Incoming Request"]) --> Cls["Request Classifier (Simple / Tool / Analysis)"]
+    Cls -->|"Simple Q&A"| R1["Fast path: cheap model\nshallow retrieval, strict token cap"]
+    Cls -->|"Tool workflow"| R2["Medium path: moderate model\ntool timeouts, idempotency enforced"]
+    Cls -->|"Long-form analysis"| R3["Deep path: stronger model\ncapped context, relaxed latency SLA"]
+
+    R1 --> FB{"Failure?"}
+    R2 --> FB
+    R3 --> FB
+    FB -->|"Yes"| FBR["Fallback route\nCircuit breaker + degraded response"]
+    FB -->|"No"| Resp(["Response within SLA"])
+    Resp --> Mon["Cost + Latency telemetry\nSLA miss rate by tier"]
+```
+
 ### 2) Real-World Industry Scenarios
 
 #### Scenario A: Customer support assistant
@@ -1926,6 +2386,64 @@ You need class-aware routing, bounded contexts, and strict budget governance to 
 - Symptom: outages in one dependency cause full product failure.
 - Likely cause: missing circuit breaker and fallback path.
 - First debugging step: run failure-injection tests and confirm degrade/fallback behavior per dependency.
+
+### Hands-On Lab (Concept → Build → Break → Measure → Explain)
+
+**Build — Class-based budget configuration**
+
+```python
+REQUEST_CLASSES = {
+    "simple_qa": {
+        "max_input_tokens": 2000,
+        "max_output_tokens": 300,
+        "retrieval_chunks": 3,
+        "p95_latency_ms": 1500,
+        "model": "gpt-4o-mini",
+    },
+    "tool_workflow": {
+        "max_input_tokens": 8000,
+        "max_output_tokens": 800,
+        "retrieval_chunks": 8,
+        "p95_latency_ms": 5000,
+        "model": "gpt-4o",
+    },
+    "long_form_analysis": {
+        "max_input_tokens": 16000,
+        "max_output_tokens": 2000,
+        "retrieval_chunks": 15,
+        "p95_latency_ms": 15000,
+        "model": "gpt-4o",
+    },
+}
+
+def estimate_daily_cost(class_name, n_requests=10000):
+    cfg = REQUEST_CLASSES[class_name]
+    pricing = {"gpt-4o-mini": (0.15, 0.60), "gpt-4o": (2.50, 10.0)}
+    in_p, out_p = pricing[cfg["model"]]
+    cost_per_req = (cfg["max_input_tokens"] * in_p + cfg["max_output_tokens"] * out_p) / 1_000_000
+    return cost_per_req * n_requests
+
+for cls in REQUEST_CLASSES:
+    print(f"{cls}: ~${estimate_daily_cost(cls):.2f}/day at 10k requests")
+```
+
+**Break — Route everything through the most expensive path**
+
+Assign all requests (including simple FAQ) to the `long_form_analysis` config and re-run cost estimates:
+
+| Class | Correct path cost/10k/day | Wrong path cost/10k/day |
+|---|---|---|
+| Simple Q&A | ~$0.18 (mini, 2k/300t) | ~$40.00 (gpt-4o, 16k/2k) |
+| Tool workflow | ~$4.00 | ~$40.00 |
+| Analysis | ~$40.00 | ~$40.00 (same) |
+
+**Measure — Cost blow-up at scale**
+
+Simple Q&A on the wrong path is ~222× more expensive. At 100k FAQ requests/day: ~$4,000/day vs ~$18/day.
+
+**Explain — Why class-based routing is cost governance, not just performance tuning**
+
+Without request classification and class-specific token budgets, your most common (and simplest) requests run through the most expensive path. At 10x traffic growth the cost difference compounds. Class-based routing is the single highest-leverage cost control in most GenAI systems because it prevents expensive model configurations from being the global default.
 
 ### 6) Active Recall (Spaced Repetition)
 
@@ -2056,6 +2574,25 @@ Think of a junior analyst writing a report.
 - Shallow retrieval is reading only the first search result.
 - Overconfidence is presenting guesses like audited facts.
 
+### Visual Diagram (Mermaid)
+
+```mermaid
+flowchart TD
+    Out(["Bad Output Observed"]) --> Q1{"Answer contains claims\nwith NO supporting evidence?"}
+    Q1 -->|"Yes"| Hall["Hallucination\n(model invented unsupported fact)"]
+    Q1 -->|"No"| Q2{"Answer missing a\nkey caveat or important fact?"}
+    Q2 -->|"Yes"| Omit["Omission\n(important info left out)"]
+    Q2 -->|"No"| Q3{"Retrieved evidence\nwas thin or partial?"}
+    Q3 -->|"Yes"| Shal["Shallow Retrieval\n(answered from weak evidence)"]
+    Q3 -->|"No"| Q4{"Certainty level\nexceeds evidence strength?"}
+    Q4 -->|"Yes"| Over["Overconfident Answer\n(certainty ≠ evidence)"]
+
+    style Hall fill:#f9e3e3
+    style Omit fill:#f9ece3
+    style Shal fill:#f9f0e3
+    style Over fill:#f9f5e3
+```
+
 ### 2) Real-World Industry Scenarios
 
 #### Scenario A: HR policy assistant
@@ -2148,6 +2685,48 @@ Use claim-level evaluation, citation checks, and sampled human review.
 - Likely cause: prompt and evaluation reward always-answer behavior.
 - First debugging step: add insufficient-evidence test cases and measure refusal correctness.
 
+### Hands-On Lab (Concept → Build → Break → Measure → Explain)
+
+**Build — Claim-to-evidence mapping drill**
+
+Given this retrieved context and model output, map each claim:
+
+**Retrieved context:**
+> "Full-time employees are eligible for parental leave of up to 12 weeks at 100% pay. Eligibility begins after 6 months of employment."
+
+**Model output:**
+> "All employees, including part-time and contract workers, are eligible for parental leave of up to 12 weeks at full pay. There is no waiting period."
+
+| Claim | Supported by context? | Failure type |
+|---|---|---|
+| All employees including part-time/contract | ? | ? |
+| Up to 12 weeks at full pay | ? | ? |
+| No waiting period | ? | ? |
+
+**Answers:**
+
+| Claim | Supported? | Failure type |
+|---|---|---|
+| All employees including part-time/contract | No — context says full-time only | Hallucination |
+| Up to 12 weeks at full pay | Yes — directly stated | Correct |
+| No waiting period | No — context says 6-month requirement | Hallucination + Overconfidence |
+
+**Break — Remove retrieval and run the same question**
+
+Prompt: "Are part-time employees eligible for parental leave? How long and at what pay rate?"
+
+Expected failure: the model generates plausible-sounding but entirely unsupported numbers and eligibility rules from its training distribution.
+
+**Measure — Claim-level hallucination rate**
+
+For 10 policy questions:
+- With full retrieval: measure unsupported claims (target: 0–5%)
+- With empty retrieval: measure unsupported claims (typically 40–80% on factual policy questions)
+
+**Explain — Why hallucination is primarily a retrieval failure**
+
+When a model generates an answer, it fills the gap between retrieved evidence and a complete response using its training distribution. The more evidence gaps there are, the more the model fills in — and the more confident it sounds, because fluency is trained independently of factual accuracy. Fixing hallucination means ensuring the retrieval layer supplies complete, relevant evidence, not prompting the model to "be accurate."
+
 ### 6) Active Recall (Spaced Repetition)
 
 1. What is the difference between hallucination and omission?
@@ -2233,6 +2812,25 @@ Think of giving instructions to a busy teammate.
 - If the instructions are brittle, one wording change breaks the task.
 - If hidden state exists, they act based on something you did not know they remembered.
 - If overloaded, they miss key details because the brief is too crowded.
+
+### Visual Diagram (Mermaid)
+
+```mermaid
+sequenceDiagram
+    participant Dev as "Developer"
+    participant PA as "Prompt Assembler"
+    participant HS as "Chat History (hidden state)"
+    participant RC as "Retrieved Context"
+    participant M as "Model"
+
+    Dev->>PA: Deploy template v1.3 (small wording change)
+    PA->>HS: Load prior turns (may be stale / contradictory)
+    PA->>RC: Pack retrieved chunks (4k tokens)
+    Note over PA: Budget: 8k total. History: 3k + Retrieval: 4k + Instruction: 1k = TIGHT
+    PA-->>M: Assembled prompt (context overloaded)
+    M-->>Dev: Unexpected output — format changed unexpectedly
+    Note over Dev,M: Wording brittleness + hidden state + overload combined to break behavior
+```
 
 ### 2) Real-World Industry Scenarios
 
@@ -2326,6 +2924,62 @@ You need prompt versioning, regression tests, render inspection, and diff discip
 - Likely cause: context overload or poor ordering.
 - First debugging step: measure token allocation by component and move key evidence closer to the task instruction.
 
+### Hands-On Lab (Concept → Build → Break → Measure → Explain)
+
+**Build — Prompt regression test fixture**
+
+For a JSON extraction prompt, define a minimal regression fixture set:
+
+```python
+EXTRACTION_FIXTURES = [
+    {
+        "id": "basic_invoice",
+        "input": "Invoice #1042 from Acme Corp, dated 2024-03-15, total $1,250.00",
+        "expected": {"invoice_id": "1042", "vendor": "Acme Corp", "amount": 1250.00},
+    },
+    {
+        "id": "missing_vendor",
+        "input": "Invoice dated 2024-03-15, total $500. No vendor name provided.",
+        "expected": {"invoice_id": None, "vendor": None, "amount": 500.00},
+    },
+    {
+        "id": "informal_format",
+        "input": "Got an invoice from Bob's Plumbing for $340 for work done March 10th.",
+        "expected": {"invoice_id": None, "vendor": "Bob's Plumbing", "amount": 340.00},
+    },
+]
+
+def run_regression(prompt_template, fixtures, model_fn):
+    failures = []
+    for f in fixtures:
+        result = model_fn(prompt_template, f["input"])
+        if result != f["expected"]:
+            failures.append({"id": f["id"], "got": result, "expected": f["expected"]})
+    return failures
+```
+
+**Break — Make a small wording change and re-run**
+
+Original: `"Extract invoice fields as JSON: invoice_id, vendor, amount"`
+Changed to: `"Please provide the invoice details in JSON format with fields invoice_id, vendor, and amount"`
+
+Predicted symptoms: the model may return prose around the JSON, wrap it in markdown code fences, or use different key names (`vendor_name` instead of `vendor`).
+
+**Measure — Brittleness score**
+
+```python
+original_failures = run_regression(original_prompt, EXTRACTION_FIXTURES, model_fn)
+changed_failures  = run_regression(changed_prompt,  EXTRACTION_FIXTURES, model_fn)
+print(f"Original: {len(original_failures)}/3 failures")
+print(f"Changed:  {len(changed_failures)}/3 failures")
+```
+
+If the changed version fails even 1 additional fixture, you have confirmed prompt brittleness: a small wording change broke a downstream schema contract.
+
+**Explain — Why rendered prompt inspection is more valuable than template inspection**
+
+A template file shows your intentions. A rendered prompt shows exactly what the model received — including variable substitutions, history injections, and retrieved context. Brittleness bugs always live in the rendered output, not the template. Building a render-and-test harness makes brittleness visible before it reaches production.
+
 ### 6) Active Recall (Spaced Repetition)
 
 1. What is prompt brittleness?
@@ -2412,6 +3066,26 @@ Think of an assistant with access to company systems.
 - A bad tool call can update records, send messages, refund money, or expose restricted data.
 
 That is why tool failures need stricter controls than plain chat failures.
+
+### Visual Diagram (Mermaid)
+
+```mermaid
+flowchart TD
+    Req(["User Request"]) --> IC{"Intent Classification\n(tool call justified?)"}
+    IC -->|"No tool needed"| Ans["Generate answer only"]
+    IC -->|"Yes"| AC{"Authorization Check\n(role + policy)"}
+    AC -->|"Denied"| Block["Block + Audit Log"]
+    AC -->|"Permitted"| FC{"Freshness Check\n(is source current?)"}
+    FC -->|"Stale"| Refresh["Refresh source first"]
+    FC -->|"Current"| Exec["Execute tool call"]
+    Exec --> Idem{"Idempotent execution?"}
+    Idem -->|"Yes"| Result["Return result + Audit log"]
+    Idem -->|"No"| Conf["Require explicit confirmation first"]
+    Conf --> Result
+
+    style Block fill:#f9e3e3
+    style Result fill:#e3f9e8
+```
 
 ### 2) Real-World Industry Scenarios
 
@@ -2507,6 +3181,39 @@ You need tool catalogs, risk tiers, schema reviews, audit logs, and approval pol
 - Likely cause: permission-aware retrieval or tool authorization is missing.
 - First debugging step: audit authorization checks at retrieval and tool execution layers.
 
+### Hands-On Lab (Concept → Build → Break → Measure → Explain)
+
+**Build — Tool authorization checklist**
+
+For each tool in a support assistant, define risk tier and required controls:
+
+| Tool | Risk tier | Required controls |
+|---|---|---|
+| `search_knowledge_base(query)` | Read-only | Permission scope check (user/tenant), freshness metadata |
+| `get_customer_order(order_id)` | Read-only | User identity → customer ownership validation |
+| `submit_refund(order_id, amount)` | High-risk write | Role check + amount policy limit + explicit confirmation + idempotency key |
+| `send_email(user_id, subject, body)` | Medium write | Role check + content policy validation + rate limit per user |
+
+**Break — Remove the authorization check from `submit_refund`**
+
+User message: "Can you process my refund for order 9814?"
+
+Without authorization check:
+1. Model calls `submit_refund("9814", <amount from context>)` based on intent classification alone.
+2. If the amount was retrieved from a stale or wrong data source, the wrong amount executes.
+3. No confirmation gate means the user never explicitly approved the action.
+4. No idempotency key means a retry doubles the refund.
+
+**Measure — Blast radius calculation**
+
+At 5,000 support interactions/day, assume 0.5% trigger refund tool calls (25/day). Without authorization + idempotency:
+- Even 1 duplicate execution per week = unexpected financial exposure.
+- Without the confirmation gate, 2% intent-classification errors = ~0.5 wrong refunds/day.
+
+**Explain — Why authorization must live in the tool layer, not the prompt**
+
+Prompts set behavioral intent; tool-layer controls enforce behavioral boundaries. The model's instruction-following capability is probabilistic. A 0.1% error rate on intent interpretation at scale means real money moves incorrectly. Tool-layer authorization is deterministic and cannot be bypassed by a user reformulating a request in prompt space.
+
 ### 6) Active Recall (Spaced Repetition)
 
 1. Why are tool failures more dangerous than plain answer failures?
@@ -2599,6 +3306,28 @@ Think of a hospital diagnosis workflow.
 - Orchestration bug: patient is sent to the wrong department.
 
 The fix depends entirely on which layer failed.
+
+### Visual Diagram (Mermaid)
+
+```mermaid
+flowchart TD
+    Fail(["Failure Observed"]) --> S1["Step 1: Reproduce\n(exact request + state + trace)"]
+    S1 --> S2{"Right evidence retrieved?"}
+    S2 -->|"No"| R1["Retrieval Bug\n(ranking, chunking, freshness, index gap)"]
+    S2 -->|"Yes"| S3{"Prompt assembled correctly?"}
+    S3 -->|"No"| R2["Prompt / Context Bug\n(brittleness, overload, hidden state)"]
+    S3 -->|"Yes"| S4{"Tool calls succeeded?"}
+    S4 -->|"No"| R3["Tool Bug\n(permissions, bad args, no idempotency)"]
+    S4 -->|"Yes"| S5{"Orchestration routed correctly?"}
+    S5 -->|"No"| R4["Orchestration Bug\n(routing, retry loop, missed step)"]
+    S5 -->|"Yes"| R5["Model Bug\n(assign ONLY after ruling out all others)"]
+
+    style R1 fill:#f9f0e3
+    style R2 fill:#f9ece3
+    style R3 fill:#f9e3e3
+    style R4 fill:#ece3f9
+    style R5 fill:#e3e3f9
+```
 
 ### 2) Real-World Industry Scenarios
 
@@ -2702,6 +3431,49 @@ Use failure labels, replay fixtures, and recurring dashboards by failure layer.
 - Likely cause: missing state transition and tool-call traces.
 - First debugging step: add trajectory tracing with state snapshots and decision reasons.
 
+### Hands-On Lab (Concept → Build → Break → Measure → Explain)
+
+**Build — Layer-by-layer debugging walkthrough**
+
+System: HR policy RAG assistant
+User question: "What is the notice period for voluntary resignation?"
+Expected answer: "2 weeks per company policy, effective upon written notice."
+Actual answer: "There is no formal notice period requirement. Standard practice is to give 2 weeks' notice."
+
+Apply the debugging ladder:
+
+| Step | Check | Action |
+|---|---|---|
+| 1. Reproduce | Same input → same output? | Confirmed reproducible |
+| 2. Retrieval | Top-5 chunks contain notice period policy? | Run retrieval in isolation |
+| 3. Prompt | Prompt instructs model to cite source? | Inspect rendered prompt |
+| 4. Tool | Any tool calls in this flow? | Skip (no tools) |
+| 5. Orchestration | Routing and model selection correct? | Check route config |
+| 6. Model | Did model have evidence but still answer wrongly? | Check only after all above |
+
+**Break — Inject the retrieval bug deliberately**
+
+Remove the notice period policy document from the retrieval index. Re-run the same query.
+
+Expected: retrieval fails → model fills gap from training distribution → outputs "standard practice" (a generic confident answer that is not policy-grounded).
+
+**Measure — Layer attribution**
+
+```python
+results_with_policy    = retrieve("voluntary resignation notice period", top_k=5)
+results_without_policy = retrieve("voluntary resignation notice period", top_k=5)
+
+policy_found_with    = any("2 weeks" in r["text"] and "notice" in r["text"] for r in results_with_policy)
+policy_found_without = any("2 weeks" in r["text"] and "notice" in r["text"] for r in results_without_policy)
+
+print(f"Policy found WITH index:    {policy_found_with}")    # True
+print(f"Policy found WITHOUT index: {policy_found_without}") # False -> confirms retrieval bug
+```
+
+**Explain — Why the debugging ladder prevents prompt-first bias**
+
+Engineers trained on non-GenAI systems instinctively jump to "fix the model output" because the model is the most visible component. In GenAI systems, most failures have an upstream cause: missing evidence, bad context assembly, wrong routing, or broken tools. Applying the ladder proves the bug is NOT in each upstream layer before assigning it to the model — saving hours of prompt iteration on problems the prompt literally cannot fix.
+
 ### 6) Active Recall (Spaced Repetition)
 
 1. Why should you avoid blaming the model first?
@@ -2764,3 +3536,400 @@ Layer-first diagnosis prevents expensive guesswork and stops teams from treating
 Module 1 now gives you the mental model for how GenAI systems are structured and how they fail.
 
 The next learning jump depends on our roadmap path: either move to Prompting and Structured Generation for market-fast system building, or enter Transformer internals when you want the deeper theory layer behind model behavior.
+
+---
+
+## Module 1 Checkpoint Deep Explanation
+
+### Checkpoint Skills
+
+By the end of Module 1, you should be able to do three things without vague language:
+
+- Explain the full anatomy of a GenAI system.
+- Distinguish workflow automation, RAG, and agentic behavior.
+- Diagnose a bad answer by mapping it to the correct failure layer.
+
+### 1) The Intuition (Plain English)
+
+A real GenAI product is not "an LLM plus a prompt."
+
+It is a system made of layers:
+
+- user experience layer: where the user asks, reviews, approves, or corrects
+- orchestration layer: decides which path the request should take
+- prompt layer: frames the task, constraints, role, format, and policy
+- model layer: generates, reasons, classifies, or selects actions
+- retrieval layer: brings in external knowledge and citations
+- tool layer: reads/writes external systems and performs actions
+- memory layer: preserves useful state over time
+- evaluation/tracing layer: measures quality and records what happened
+- safety/reliability/cost layer: enforces boundaries, fallbacks, budgets, and SLAs
+
+Simple mental model:
+
+- model = language/reasoning engine
+- prompt = task contract
+- retrieval = evidence supply
+- tools = action surface
+- memory = state over time
+- orchestration = control flow
+- evaluation/tracing = visibility and measurement
+- safety/reliability/cost = production constraints
+
+Analogy:
+
+Think of a hospital operating room.
+
+- The surgeon is the model.
+- The procedure checklist is the prompt.
+- Patient records and lab reports are retrieval.
+- Surgical instruments are tools.
+- Medical history is memory.
+- The operating protocol is orchestration.
+- Monitors and logs are tracing/evaluation.
+- Sterile rules, approvals, and emergency fallback plans are safety/reliability.
+
+If something goes wrong, you do not say "the surgeon failed" immediately. You inspect the whole operating system.
+
+### Visual Diagram (Mermaid)
+
+```mermaid
+graph TD
+    UX(["User Request + Identity + Permissions"]) --> Orch["Orchestration Layer\n(routing + sequencing)"]
+    Orch --> PL["Prompt Layer\n(task contract)"]
+    Orch --> RL["Retrieval Layer\n(evidence supply)"]
+    Orch --> ML2["Memory Layer\n(state over time)"]
+    PL --> ML["Model Layer\n(reasoning + generation)"]
+    RL --> ML
+    ML2 --> ML
+    ML --> TL["Tool Layer\n(actions + data writes)"]
+    TL --> Resp(["Response"])
+    Resp --> ET["Evaluation + Tracing\n(measurement + visibility)"]
+    Resp --> SR["Safety + Reliability + Cost\n(enforcement + fallbacks + budgets)"]
+    ET -.->|"Quality signals"| Orch
+    SR -.->|"Rollback / throttle signals"| Orch
+
+    style ML fill:#e3f9e8
+    style SR fill:#f9e3e3
+    style ET fill:#e3f0f9
+```
+
+### 2) Real-World Industry Scenarios
+
+#### Scenario A: Enterprise policy assistant
+
+- Product context: employees ask HR/compliance questions and expect cited answers.
+- Constraints: current policy, low hallucination tolerance, privacy, readable output.
+- What good looks like in production: retrieval brings current policy, prompt enforces grounded response, model answers with citations, and tracing proves which source supported each claim.
+
+System type:
+
+- Mostly RAG.
+- It may include workflow steps for escalation, but the core job is grounded answering.
+
+#### Scenario B: Invoice processing automation
+
+- Product context: invoices enter the system, fields are extracted, validations run, exceptions route to review.
+- Constraints: repeatability, auditability, cost, schema reliability.
+- What good looks like in production: deterministic workflow controls the path, LLM extraction is one step, and exceptions are routed predictably.
+
+System type:
+
+- Mostly workflow automation.
+- The LLM helps inside a fixed process, but it does not decide the whole path freely.
+
+#### Scenario C: Incident investigation assistant
+
+- Product context: system reviews logs, checks runbooks, calls tools, compares hypotheses, and recommends next action.
+- Constraints: tool reliability, state tracking, safety, approval boundaries, traceability.
+- What good looks like in production: the system can choose next steps dynamically within boundaries, but every tool call and decision is traced.
+
+System type:
+
+- Potentially agentic behavior.
+- The path depends on what the system discovers during execution.
+
+### 3) System View (Think like a systems engineer)
+
+#### Full anatomy: Inputs -> Transformations -> Outputs
+
+- Inputs:
+  - user request
+  - user identity and permissions
+  - conversation state
+  - retrieved documents
+  - tool outputs
+  - memory
+  - product constraints (latency, cost, safety)
+- Transformations:
+  - classify task and risk
+  - retrieve evidence if needed
+  - assemble prompt/context package
+  - select model and route
+  - call tools if needed
+  - validate answer, citations, schema, and safety
+  - log trace and metrics
+- Outputs:
+  - answer
+  - citation/evidence trail
+  - tool result or action
+  - refusal/escalation/clarification
+  - trace and evaluation signals
+
+#### Workflow automation vs RAG vs agentic behavior
+
+| System type | Core question | Main mechanism | Best fit | Main risk |
+|---|---|---|---|---|
+| Workflow automation | What fixed process should run? | predefined steps and rules | repeatable business processes | too rigid for ambiguous tasks |
+| RAG | What evidence supports the answer? | retrieval + grounded generation | knowledge assistants and cited Q&A | bad retrieval causes bad answers |
+| Agentic behavior | What should the system do next? | dynamic planning/tool use/state updates | open-ended investigation or adaptive workflows | unsafe autonomy and hard debugging |
+
+#### Clean distinction
+
+- Workflow automation follows a mostly known path.
+- RAG answers using retrieved knowledge.
+- Agentic behavior chooses actions dynamically based on intermediate state.
+
+They can be combined, but they are not the same thing.
+
+Example combined system:
+
+- A support platform may use RAG to answer a policy question.
+- It may use workflow automation to route a refund approval.
+- It may use agentic behavior to investigate a complex incident where the next step depends on tool results.
+
+### 4) System Design Flavor (practical and concise)
+
+#### Key design question
+
+What part of the system should own the decision?
+
+- If the path is known, use workflow automation.
+- If the answer depends on external knowledge, use RAG.
+- If the next step depends on runtime discoveries, consider bounded agentic behavior.
+
+#### Tradeoffs
+
+- Workflow vs agentic behavior: workflows are safer and easier to test, but less adaptive.
+- RAG vs pure model answering: RAG improves freshness and grounding, but adds retrieval failure modes.
+- Agentic tools vs simple Q&A: tool use increases capability, but adds permissions, side effects, and recovery complexity.
+
+#### One scaling consideration
+
+At 10x usage, unclear boundaries become incidents.
+
+You need explicit ownership per layer:
+
+- retrieval owns evidence
+- prompt owns framing
+- model owns generation/reasoning
+- tools own actions
+- orchestration owns control flow
+- safety owns enforcement
+- evaluation/tracing owns measurement and debugging
+
+### 5) Common Mistakes + Debugging
+
+#### Mistake 1
+
+- Symptom: team says "the LLM is wrong" for every bad output.
+- Likely cause: they do not separate model, retrieval, prompt, tool, and orchestration layers.
+- First debugging step: inspect the full trace and identify the first layer where expected behavior diverged.
+
+#### Mistake 2
+
+- Symptom: a deterministic process becomes unpredictable after adding an agent.
+- Likely cause: workflow automation was replaced by unnecessary autonomy.
+- First debugging step: identify which decisions can be converted back into fixed rules or approval-gated steps.
+
+#### Mistake 3
+
+- Symptom: RAG answer is wrong despite a strong model.
+- Likely cause: answer-bearing evidence was missing, stale, poorly ranked, or buried in context.
+- First debugging step: inspect retrieved chunks, source freshness, and claim-to-evidence mapping.
+
+#### Mistake 4
+
+- Symptom: assistant triggers an unsafe action.
+- Likely cause: tool permission and approval controls rely too much on prompt instructions.
+- First debugging step: audit backend tool authorization, risk tier, confirmation, and idempotency checks.
+
+### Hands-On Lab (Concept → Build → Break → Measure → Explain)
+
+**Build — System anatomy classification**
+
+For this production support platform description, map each component to its GenAI system layer:
+
+> The system receives a user query. It loads the user's conversation history and preference profile. It searches the policy knowledge base for relevant documents. It constructs a prompt with role, context, and formatting rules. It calls the model API. If the model suggests a refund, it calls the refund API with the user's confirmed intent. A quality scorer evaluates the response for safety and accuracy. Cost and latency are logged per request.
+
+| Component | Layer |
+|---|---|
+| Loads conversation history and preference profile | ? |
+| Searches policy knowledge base | ? |
+| Constructs prompt with role + context + rules | ? |
+| Calls model API | ? |
+| Calls refund API with confirmed intent | ? |
+| Quality scorer evaluates safety and accuracy | ? |
+| Cost and latency logged per request | ? |
+
+**Answers:**
+
+| Component | Layer |
+|---|---|
+| Conversation history + preference profile | Memory layer |
+| Searches policy knowledge base | Retrieval layer |
+| Constructs prompt with role + context + rules | Prompt layer |
+| Calls model API | Model layer |
+| Calls refund API with confirmation | Tool layer (+ safety gate) |
+| Quality scorer | Evaluation + Safety layer |
+| Cost and latency logging | Tracing / Observability layer |
+
+**Break — Remove the retrieval layer and the evaluation layer**
+
+Predict what breaks in production:
+1. Without retrieval → model answers from training data only → hallucinated policy answers
+2. Without evaluation → no quality or safety signals → policy violations go undetected until a user escalates
+
+**Measure — Failure accumulation rate**
+
+For 500 employees, 20 policy questions/day, 3% hallucination rate:
+- With evaluation: flagged daily, fixed within hours
+- Without evaluation: ~15 incorrect policy answers/week before anyone notices
+
+**Explain — Why the system view prevents "all LLM, no engineering" thinking**
+
+When teams treat the model as the whole system, every failure becomes "the model is wrong." The system anatomy lens shifts responsibility correctly: failures have owners per layer, and fixes are targeted — improve retrieval, tighten prompt, harden tool authorization, add safety gate — rather than generic. This makes GenAI systems predictable, debuggable, and improvable by the same discipline applied to any distributed system.
+
+### 6) Active Recall (Spaced Repetition)
+
+1. Name the major layers in a production GenAI system.
+2. What is the core difference between workflow automation and agentic behavior?
+3. What is the core difference between RAG and pure model answering?
+4. Why is a bad answer not automatically a model bug?
+5. What does orchestration own in a GenAI system?
+6. What is the first question to ask when diagnosing a bad answer?
+
+#### Active Recall Answers
+
+1. UX, orchestration, prompt, model, retrieval, tool, memory, evaluation/tracing, and safety/reliability/cost layers.
+2. Workflow automation follows a predefined path; agentic behavior chooses next steps dynamically based on runtime state.
+3. RAG grounds answers in retrieved external evidence; pure model answering relies mostly on the model's internal learned patterns.
+4. The failure may come from missing retrieval evidence, bad prompt framing, stale memory, tool misuse, permissions, or orchestration.
+5. Orchestration owns routing, sequencing, retries, state transitions, and deciding which layer runs next.
+6. Ask: where did the system first lose the truth?
+
+### 7) Practice
+
+#### Mini-exercise
+
+Classify each system as workflow automation, RAG, agentic behavior, or a combination.
+
+- A bot answers employee policy questions with citations.
+- A pipeline extracts invoice fields, validates them, and routes exceptions.
+- A system investigates an outage by checking logs, calling tools, and selecting the next diagnostic step.
+- A support assistant answers refund policy questions and then opens an approval workflow if the user qualifies.
+
+#### Mini-exercise Answers
+
+- Policy questions with citations -> RAG.
+  Why: the core job is grounded answering from retrieved policy evidence.
+
+- Invoice extraction and routing -> workflow automation with an LLM step.
+  Why: the process path is mostly predefined and repeatable.
+
+- Outage investigation -> bounded agentic behavior.
+  Why: the next step depends on what the system discovers during tool use.
+
+- Refund policy plus approval workflow -> combination of RAG and workflow automation.
+  Why: RAG answers the policy question, then workflow handles the approval path.
+
+#### Capstone-style system design question
+
+Design a customer support GenAI system that can answer policy questions, route routine workflows, and investigate unusual incidents. Explain which parts are RAG, which parts are workflow automation, which parts are agentic, and how you would debug a bad answer.
+
+#### Capstone-style Answer Outline
+
+- RAG:
+  - policy Q&A with citations
+  - source freshness and claim-to-evidence validation
+- Workflow automation:
+  - ticket routing, refund approval, escalation steps
+  - deterministic state machine with approval gates
+- Agentic behavior:
+  - unusual incident investigation where next steps depend on logs/tool results
+  - bounded tool access and trajectory tracing
+- Debugging:
+  - reproduce request
+  - inspect retrieved evidence
+  - inspect rendered prompt
+  - inspect model output
+  - inspect tool calls and permissions
+  - inspect orchestration state
+  - add regression test for the failing layer
+
+### 8) Production Reality Check (Mandatory Ending)
+
+If this fails in prod, what is the first thing we inspect?
+
+We inspect the full request trace and map the failure to the first broken layer: retrieval, prompt, model, tool, memory, permission, or orchestration.
+
+Why:
+
+The visible bad answer is usually the final symptom. The root cause is often earlier in the system chain.
+
+### 9) Curiosity Bridge (Mandatory Ending)
+
+Module 1 gives you the system map and debugging lens.
+
+The next natural step is Module 3: Prompting and Structured Generation, where we make prompt behavior testable through roles, constraints, schemas, validation, and repair loops instead of relying on free-form generation.
+
+---
+
+## Module Glossary
+
+Key terms from this module, ordered alphabetically for fast revision and interview prep.
+
+| Term | One-line definition |
+|---|---|
+| Agent | A system that chooses its next action dynamically based on runtime discoveries; the path is not predefined |
+| Assistant | A GenAI system role focused on answering questions and responding to user requests |
+| Canary rollout | Deploying a change to a small percentage of traffic to measure impact before full rollout |
+| Circuit breaker | A reliability pattern that stops calling a failing dependency after a threshold, returning a fallback instead |
+| Class-based budgets | Assigning different token limits, latency targets, and cost caps to different request types instead of a single global default |
+| Context overload | When too much content is packed into a prompt, causing the model to miss key instructions or evidence |
+| Context window | The maximum number of tokens (input + output) a model can process in a single call |
+| Copilot | A GenAI system embedded inside an active human workflow to provide context-aware assistance |
+| Episodic memory | User-scoped history and preferences retained across sessions |
+| Evaluation | Systematic measurement of output quality across correctness, safety, and efficiency dimensions |
+| Foundation model | A pre-trained large model with broad capabilities; the raw base before instruction tuning |
+| Grounding | Tying model outputs to authoritative external evidence to reduce hallucination |
+| Hallucination | A model generating factual claims not supported by the available evidence |
+| Hidden state | Prior context or memory that influences model behavior without the developer being aware |
+| Hosted model | A model served by a provider over an API; the provider owns the infrastructure |
+| Idempotency | Property of an operation that can be called multiple times without causing duplicate side effects |
+| Instruct model | A foundation model adapted via instruction tuning and RLHF to follow user requests reliably |
+| Memory layer | The component responsible for preserving useful state across turns, sessions, or users |
+| Model layer | The component responsible for reasoning and text generation |
+| Omission | A model leaving out important information that should have been included in the response |
+| Open-weight model | A model whose parameters are publicly accessible under a license; does not imply self-hosted |
+| Orchestration | The control flow layer that routes requests, sequences steps, manages retries, and coordinates layers |
+| Overconfident answer | A response that presents claims with higher certainty than the evidence actually supports |
+| p95 latency | The 95th-percentile response time; 95% of requests complete within this value |
+| Permission blind spot | Missing authorization controls that allow the model to access or act on data/systems it should not |
+| Prompt brittleness | When small wording or template changes cause large, unexpected behavior changes |
+| Prompt layer | The component responsible for task framing, constraints, output format, and behavioral guardrails |
+| RAG (Retrieval-Augmented Generation) | A pattern that combines retrieval of external evidence with model generation to produce grounded answers |
+| Reasoning-oriented model | A model optimized for multi-step problem-solving, chain-of-thought reasoning, and sustained coherence over complex tasks |
+| Retrieval layer | The component responsible for supplying relevant external knowledge to the model at runtime |
+| RLHF | Reinforcement Learning from Human Feedback; a training technique used to align model outputs with human preferences |
+| Safety gate | A policy enforcement component that checks responses for violations before returning them to users |
+| Self-hosted | Running model inference on infrastructure you own and operate |
+| Semantic memory | Distilled, validated long-term facts and preferences; highest governance and validation requirements |
+| Shallow retrieval | Retrieving incomplete or low-quality evidence, causing the model to answer from a thin evidence base |
+| throughput | The rate at which a system processes requests or tokens over time (requests/second or tokens/second) |
+| Token | The fundamental unit of text processed by an LLM; roughly 4 characters or 0.75 words in English |
+| Tool layer | The component responsible for calling external APIs, databases, and performing actions with real-world side effects |
+| Tool misuse | Calling the wrong tool, using incorrect arguments, or triggering an action at the wrong time |
+| Tracing | Recording the full request path (retrieval, prompt, model, tool calls, outputs) for observability and debugging |
+| Working memory | Short-term context held within a single conversation turn or session |
+| Workflow | A GenAI system role that executes a predefined, repeatable sequence of steps; the path is known in advance |
