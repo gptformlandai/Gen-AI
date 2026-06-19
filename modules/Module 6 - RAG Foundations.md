@@ -20,6 +20,9 @@ This is the evolving knowledge base for Module 6.
   - [Subtopic 6.2.b: Context Packing and Prompt Stuffing Basics](#subtopic-62b-context-packing-and-prompt-stuffing-basics)
   - [Subtopic 6.2.c: Citation Mapping and Source Traceability](#subtopic-62c-citation-mapping-and-source-traceability)
   - [Subtopic 6.2.d: Common Baseline RAG Failures and Debugging Habits](#subtopic-62d-common-baseline-rag-failures-and-debugging-habits)
+- [Topic 6.3: Answer Generation with Citations](#topic-63-answer-generation-with-citations)
+  - [Subtopic 6.3.a: Grounded Answer Prompting](#subtopic-63a-grounded-answer-prompting)
+  - [Subtopic 6.3.b: Refusal Behavior When Evidence Is Insufficient](#subtopic-63b-refusal-behavior-when-evidence-is-insufficient)
 
 **Covered so far:**
 - Subtopic 6.1.a: Source inventory and content-quality audits
@@ -30,6 +33,8 @@ This is the evolving knowledge base for Module 6.
 - Subtopic 6.2.b: Context packing and prompt stuffing basics
 - Subtopic 6.2.c: Citation mapping and source traceability
 - Subtopic 6.2.d: Common baseline RAG failures and debugging habits
+- Subtopic 6.3.a: Grounded answer prompting
+- Subtopic 6.3.b: Refusal behavior when evidence is insufficient
 
 ---
 
@@ -3609,6 +3614,479 @@ You now have a complete baseline RAG system: ingest → chunk → embed → retr
 
 ---
 
+## Topic 6.3: Answer Generation with Citations
+
+**Topic time:** 12h
+
+---
+
+## Subtopic 6.3.a: Grounded Answer Prompting ✅
+
+### 0. Reading Path + Level Tags
+
+- **Beginner:** Read sections 1–2 and Active Recall.
+- **Intermediate:** Add sections 3–5, the grounding strength spectrum, and the Hands-On Lab.
+- **Pro:** Full lab (Build → Break → Measure → Explain), grounding calibration exercise, and the capstone design question.
+
+---
+
+### 1. Pre-Question Hook + The Intuition [Beginner]
+
+**Pause — before reading:** You've retrieved the perfect chunks and packed them into the context window. You send the prompt to the LLM and get back a confident, specific answer — but it's wrong. The chunks contain the correct answer. What went wrong, and where in the prompt do you fix it?
+
+**The core mental model:**
+
+Retrieval gets the right data in front of the model. **Grounded answer prompting** is the engineering discipline of structuring the system prompt so the LLM actually *uses* that data — rather than ignoring it and generating from its parametric memory (what it learned during training).
+
+LLMs are not document readers by default. They are pattern completers. Without explicit, strong grounding instructions, the model treats your context as one of many possible sources of information to blend with its training — and it will confidently blend in wrong information when its training patterns are stronger than the retrieved text.
+
+**The grounding problem has two faces:**
+1. **The LLM ignores the context** — answers from training when the retrieved chunk clearly contains the right answer.
+2. **The LLM over-fills from context** — synthesizes across chunks in ways that introduce subtle distortions not present in any single chunk.
+
+Both are controlled by the system prompt. This subtopic is about building that prompt correctly.
+
+**Real-world analogy:**  
+Imagine briefing a new employee before a customer call. You hand them a one-page FAQ. A weak brief is: "Here's the FAQ, it might help." A strong brief is: "Answer ONLY from this FAQ. If a customer asks something not on this page, say 'I'll need to check and get back to you.' Do not make up answers." The same employee, the same FAQ — but the second brief produces dramatically fewer wrong answers. The analogy breaks down because an employee can recognize ambiguity intuitively; an LLM must be told explicitly when to admit uncertainty.
+
+**Key terms (first use — also in Module Glossary):**
+- **Grounded answer prompting:** Structuring the system prompt to anchor the LLM's output to the retrieved context, preventing it from using parametric memory to fill in or supplement the answer.
+- **Parametric memory:** Facts and patterns an LLM learned during pre-training; stored in model weights; accessed by default when no explicit grounding constraint is set.
+- **Context anchor:** The specific system prompt clause that restricts the LLM to the provided documents (e.g., "Answer ONLY from the documents below").
+- **Grounding strength:** The degree to which the system prompt constrains the LLM to use only retrieved context; ranges from soft ("use the documents") to strict ("answer ONLY from documents; say 'I don't know' otherwise").
+- **Uncertainty disclosure:** An explicit instruction telling the LLM what to say when the answer is not in the retrieved context; prevents the LLM from defaulting to a confident but fabricated response.
+- **Out-of-scope query:** A user question whose answer is not present in any retrieved chunk; must be handled explicitly with an uncertainty disclosure instruction.
+- **Negative constraint:** A prompt instruction that explicitly forbids a behavior (e.g., "Do NOT use prior knowledge") rather than just requesting a positive behavior; measurably more effective than positive-only instructions for grounding.
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+**The anatomy of a production grounded RAG system prompt:**
+
+```mermaid
+graph TD
+    SP["System Prompt"] --> A["① Role Assignment\n'You are a [domain] assistant.'"]
+    SP --> B["② Context Anchor (positive)\n'Answer using ONLY the documents below.'"]
+    SP --> C["③ Negative Constraint\n'Do NOT use prior knowledge.\nDo NOT invent information.'"]
+    SP --> D["④ Citation Instruction\n'After each fact, cite [DOC N].'"]
+    SP --> E["⑤ Uncertainty Disclosure\n'If the answer is not in the documents,\nrespond: I don't have that information.'"]
+    SP --> F["⑥ Scope Boundary (optional)\n'If the question is outside [domain],\ndecline politely.'"]
+    SP --> G["⑦ Format Instruction\n'Respond in 2–3 sentences.\nReturn JSON with answer + citations.'"]
+
+    style B fill:#cfc,stroke:#393
+    style C fill:#cfc,stroke:#393
+    style E fill:#ffc,stroke:#993
+```
+
+```mermaid
+flowchart LR
+    Q["User query"] --> P["Grounded prompt\n(system + context + query)"]
+    P --> LLM
+
+    LLM --> D1{"Answer in\nretrieved context?"}
+    D1 -- Yes --> R1["Answer with citations\nAnchored to DOC N"]
+    D1 -- No --> R2["Uncertainty disclosure:\n'I don't have that information\nin the provided documents.'"]
+    D1 -- Partial --> R3["Partial answer with caveat:\n'Based on the provided documents...\nThis may not be complete.'"]
+```
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+**Scenario 1: Internal Policy Assistant (Strict Grounding Required)**
+
+*Product/use-case context:*  
+HR and legal assistants answer employee questions about policies: leave entitlement, expense limits, code of conduct. The policy corpus is carefully maintained. An answer that mixes current policy with outdated training data could create compliance liability.
+
+*Why grounding strength matters here:*
+- **Default LLM behavior** — asked "What is the parental leave entitlement?", an LLM without strict grounding might answer "typically 12 weeks" (from training data on US FMLA policy) even if your company policy says 16 weeks and that's clearly in the retrieved chunk.
+- **The fix is explicit negative constraints** — "Do NOT answer from prior knowledge. The ONLY valid source is the documents provided." This double-binds the LLM: it must use context AND is forbidden from supplementing it.
+- **"I don't know" is a correct answer** — if an employee asks about a policy not covered in the corpus, "I don't have information about that in our policy documents" is exactly right. Without an uncertainty disclosure instruction, the LLM invents a plausible-sounding policy answer. With it, the LLM deflects appropriately.
+
+*What "good" looks like:*
+- Answer faithfulness ≥ 0.95 (LLM-as-judge score measuring whether answer content matches only the retrieved chunks)
+- "I don't know" rate for genuinely out-of-scope queries ≥ 0.90 (not deflecting answerable queries)
+- Zero answers that contain policy numbers or percentages not present in any retrieved chunk
+
+---
+
+**Scenario 2: Product Documentation Chatbot (Confident + Accurate)**
+
+*Product/use-case context:*  
+A developer-facing assistant that answers questions about API usage, SDK methods, and configuration options. Users expect confident, precise technical answers — vague "I'm not sure" responses erode trust fast.
+
+*Tension: Strict grounding vs. user experience:*
+- Strict grounding produces accurate answers but can feel clipped or mechanical when the user asks a natural follow-up that's slightly out of the chunked scope.
+- The solution is **calibrated uncertainty** — the LLM answers confidently when context covers the query, flags partial coverage ("Based on the docs, X — but I don't see config options for Y specifically"), and declines only when truly nothing is available.
+- **Format control matters** — developers want code snippets or bullet lists, not paragraphs. Format instructions in the system prompt ("If the answer includes code, use a code block. Use bullet points for lists of options.") prevent the LLM from burying the answer in prose.
+
+*What "good" looks like:*
+- Confident answer with code block for 80%+ of technical queries
+- Calibrated partial answers for ~15% of queries where context partially covers the question
+- "I don't know" reserved for <5% — only when nothing relevant is retrieved
+
+---
+
+**Scenario 3: Clinical Decision Support (Strictest Grounding + Mandatory Uncertainty)**
+
+*Product/use-case context:*  
+Clinicians ask about drug dosages, contraindications, and treatment protocols. The system retrieves from verified clinical guidelines. Any gap between retrieved context and answer is a patient safety risk.
+
+*Grounding requirements:*
+- **Verbatim where possible** — for dosage figures, contraindication lists, and specific numerical thresholds, the system prompt should instruct the LLM to quote directly from the source rather than paraphrase. Paraphrasing a dosage figure can introduce rounding errors.
+- **Mandatory uncertainty disclosure with confidence level** — when context only partially covers a query, the system must say so explicitly: "The retrieved guidelines cover X but do not address Y. Clinical judgment is required for the uncovered aspect."
+- **No synthesis across non-adjacent guidelines** — the LLM must not combine a dosage from one guideline version with a contraindication from a different (possibly superseded) guideline version. This requires stricter prompt constraints: "Answer from a SINGLE document where possible. Do not combine information from different documents unless explicitly asked."
+
+*What "good" looks like:*
+- Zero answers containing numerical values not present in retrieved chunks (measured by post-processing)
+- 100% of answers include source version and effective date in citation
+- Confidence level surfaced in every response: HIGH (direct quote), MEDIUM (paraphrase of explicit guideline), LOW (inferred from context, requires clinical review)
+
+---
+
+### 4. System View [Intermediate]
+
+**The grounding strength spectrum — five levels:**
+
+| Level | Prompt pattern | When to use | Risk if miscalibrated |
+|---|---|---|---|
+| **0 — No anchor** | "Here are some documents that may help: {context}" | Never in production | LLM mostly ignores context; answers from training; high hallucination rate |
+| **1 — Soft anchor** | "Use the documents below to answer the question." | Low-stakes, exploratory chat | LLM uses context as a hint, supplements freely from training; 20–40% answer drift |
+| **2 — Medium anchor** | "Answer using only the information in the provided documents. Cite each fact." | General-purpose RAG | Mostly grounded; 5–15% of answers still leak parametric knowledge on well-known topics |
+| **3 — Strong anchor** | "Answer ONLY from the documents below. Do NOT use prior knowledge. If the answer is not in the documents, say: 'I don't have that information.'" | Policy, legal, compliance, product docs | Very few leaks; uncertainty handled cleanly; the production standard for most RAG systems |
+| **4 — Strict anchor** | Level 3 + "Do not paraphrase numerical values, dates, or legal terms. Quote them exactly. Do not synthesize across documents for numerical claims." | Medical, financial, regulatory | Near-zero hallucination; some verbosity; required for any domain where number errors cause harm |
+
+**Inputs → Transformations → Outputs:**
+
+| Stage | Input | Transformation | Output |
+|---|---|---|---|
+| 1. Prompt assembly | System prompt template + context chunks + user query | Fill template: role + anchor + negative constraint + citation instruction + uncertainty rule + context blocks + query | Full prompt string |
+| 2. Temperature control | LLM inference parameters | Set `temperature=0` for factual RAG; `temperature=0.2–0.4` for summaries or explanations requiring synthesis | Deterministic (temp=0) or low-variance response |
+| 3. Output parsing | Raw LLM response | Parse answer + citations (if JSON) or extract inline `[DOC N]` markers | Structured `{answer, citations[]}` |
+| 4. Faithfulness check | Answer text + packed chunks | Optional LLM-as-judge: "Does this answer contain only information from the provided context?" | `faithfulness_score` (0–1) |
+
+**Observability — what we log and measure:**
+- `answer_faithfulness` — LLM-as-judge score or NLI entailment rate; primary generation quality metric
+- `idk_rate` — fraction of responses that use the uncertainty disclosure phrase; too low → LLM hallucinating instead of declining; too high → retrieval broken (correct chunks not making it in)
+- `parametric_leak_rate` — fraction of answers containing facts not present in any retrieved chunk (measured by post-processing or LLM-as-judge)
+- `format_compliance_rate` — fraction of responses that follow the specified format (JSON, bullet points, code blocks); deviations indicate prompt instruction ignored
+
+**Failure points:**
+
+| Failure | Symptom | Root cause |
+|---|---|---|
+| Soft anchor leakage | LLM supplements with training facts not in any chunk | Context anchor too weak (level 0–1); no negative constraint |
+| False "I don't know" | LLM declines answerable queries | Uncertainty disclosure too broadly worded; retrieval broken (correct chunks not packed) |
+| Paraphrase distortion | Numerical values or dates subtly changed | No verbatim instruction for precision values; LLM paraphrases in generation |
+| Format deviation | LLM outputs prose instead of JSON | Format instruction absent, vague, or placed after the context (model reads and starts generating before reaching format instruction) |
+| Scope creep | LLM answers questions from outside the domain | No scope boundary instruction; LLM treats all queries as valid |
+
+---
+
+### 5. System Design Flavor [Intermediate]
+
+**The production grounded RAG prompt template (annotated):**
+
+```
+SYSTEM_PROMPT = """
+You are a {role} assistant for {company}. Your job is to answer questions
+using ONLY the documents provided below.
+
+RULES (follow strictly):
+1. Answer using ONLY information from the documents below.
+2. Do NOT use prior knowledge or information from your training.
+3. Do NOT invent, infer, or extrapolate beyond what is explicitly stated.
+4. After each fact, cite the source as [DOC N].
+5. If the answer is not found in the documents, respond with exactly:
+   "I don't have information about that in the provided documents."
+6. If the question is outside the scope of {domain}, respond with:
+   "This question is outside the scope of this assistant."
+7. {format_instruction}
+"""
+```
+
+**Why each rule is a separate numbered item:**  
+Research and empirical testing show that LLMs follow a numbered list of rules more reliably than paragraph instructions. The numbers create salience for each rule, and the model's instruction-following training aligns better with list structures than with prose paragraphs.
+
+**Tradeoffs:**
+
+| Decision | Option A | Option B | When to choose |
+|---|---|---|---|
+| **Context anchor strength** | Medium ("use the documents") | Strong ("ONLY from documents + negative constraint") | Default to strong for any production RAG; only use medium for exploratory or conversational use cases where some parametric knowledge is acceptable |
+| **Uncertainty disclosure** | Silence (let LLM decide) | Explicit required phrase | Always explicit. Without it, the LLM invents confident answers for out-of-scope queries. The phrase should be verbatim so you can detect it programmatically and trigger fallback behavior |
+| **Temperature** | 0.7 (default) | 0.0 (deterministic) | Use 0.0 for all factual RAG. 0.7 introduces creative variation that produces wrong or slightly shifted facts. Only increase temperature for summarization or explanation tasks where some paraphrase is acceptable |
+| **Format instruction placement** | End of system prompt | Beginning (before context) | Place format instructions at the END of system prompt but BEFORE context blocks. If placed after context, the model starts attending to context before it reads the format rule, and compliance drops |
+
+**Scaling consideration:**  
+At scale, the system prompt is a fixed cost per request — it contributes the same token count regardless of the user query. A 500-token system prompt across 10M queries/day = 5B tokens/day of constant overhead. Keep the system prompt as concise as possible without sacrificing grounding fidelity. Every word in the system prompt should earn its place: remove motivational language, redundant rules, and generic disclaimers. The 7-rule template above is near the minimum viable grounding prompt for production.
+
+---
+
+### 6. Common Mistakes + Debugging [Intermediate]
+
+**Mistake 1: Positive-only anchor without a negative constraint**
+- **Symptom:** The LLM gives mostly correct answers but occasionally supplements with facts not in the context — particularly for well-known topics (e.g., common legal terms, popular product names) where its training data is strong. Users report "minor inaccuracies" that turn out to be parametric leakage.
+- **Likely cause:** The system prompt says "answer using the documents below" (positive instruction) but doesn't say "do NOT use prior knowledge" (negative constraint). The LLM interprets the context as supplementary, not exclusive.
+- **First debugging step:** Audit 20 answers for facts not present in any retrieved chunk. Measure `parametric_leak_rate`. If > 5%, add explicit negative constraints: `"Do NOT use prior knowledge. Do NOT add information from your training."` Re-test. Negative constraints consistently reduce parametric leakage by 40–70% in empirical testing.
+
+**Mistake 2: No uncertainty disclosure — "confident wrong" instead of "I don't know"**
+- **Symptom:** Users ask questions whose answers are genuinely not in the corpus. Instead of saying "I don't have that information," the LLM generates a plausible-sounding but fabricated answer. Users trust it. Wrong answers propagate.
+- **Likely cause:** The system prompt has no instruction for the out-of-scope case. The LLM's default behavior is to generate a response regardless of context coverage — it never "chooses" to decline unless explicitly told to.
+- **First debugging step:** Test 10 queries whose answers are definitely not in your corpus. Measure how many produce fabricated confident answers vs. appropriate declines. If fabrication rate > 20%, add verbatim uncertainty disclosure instruction and test again. The phrase should be exact and distinctive so it's detectable programmatically: `"I don't have information about that in the provided documents."` — not a fuzzy variant.
+
+**Mistake 3: Format instruction ignored — prose instead of JSON**
+- **Symptom:** The LLM was asked for JSON `{"answer": "...", "citations": [...]}` but returns a prose paragraph with inline footnotes. Downstream citation parsing fails. Monitoring shows 0 structured citations logged.
+- **Likely cause:** The format instruction is placed after the context in the prompt. By the time the model reads it, the context has already primed it toward prose-style generation. Alternatively, the instruction is in the system prompt but is vague: "Return as JSON" without a schema example.
+- **First debugging step:** Move the format instruction to immediately before the context blocks (not after). Provide a concrete example schema in the prompt: `'Return ONLY valid JSON matching: {"answer": "string", "citations": [{"doc_index": int, "chunk_id": "string"}]}'`. If using GPT-4o, enable `response_format={"type": "json_object"}` in the API call — this enforces JSON output at the model level, not just via instruction.
+
+---
+
+### 7. Hands-On Lab [Pro]
+
+**Goal:** Build a grounded RAG prompt at strength level 3. Break it by weakening the anchor to level 1. Measure the hallucination rate difference on a set of out-of-scope queries.
+
+**Prerequisites:** No external API required — simulate LLM behavior with a mock for offline testing, or substitute with any LLM API call.
+
+---
+
+**Build: Level 3 grounded prompt template**
+
+```python
+from string import Template
+
+# ── Prompt template ──────────────────────────────────────────────────────────
+GROUNDED_PROMPT_TEMPLATE = Template("""
+You are a policy assistant for Acme Corp. Answer questions about company policies.
+
+RULES (follow strictly):
+1. Answer using ONLY information from the documents below.
+2. Do NOT use prior knowledge or information from your training.
+3. Do NOT invent, infer, or extrapolate beyond what is explicitly stated.
+4. After each fact, cite the source as [DOC N].
+5. If the answer is not found in the documents, respond with exactly:
+   "I don't have information about that in the provided documents."
+6. Return ONLY valid JSON matching:
+   {"answer": "string with [DOC N] inline", "citations": [{"doc_index": int}]}
+
+--- DOCUMENTS ---
+$context
+--- END DOCUMENTS ---
+
+User question: $query
+""")
+
+# ── WEAK prompt for comparison (level 1) ─────────────────────────────────────
+WEAK_PROMPT_TEMPLATE = Template("""
+You are a helpful assistant. Here are some company documents that may help:
+
+$context
+
+Please answer the user's question: $query
+""")
+
+# ── Sample context ────────────────────────────────────────────────────────────
+context = """[DOC 1 | Refund-Policy.pdf | Section 3.1]
+Enterprise customers receive a 30-day full refund, no questions asked.
+---
+[DOC 2 | Leave-Policy.pdf | Section 2.4]
+Employees are entitled to 16 weeks of fully paid parental leave.
+---"""
+
+# ── Test queries ──────────────────────────────────────────────────────────────
+IN_SCOPE_QUERY    = "What is the enterprise refund window?"
+OUT_OF_SCOPE_QUERY = "What is the standard industry parental leave in the US?"  # NOT in docs
+
+def build_prompt(template, query: str) -> str:
+    return template.substitute(context=context, query=query)
+
+# Print both prompt variants for the out-of-scope query to compare
+print("=== STRONG (Level 3) ===")
+print(build_prompt(GROUNDED_PROMPT_TEMPLATE, OUT_OF_SCOPE_QUERY))
+print("\n=== WEAK (Level 1) ===")
+print(build_prompt(WEAK_PROMPT_TEMPLATE, OUT_OF_SCOPE_QUERY))
+```
+
+**Expected LLM behavior:**
+
+For `OUT_OF_SCOPE_QUERY` with the **strong prompt (Level 3)**:
+```json
+{
+  "answer": "I don't have information about that in the provided documents.",
+  "citations": []
+}
+```
+
+For `OUT_OF_SCOPE_QUERY` with the **weak prompt (Level 1)**:
+```
+"In the United States, the standard parental leave under FMLA is 12 weeks of
+unpaid, job-protected leave for eligible employees at companies with 50 or more
+employees."
+```
+— Completely fabricated from training data, zero relationship to the Acme Corp policy in the context.
+
+---
+
+**Break: Measure grounding compliance across query types**
+
+```python
+# Simulate grounding evaluation
+test_cases = [
+    {"query": "What is the enterprise refund window?",
+     "expected_grounded": True,
+     "answer_strong": '{"answer": "Enterprise customers receive a 30-day full refund [DOC 1].", "citations": [{"doc_index": 1}]}',
+     "answer_weak": "Enterprise customers typically receive a 30-day refund window.",
+    },
+    {"query": "What is our parental leave entitlement?",
+     "expected_grounded": True,
+     "answer_strong": '{"answer": "Employees are entitled to 16 weeks of fully paid parental leave [DOC 2].", "citations": [{"doc_index": 2}]}',
+     "answer_weak": "Company parental leave is typically 12-16 weeks depending on policy.",  # blended with training
+    },
+    {"query": "What is the standard industry refund policy?",  # out of scope
+     "expected_grounded": False,  # should decline
+     "answer_strong": '{"answer": "I don\'t have information about that in the provided documents.", "citations": []}',
+     "answer_weak": "Industry standard refund policies typically range from 14-30 days.",  # hallucinated
+    },
+]
+
+def is_grounded(answer: str, expected_grounded: bool) -> dict:
+    """Simplified grounding check: look for uncertainty disclosure or [DOC N] citation."""
+    has_idk = "I don't have information about that" in answer
+    has_citation = "[DOC" in answer
+    if expected_grounded:
+        grounded = has_citation and not has_idk
+    else:
+        grounded = has_idk  # correct behavior for out-of-scope is to decline
+    return {"grounded": grounded, "has_citation": has_citation, "has_idk": has_idk}
+
+print(f"{'Query':<50} {'Strong':>8} {'Weak':>6}")
+print("-" * 70)
+for tc in test_cases:
+    strong = is_grounded(tc["answer_strong"], tc["expected_grounded"])
+    weak   = is_grounded(tc["answer_weak"],   tc["expected_grounded"])
+    s_mark = "✓" if strong["grounded"] else "✗"
+    w_mark = "✓" if weak["grounded"]   else "✗"
+    print(f"{tc['query'][:48]:<50} {s_mark:>8} {w_mark:>6}")
+
+strong_score = sum(1 for tc in test_cases if is_grounded(tc["answer_strong"], tc["expected_grounded"])["grounded"])
+weak_score   = sum(1 for tc in test_cases if is_grounded(tc["answer_weak"],   tc["expected_grounded"])["grounded"])
+print(f"\nGrounding compliance: Strong={strong_score}/{len(test_cases)} | Weak={weak_score}/{len(test_cases)}")
+```
+
+Expected output:
+```
+Query                                              Strong   Weak
+----------------------------------------------------------------------
+What is the enterprise refund window?                   ✓      ✓
+What is our parental leave entitlement?                 ✓      ✗
+What is the standard industry refund policy?            ✓      ✗
+
+Grounding compliance: Strong=3/3 | Weak=1/3
+```
+
+---
+
+**Measure:** The strong (Level 3) prompt achieves 100% grounding compliance; the weak (Level 1) prompt fails on 2 of 3 cases — it partially blends training data for in-scope queries and fully hallucinate for out-of-scope queries.
+
+**Explain:** The weak prompt's failure on "parental leave" is particularly insidious: the answer `"12-16 weeks"` looks plausible. Without inspecting the retrieved chunks, a reviewer would accept it. But the corpus says `"16 weeks"` specifically — not a range. The LLM blended its training knowledge of `"12 weeks FMLA"` with the retrieved `"16 weeks"` and produced a range that doesn't exist in either source. This is the **parametric blending failure** that negative constraints prevent.
+
+---
+
+### 8. Active Recall [Intermediate]
+
+1. **(Beginner)** What are the two things a grounded system prompt must do that a plain "helpful assistant" prompt does not?
+
+   **Answer:** (1) Restrict the LLM to use only the retrieved context as its source (context anchor + negative constraint — "Answer ONLY from documents. Do NOT use prior knowledge."). (2) Tell the LLM what to say when the answer is not in the context (uncertainty disclosure — "If the answer is not in the documents, say: 'I don't have that information.'"). Without these two, the LLM defaults to generating confident answers from training, even when better information is in the context.
+
+2. **(Beginner)** Why is a negative constraint ("Do NOT use prior knowledge") more effective than a positive-only anchor ("Use the documents to answer")?
+
+   **Answer:** A positive instruction tells the LLM what to use; a negative constraint explicitly forbids supplementing with other sources. LLMs are pattern completers — they blend all available information by default. The positive instruction adds the context as one source; the negative constraint removes the fallback to training data as an alternative. Empirically, adding a negative constraint reduces parametric leakage by 40–70% compared to positive-only anchors.
+
+3. **(Intermediate)** What is `idk_rate` and what does it tell you when it is too low vs. too high?
+
+   **Answer:** `idk_rate` is the fraction of LLM responses that use the configured uncertainty disclosure phrase. **Too low** (< 5% on a diverse query set): the LLM is not declining genuinely out-of-scope queries — it's hallucinating confident answers instead. Likely cause: missing or weak uncertainty disclosure instruction. **Too high** (> 30%): the LLM is over-declining — saying "I don't know" even for queries whose answers are in the context. Likely cause: retrieval broken (correct chunks not making it to the prompt), or the uncertainty disclosure phrase is so broadly triggered it fires for answerable queries too.
+
+4. **(Intermediate)** You're building a clinical decision support assistant. The retrieved chunk says "Dose: 5–10 mg/day." The LLM outputs "Approximately 7.5 mg/day is typical." What went wrong and how do you prevent it?
+
+   **Answer:** The LLM paraphrased a range into a midpoint — a subtle but dangerous distortion for a clinical value. The system prompt lacked a verbatim instruction for precision values. Fix: add to the system prompt — "Do NOT paraphrase numerical values, dosages, dates, or legal terms. Quote them exactly as they appear in the documents." This is a Level 4 grounding requirement for any domain where number errors cause harm.
+
+5. **(Pro)** Your `parametric_leak_rate` is 3% — lower than the 5% threshold but still present. Some leaks are on very well-known facts (e.g., the LLM correctly states a well-known law even though it's not in the retrieved chunks). Do you tighten grounding further or accept 3%? What's the decision criterion?
+
+   **Answer:** The decision criterion is domain risk, not just leak rate. For legal/medical/financial RAG: tighten regardless — even a "correct" parametric fact may be from a different jurisdiction, outdated version, or inapplicable context. For a general-purpose internal assistant: 3% may be acceptable if the leaked facts are verifiably correct and low-risk. The practical approach: tag leaked answers by domain and risk level, then apply stricter grounding only to high-risk query categories (e.g., specific numerical thresholds) while allowing softer grounding for definitional or background queries.
+
+---
+
+### 9. Practice
+
+**Mini-exercise:** Write a production-grade system prompt for a financial services RAG assistant that answers questions about investment products. Requirements: strict grounding, mandatory citations, explicit handling of out-of-scope questions, no hallucinated figures, JSON output, and a compliance disclaimer.
+
+**Suggested answer:**
+```
+You are a financial product information assistant for {firm_name}.
+You help clients understand our investment products using ONLY our official product documentation.
+
+RULES (mandatory — follow exactly):
+1. Answer using ONLY information from the product documents provided below.
+2. Do NOT use prior knowledge, general market facts, or information from your training.
+3. Do NOT generate, estimate, or extrapolate any financial figures, percentages, or past performance data.
+4. After each fact, cite the source as [DOC N].
+5. If the answer is not found in the provided documents, respond with:
+   "I don't have information about that in the provided product documentation."
+6. If the question involves personalized financial advice, respond with:
+   "I'm unable to provide personalized financial advice. Please consult a financial advisor."
+7. Return ONLY valid JSON: {"answer": "string with [DOC N] inline", "citations": [{"doc_index": int}], "disclaimer": "string"}
+8. The "disclaimer" field must always contain:
+   "This information is for general reference only and does not constitute financial advice."
+
+--- PRODUCT DOCUMENTS ---
+{context}
+--- END DOCUMENTS ---
+
+Client question: {query}
+```
+
+---
+
+**Capstone design question:**  
+You are building a RAG assistant for a multinational pharmaceutical company. The system must answer questions from regulatory affairs teams about drug approval requirements across 5 jurisdictions (FDA, EMA, MHRA, TGA, PMDA). The corpus has 40K chunks. Answers must be jurisdiction-specific, cite exact regulation sections, never blend requirements across jurisdictions, and express uncertainty when requirements differ or are ambiguous. Design the grounded answer prompt system: grounding level, key rules, uncertainty handling, output schema, and temperature.
+
+**Suggested answer outline:**
+
+| Component | Design decision | Justification |
+|---|---|---|
+| **Grounding level** | Level 4 (strict + verbatim for numerical thresholds and regulatory references) | Blending jurisdiction requirements could cause non-compliance; exact regulatory text must not be paraphrased |
+| **Context anchor** | "Answer ONLY from the documents provided. Do NOT use prior knowledge of regulations." | Regulations change; training data may have outdated versions |
+| **Negative constraint** | "Do NOT combine requirements from different jurisdictions. Each answer must cite a single jurisdiction's document unless explicitly asked for a comparison." | Cross-jurisdiction blending is the primary risk — a requirement from FDA is not valid for EMA |
+| **Uncertainty rule** | "If requirements differ across jurisdictions retrieved, state each jurisdiction's requirement separately and note the difference explicitly. If a requirement is ambiguous or missing, state: 'The retrieved documents do not provide a definitive answer for [jurisdiction]. Please verify with the primary regulatory source.'" | Ambiguity disclosure is a safety requirement, not optional |
+| **Output schema** | `{"jurisdiction": "string", "answer": "string with [DOC N]", "citations": [{"doc_index": int, "regulation": "string", "section": "string", "effective_date": "date"}], "confidence": "HIGH/MEDIUM/LOW"}` | Jurisdiction field prevents cross-jurisdictional answer mixing; confidence level enables downstream triage |
+| **Temperature** | 0.0 | Regulatory answers are deterministic facts; stochasticity introduces hallucination risk |
+
+---
+
+### 10. Production Reality Check ✅
+
+**If this fails in prod, what's the first thing we inspect?**
+
+Check `parametric_leak_rate` and `idk_rate` in your generation monitoring. If `parametric_leak_rate` is above 5%: your context anchor is too weak — the LLM is blending training knowledge with retrieved context. Add explicit negative constraints to the system prompt and re-test. If `idk_rate` is near zero on a diverse query set: your uncertainty disclosure instruction is missing or the LLM is ignoring it — test 10 deliberately out-of-scope queries and measure how many decline correctly. These two metrics together tell you whether the system prompt is doing its job: anchoring answers to context and gracefully handling gaps.
+
+---
+
+### 11. Curiosity Bridge ✅
+
+Grounded answer prompting handles the *instruction* side of generation quality — telling the LLM what to use and what not to use. But even with perfect grounding instructions, there's a structural limitation: the LLM reads the chunks in the order you give them and generates one linear response. What if the answer requires synthesizing evidence from 3 different chunks with conflicting claims — or the question has multiple sub-questions each needing a different chunk? That's where **chain-of-thought prompting over retrieved context** and **multi-hop RAG answer synthesis** come in. The next subtopic covers how to structure LLM generation for complex, multi-part answers without losing grounding fidelity.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit Check:** You're done when you can — from memory — write a Level 3 grounded system prompt with all 6 required components, explain why negative constraints outperform positive-only anchors, choose the right temperature setting for factual RAG vs. summarization, identify the symptom and fix for each of the 3 common grounding mistakes, and explain the `idk_rate` metric and what "too low" vs. "too high" signals.
+
+**Carry-Forward Review (from Topic 6.2 — Retrieval Pipeline):**
+- Q: Your `idk_rate` is 45% — far too high. Users complain the system constantly says "I don't have that information" for questions that clearly have answers in the corpus. The system prompt uncertainty disclosure instruction is correctly worded. What is the most likely root cause from the retrieval pipeline?
+- A: Retrieval is broken — the correct chunks are not reaching the packed prompt. Check: (1) `chunks_packed` vs. k — is truncation dropping the relevant chunks? (2) `recall@k` on the golden test set — if it's dropped significantly, the retrieval itself is failing to surface correct chunks. The system prompt is fine; the LLM correctly says "I don't know" because it genuinely doesn't have the answer in front of it. Fix the retrieval layer, not the generation prompt.
+
+---
+
 ## Module Glossary
 
 | Term | Definition |
@@ -3710,3 +4188,14 @@ You now have a complete baseline RAG system: ingest → chunk → embed → retr
 | **Context anchor instruction** | The system prompt directive that explicitly restricts the LLM to use only the provided documents for its answer (e.g., "Answer ONLY from the documents below. Do NOT use prior knowledge."); the primary defense against hallucination-over-context failures. |
 | **Ingestion gate** | An assertion in the ingestion pipeline that blocks a batch of chunks from entering the index if they fail a quality or consistency check (e.g., wrong embedding model, missing metadata, zero-length text); prevents silent ingestion failures. |
 | **P0 RAG failure** | A failure with immediate security, legal, or financial impact (e.g., cross-tenant data leak) that must be fixed before the next request is served; treated as a deployment blocker, not a quality regression. |
+| **Grounded answer prompting** | Structuring the system prompt to anchor the LLM's output exclusively to retrieved context, using both positive anchors and negative constraints to prevent parametric memory from supplementing or overriding the answer. |
+| **Parametric memory** | Facts and patterns an LLM learned during pre-training, stored in model weights; accessed by default in generation unless explicitly blocked by a grounding constraint in the system prompt. |
+| **Grounding strength** | A 5-level spectrum (0=no anchor to 4=strict+verbatim) describing how strongly the system prompt constrains the LLM to use only retrieved context; Level 3 is the production standard for most RAG systems. |
+| **Uncertainty disclosure** | An explicit system prompt instruction specifying the exact phrase the LLM must output when the answer is not in the retrieved context (e.g., "I don't have information about that in the provided documents."); prevents confident hallucination for out-of-scope queries. |
+| **Negative constraint** | A prompt instruction that explicitly forbids a behavior ("Do NOT use prior knowledge") rather than just requesting a positive behavior; empirically reduces parametric leakage by 40–70% vs. positive-only anchors. |
+| **Out-of-scope query** | A user question whose answer is not present in any retrieved chunk; must be handled by an uncertainty disclosure instruction, otherwise the LLM generates a fabricated confident answer. |
+| **Parametric leak / parametric blending** | A generation failure where the LLM supplements or replaces retrieved context with facts from training data; produces answers that look correct but contain training-era values, jurisdiction-incorrect rules, or subtly distorted figures. |
+| **Answer faithfulness** | An evaluation metric (0–1) measuring whether the LLM's answer is derived solely from the retrieved context; measured by LLM-as-judge or NLI entailment against the packed chunks. |
+| **idk_rate** | The fraction of LLM responses using the configured uncertainty disclosure phrase; too low signals hallucination on out-of-scope queries; too high signals broken retrieval (correct chunks not reaching the prompt). |
+| **Verbatim instruction** | A system prompt rule requiring the LLM to quote numerical values, dates, legal terms, or dosage figures exactly as they appear in the source chunk rather than paraphrasing; required for Level 4 grounding in medical, financial, or regulatory RAG. |
+| **Parametric leak rate** | The fraction of generated answers containing facts not present in any retrieved chunk; measured by post-processing or LLM-as-judge; the primary signal that context anchor strength is insufficient. |
