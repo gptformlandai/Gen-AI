@@ -21,9 +21,9 @@
 | 17.2.d | Safety and observability for live voice systems | ✅ Done |
 | **Topic 17.3** | **Document AI and visual RAG (10h)** | |
 | 17.3.a | Tables, charts, diagrams, and layout-aware retrieval | ✅ Done |
-| 17.3.b | Page-level vs block-level grounding | |
-| 17.3.c | UI and screenshot understanding use cases | |
-| 17.3.d | End-to-end multimodal evaluation | |
+| 17.3.b | Page-level vs block-level grounding | ✅ Done |
+| 17.3.c | UI and screenshot understanding use cases | ✅ Done |
+| 17.3.d | End-to-end multimodal evaluation | ✅ Done |
 
 **Covered so far:**
 - 17.1.a — Images, documents, audio, and video as inputs: modality taxonomy, encoding pipelines per modality, vision tokens and patch encoding, audio spectrograms and mel-filter banks, document-as-image vs document parsing, video frame sampling, multimodal context budgeting, real-world scenarios (insurance claims, legal discovery, media monitoring), system view, failure modes, debugging checklist, hands-on multimodal routing lab
@@ -35,6 +35,9 @@
 - 17.2.c — Realtime session state and tool use: session state schema design, ephemeral vs durable state, slot-filling and confirmation state machines, tool call mechanics over voice (filler + async tool pattern), tool result injection into voice context, multi-turn slot tracking, state serialization for resumability, failure recovery, hands-on voice session state lab
 - 17.2.d — Safety and observability for live voice systems: safety guardrail placement (post-STT, post-LLM, pre-TTS), PII/PHI redaction in transcripts, prompt injection via voice, recording consent and compliance (GDPR, HIPAA, wiretap laws), voice-specific observability stack (WER, MOS, per-turn latency, slot accuracy), distributed tracing across STT+LLM+TTS with correlation IDs, real-time alerting vs batch analysis, session abandonment detection, safety incident response for live calls, hands-on observability instrumentation lab
 - 17.3.a — Tables, charts, diagrams, and layout-aware retrieval: layout analysis and semantic region detection (title, paragraph, table, figure), table serialization strategies (Markdown vs HTML vs CSV), multi-level header and merged cell handling, chart/diagram understanding via VLM-generated summaries, bounding-box-aware chunking, cross-reference preservation (figure + caption co-location), semantic region routing (per-type embedding strategy), ColPali/page-level visual retrieval, multi-vector representation, hybrid layout+text retrieval, real-world scenarios (financial filings, technical manuals, medical records), hands-on layout-aware RAG pipeline lab
+- 17.3.b — Page-level vs block-level grounding: page-level grounding (ColPali, full-page VLM embedding), block-level grounding (fine-grained element extraction), when each approach wins (layout coupling vs precision), two-stage hybrid retrieval (page-level recall + block-level precision), multi-page cross-reference problems and definition expansion, grounding citation granularity (page vs element vs bbox), visual context window tradeoffs, real-world scenarios (medical forms, legal contracts, financial reports), hands-on two-stage retrieval comparison lab
+- 17.3.c — UI and screenshot understanding use cases: UI as a visual document (no DOM, pixel-only), VLM-based UI element detection and semantic labeling, UI grounding (element coordinates + labels), automated QA testing via screenshots, accessibility analysis, UI-to-code generation, task automation via GUI agents, UI action grounding (click/type/scroll from natural language), failure modes (visually ambiguous affordances, overlapping elements, dynamic state), real-world scenarios (automated regression testing, accessibility audit, visual RPA), hands-on GUI agent action prediction lab
+- 17.3.d — End-to-end multimodal evaluation: why multimodal evaluation is harder than text RAG evaluation, visual grounding accuracy metrics (IoU, bbox precision/recall), hallucination taxonomy for multimodal systems (visual hallucination, cross-modal inconsistency, object confabulation), VQA-based evaluation protocols, reference-free VLM-as-judge evaluation, human evaluation design for visual tasks, per-modality failure attribution, evaluation harness design for document AI + voice + UI pipelines, real-world scenarios (financial document QA eval, voice task completion eval, GUI agent eval), hands-on evaluation harness lab
 
 ---
 
@@ -3533,6 +3536,52 @@ Describe the three-stage voice pipeline (STT → Agent → TTS), explain what VA
 | **Safety Guardrail Placement** | The architectural decision of where in the voice pipeline to run content safety checks — post-STT (input filter, can run parallel) and post-LLM/pre-TTS (output gate, must run inline). |
 | **Output Safety Gate** | The inline synchronous safety check that runs on the LLM's generated response before TTS synthesis begins. Must block harmful content, PII leakage, and crisis keywords before they are spoken to the user. |
 | **Client-Side Timing Wrapper** | A pattern for adding STT latency visibility to distributed traces when the STT vendor doesn't support W3C trace headers — recording wall-clock time before and after the STT call and attaching the delta as a span attribute. |
+| **Layout Analysis** | The process of detecting and classifying semantic regions in a document page (table, figure, paragraph, title, caption, header, footer) using a visual model trained on document layout. The first step in layout-aware document parsing. |
+| **Bounding Box** | The pixel-coordinate rectangle `(x0, y0, x1, y1)` that defines the spatial location of a detected element on a page. Used to cluster text tokens into semantic regions and link figures to their captions. |
+| **Semantic Region** | A contiguous document element with a detected type and bounding box — the fundamental unit of layout-aware parsing. Each region type gets a different extraction and serialization strategy. |
+| **Table Serialization** | Converting a 2D table structure into text that preserves row/column relationships — Markdown table, HTML table, or natural-language row descriptions — so the table is embeddable and semantically complete for retrieval. |
+| **Multi-Level Table Header** | A table where column headers span multiple rows, e.g., "FY2023 / FY2022" at the top with "Q1/Q2/Q3/Q4" below. Every sub-chunk of a split table must include the full header hierarchy, not just leaf labels, to enable correct column identification. |
+| **VLM-Generated Summary** | A natural-language description of a chart or diagram produced by a Vision-Language Model given the image as input. The text representation used for embedding and retrieval of visual elements that have no directly extractable text. |
+| **Layout-Aware Chunking** | A chunking strategy that respects semantic region boundaries — chunks never split across a table or figure, and always include the header context needed to interpret values. |
+| **Cross-Reference Preservation** | The practice of keeping a figure and its caption, or a table and its title, in the same retrieval chunk so that the indexed unit is semantically complete. |
+| **ColPali** | A page-image retrieval architecture that treats entire rendered page images as retrieval units, using a vision encoder to produce multi-vector patch embeddings. Bypasses text extraction entirely; retrieval operates at the visual patch level. |
+| **Semantic Region Routing** | A dispatch pattern that sends each detected region type to a different processing path — tables to structured serialization, figures to VLM summary generation, paragraphs to standard text extraction. |
+| **Header Re-Injection** | The pattern of prepending the full table header row(s) at the top of every sub-chunk when a large table must be split, ensuring each chunk carries sufficient column context for the LLM to interpret data values correctly. |
+| **Figure-Caption Merger** | A post-processing step that links detected CAPTION regions to their nearest FIGURE region (by vertical proximity on the same page), co-locating them into a single chunk so retrieval always returns the complete visual element. |
+| **Page-Level Grounding** | A retrieval paradigm where the unit of retrieval is an entire rendered document page, preserving all spatial and visual relationships between elements. Optimizes for recall and cross-element context at the cost of precision and noise. |
+| **Block-Level Grounding** | A retrieval paradigm where the unit of retrieval is a fine-grained parsed element (table, paragraph, figure). Optimizes for precision and citation granularity at the cost of losing cross-element spatial relationships. |
+| **Two-Stage Hybrid Retrieval** | A pipeline that first retrieves the most relevant page(s) at coarse granularity (stage 1: high recall), then re-ranks or extracts individual blocks from those candidate pages (stage 2: high precision). |
+| **Spatial Decontextualization** | The loss of positional and visual relationship information when a 2D document element is extracted into a 1D text string — severing the element from its surrounding labels, adjacent elements, and spatial hierarchy. |
+| **Reading-Order Ambiguity** | The problem of determining correct sequential reading order on pages with complex layouts (multi-column, sidebars, annotations) — a challenge that affects block adjacency logic and page text concatenation. |
+| **Defined-Term Expansion** | A retrieval augmentation step that detects cross-document references to defined terms (e.g., "as defined in Section 1.2") in retrieved blocks and fetches the corresponding definition, appending it to the LLM context. |
+| **Grounding Citation Granularity** | How precisely a RAG system can cite the source of an answer — ranging from page-level (page 47) to element-level (table on page 47) to bounding-box-level (pixel coordinates on page 47, enabling UI highlight overlays). |
+| **Page Image Embedding** | A vector representation of a full rendered page image produced by a vision encoder (CLIP, ColPali's PaliGemma). Enables visual-semantic retrieval without any text extraction. |
+| **Stage-1 Recall@K** | The fraction of queries for which the correct source page appears in the top-K pages returned by stage 1. The most critical metric for two-stage hybrid pipelines — a miss at stage 1 is unrecoverable by stage 2. |
+| **Adjacent-Block Expansion** | A context enrichment step that adds ±1 adjacent blocks (same page, immediately preceding and following a retrieved block) to the LLM context, preventing "as shown above" reference failures and providing narrative context for quantitative blocks. |
+| **UI Grounding** | The task of mapping a natural language element reference ("the Submit button") to its pixel-coordinate bounding box in a screenshot — combining semantic understanding (which element?) with spatial localization (where is it?). |
+| **Affordance** | A visual signal that communicates what interaction is possible with a UI element — raised appearance affords clicking, a text underline affords input. VLMs must recognize affordance conventions to reason about UI interactability. |
+| **Screenshot-Based Action Prediction** | Given a screenshot and a natural language instruction, predicting the concrete action to execute: `{action_type: "click", bbox: [x0, y0, x1, y1]}` or `{action_type: "type", text: "..."}`. |
+| **GUI Agent** | An AI system that autonomously navigates a graphical user interface by taking sequences of screenshot observations and predicted actions (click, type, scroll) to complete a user-specified task. |
+| **Visual RPA (Robotic Process Automation)** | Automation of business processes by interacting with UIs visually — replicating what a human sees and does on screen — without requiring API access or DOM inspection of the underlying application. |
+| **Accessibility Analysis** | Automated inspection of a UI screenshot for WCAG violations detectable from visual output: insufficient color contrast, touch targets below 44px, unlabeled form fields, missing visible focus indicators. Covers ~40–50% of all WCAG criteria. |
+| **Element Interactability** | Whether a detected UI element can currently be acted upon — distinguishing enabled (clickable, typeable) from disabled (visible but non-functional) states, which often differ only in subtle visual cues like opacity or color. |
+| **Set-of-Marks (SoM) Prompting** | A UI grounding technique where all detected interactive elements are labeled with numbered overlays on the screenshot before VLM inference, allowing the VLM to identify targets by number rather than predicting raw pixel coordinates. |
+| **Pixel-Only Mode** | Operating on UI screenshots without access to the underlying DOM or accessibility tree — required for legacy desktop apps, cross-application automation, or proprietary UIs that obstruct accessibility APIs. |
+| **Outcome Verifier** | A GUI agent component that takes a screenshot after each action and checks whether the expected state transition occurred, enabling closed-loop error detection and retry logic before failures cascade through subsequent steps. |
+| **Semantic Regression Testing** | Visual regression testing that compares UI element states (enabled/disabled, visible/hidden, label text) between a current screenshot and a baseline specification, rather than comparing raw pixel differences — immune to cosmetic changes, sensitive to functional state changes. |
+| **Per-Modality Failure Attribution** | Independently evaluating each modality conversion step (VLM summary, OCR, STT) to identify which pipeline stage introduces errors, rather than only measuring end-to-end accuracy. Essential for multimodal systems where modality conversion failures propagate silently. |
+| **Visual Grounding Accuracy** | A metric measuring how precisely a model localizes a described element in an image — typically computed as IoU (Intersection over Union) between the predicted bounding box and the ground-truth bounding box. |
+| **IoU (Intersection over Union)** | `area(predicted ∩ ground_truth) / area(predicted ∪ ground_truth)`. Ranges from 0 (no overlap) to 1.0 (perfect match). ≥ 0.5 is the conventional threshold for "correct" localization in grounding tasks. |
+| **Object Confabulation** | A multimodal hallucination where the model claims an object, value, or element exists in an image that is not present — the visual equivalent of text-based hallucination. |
+| **Visual Misattribution** | A multimodal hallucination where the model correctly detects objects but assigns properties (position, color, label, value) to the wrong object — a spatial reasoning failure unique to visual inputs. |
+| **Cross-Modal Inconsistency** | A conflict between information presented in different modalities (e.g., a table says $4.8B but the adjacent chart shows $4.2B) that the model fails to detect or reconcile, silently adopting one source's value. |
+| **VQA (Visual Question Answering)** | A benchmark task format where a model is given an image and a question, and must produce the correct answer. Used both as a training objective and an evaluation protocol for multimodal models. |
+| **VLM-as-Judge** | Using a capable VLM (GPT-4o, Claude 3.5) to evaluate another model's visual outputs — assessing factual accuracy, completeness, and hallucination relative to the source image — without requiring pre-authored reference strings. Must use a different model family than the evaluated model to avoid same-family bias. |
+| **Task Outcome Evaluation** | Measuring whether the final result of a multi-step task was correct and complete (correct slot values in a voice transfer, correct fields in a document extraction) — distinct from measuring only whether the task reached a terminal completion state. |
+| **Evaluation Harness** | A systematic test infrastructure that runs a defined set of evaluation cases through a pipeline, collects outputs at each level (L0–L3), computes per-level and per-region-type metrics, and surfaces regressions across pipeline versions. |
+| **Oracle Retrieval** | An evaluation technique where the correct context chunks are injected directly into the LLM, bypassing the retrieval layer — used at Level 2 to isolate reasoning quality from retrieval quality. |
+| **Same-Family Judge Bias** | The systematic tendency of a VLM judge to rate outputs from its own model family more favorably, because generator and judge share training distribution and style preferences. Requires using a cross-family judge or human calibration to correct. |
+| **Hallucination Rate by Modality** | The proportion of model outputs containing at least one factually incorrect claim traceable to a specific modality input — used to track where hallucinations originate across the multimodal pipeline. |
 
 ---
 
@@ -5861,3 +5910,3620 @@ Name the two safety filter placement points in a voice pipeline and what each ch
 > In 17.2.c you learned that an idempotency key prevents tool double-execution on session reconnect. How does this interact with the consent architecture? If a session drops after the tool was dispatched (bank transfer in progress) and the user reconnects — must consent be re-captured before the tool status is checked?
 
 **Answer:** No — consent should not be re-captured on reconnect if the session was already consented in the original call. The consent record (`session_id → consent_granted_at`) is stored in a durable store (Postgres) and survives the call drop. On reconnect, the session server looks up the `session_id` in the consent service: if `consent_granted=true` and `consent_captured_at` exists, the session is already consented — skip the consent disclosure. Re-presenting the consent disclosure on every reconnect would be a severe UX failure (a user who called about a bank transfer would hear the consent script a second time mid-task). The one exception: if the reconnect creates a *new* `session_id` (some telephony systems do this when a call drops and redials), that new session must capture fresh consent because the new `session_id` has no consent record. The fix: use a stable `user_id + call_id` tuple as the consent scope, not just `session_id`, so reconnects within the same call inherit the original consent.
+
+---
+
+## Topic 17.3: Document AI and Visual RAG
+
+> **Topic time:** 10h
+> Focus: Reasoning over structured visual document elements — tables, charts, diagrams — and building retrieval systems that preserve layout semantics rather than destroying them with naive text chunking.
+
+---
+
+## Subtopic 17.3.a: Tables, Charts, Diagrams, and Layout-Aware Retrieval
+
+### ✅ Add to Knowledge Base
+
+### Reading Path + Level Tags
+
+- **Beginner:** Read sections 1–2 and Active Recall.
+- **Intermediate:** Add sections 3–5 and the Hands-On Lab Build step.
+- **Pro:** Complete the full Hands-On Lab (Build → Break → Measure → Explain) plus the capstone practice question.
+
+---
+
+### 0. Pre-Question Hook [Beginner]
+
+**Pause:** You are asked to build a RAG system over a 200-page financial annual report. You chunk the PDF into 512-token chunks, embed them, and build a vector store. A user asks: *"What was the operating margin in Q3?"*
+
+The answer is in a table on page 47. The table has a multi-level header row ("Quarterly Financials" → "Q1 / Q2 / Q3 / Q4"), a row for "Operating Income," a row for "Revenue," and no cell in the table directly says "operating margin" — it must be computed from two rows. When you chunked the PDF, the table was split: the header row landed in chunk 91, the Revenue row landed in chunk 93, and the Operating Income row landed in chunk 94.
+
+No single chunk contains enough context to answer the question. Your retriever finds chunk 93 (Revenue) and chunk 94 (Operating Income) — but without the column header row from chunk 91, the model has no idea which column is Q3. The retriever returns a correct answer of "I don't have enough information."
+
+This is not a retrieval quality problem. It is a chunking architecture problem. And it is the core challenge that layout-aware retrieval solves.
+
+---
+
+### 1. The Intuition (Plain English) [Beginner]
+
+**Standard text RAG** treats a document as a flat string of tokens. It splits that string into chunks, embeds each chunk, and retrieves the most semantically similar chunks for a query. This works well for prose — paragraphs of continuous narrative where each chunk is self-contained.
+
+It fails for **structured document elements** because:
+
+1. **Tables have two-dimensional semantics.** A table cell's meaning is determined by its row context *and* its column context simultaneously. A value of "142.3M" means nothing without "Operating Income" (row) and "Q3 2023" (column header). Standard chunking severs at least one of these relationships.
+
+2. **Charts contain almost no extractable text.** A bar chart's data lives in rendered pixels, not in text. The only text is the title ("Revenue by Quarter"), axis labels ("Q1, Q2, Q3, Q4"), and a legend. A PDF text extractor returns these fragments with no relationship to each other. Standard embedding of this text produces a chunk that will never be retrieved by "What was Q3 revenue?" — the chunk contains no numbers.
+
+3. **Diagrams preserve relationships, not just nodes.** An entity-relationship diagram has "Customer" → "Order" → "Line Item" — each node is a text label, but the edges carry the semantic meaning. Standard chunking produces a list of node labels with no edges.
+
+4. **PDF is a rendering format, not a semantic format.** A PDF is a set of drawing instructions: place this glyph at (x, y) with font F. There is no concept of "table" or "paragraph" in a PDF's native format — that structure must be *inferred* by a layout analysis model that looks at the spatial arrangement of text bounding boxes and visual elements.
+
+**The solution — layout-aware document parsing** — has three components:
+
+1. **Layout analysis:** Detect semantic regions in the document (title, paragraph, table, figure, caption, header, footer) using a visual model trained on document layout. Each detected region is a structured object with type, bounding box, page number, and content.
+
+2. **Per-region handling:** Each region type gets a different extraction and serialization strategy. Tables → structured serialization that preserves headers. Charts/figures → VLM-generated natural language summary. Paragraphs → standard text extraction. Captions → co-located with their figure.
+
+3. **Layout-aware chunking and retrieval:** Chunks are bounded by semantic regions, not token counts. A table is always a single chunk (or multiple logically-split sub-tables). A figure and its caption are always co-located. Retrieval uses the most appropriate strategy per region type.
+
+**Real-world analogy:**
+Think of reading a newspaper. A human reader knows instantly when they're looking at a table, a photo, a caption, or a headline — and reads each one differently. They don't read a table left-to-right like prose; they read by row and column. They don't read a photo; they read the caption and then look at the photo together. Layout-aware RAG is teaching the pipeline to do the same: recognize what kind of element it is looking at, and handle it appropriately.
+
+**Where the analogy breaks down:** A human reader can visually understand a complex stacked bar chart without any text at all. Current systems still struggle with charts that have dense visual encoding and minimal text labels — VLM summaries can miss subtle patterns visible to human experts.
+
+**Key terms:**
+- **Layout analysis:** The process of detecting and classifying semantic regions in a document page — distinguishing tables, figures, paragraphs, titles, headers, and footers based on visual and spatial analysis of the page image.
+- **Bounding box:** The pixel-coordinate rectangle `(x0, y0, x1, y1)` that defines the location of a detected element on a page. Used to spatially cluster text tokens into semantic regions.
+- **Semantic region:** A contiguous document element with a detected type (table, paragraph, figure, caption, etc.) and a bounding box. The fundamental unit of layout-aware parsing.
+- **Table serialization:** The process of converting a 2D table structure into a text format that preserves row/column relationships — typically Markdown table format, HTML table format, or CSV with explicit header context.
+- **Multi-level table header:** A table where column headers span multiple rows — e.g., a top-level "Financial Metrics" header that splits into "Revenue / COGS / Operating Income" sub-headers below. Requires special handling to associate each data cell with the correct full header path.
+- **VLM-generated summary:** A natural-language description of a chart or diagram produced by a Vision-Language Model (e.g., GPT-4V, Claude 3) given the image as input. Used as the embeddable text representation of a visual element that has no extractable text.
+- **Layout-aware chunking:** A chunking strategy that respects semantic region boundaries — a chunk never splits across a table or figure boundary, and always includes the header context needed to interpret values.
+- **Cross-reference preservation:** Keeping a figure and its caption, or a table and its title, in the same chunk so that the indexing unit is semantically complete.
+- **ColPali:** A retrieval model architecture that treats entire page images as retrieval units, using a vision encoder to produce multi-vector page embeddings. Eliminates the need for text extraction entirely — retrieval happens at the page-image level.
+- **Semantic region routing:** A dispatch pattern where each detected region type is routed to a different processing path — tables → structured extraction, figures → VLM summary, paragraphs → dense text embedding.
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+```mermaid
+flowchart TD
+    subgraph INGEST["Document Ingestion Pipeline"]
+        direction TB
+        D1[Raw document\nPDF / DOCX / image]
+        D2[Page rendering\nRasterize each page at 150dpi]
+        D3[Layout analysis model\nDetect: title, para, table, figure, caption]
+        D4[Region extraction\nPer detected bounding box]
+
+        D1 --> D2 --> D3 --> D4
+    end
+
+    subgraph ROUTING["Semantic Region Router"]
+        direction LR
+        R1{Region type?}
+        R2[TABLE\n→ Structured serializer\nMarkdown/HTML + header context]
+        R3[FIGURE / CHART\n→ VLM summary generator\nnatural-language description]
+        R4[PARAGRAPH / TEXT\n→ Standard text extractor\n+ dense text embedding]
+        R5[CAPTION\n→ Co-locate with parent figure\nsame chunk as figure summary]
+
+        R1 -->|table| R2
+        R1 -->|figure| R3
+        R1 -->|paragraph| R4
+        R1 -->|caption| R5
+    end
+
+    subgraph INDEX["Vector Index"]
+        direction LR
+        I1[Table chunks\nembedded as structured text\nMetadata: page, table_id, row_range, col_headers]
+        I2[Figure chunks\nembedded as VLM summary text\nMetadata: page, figure_id, caption, image_path]
+        I3[Text chunks\nembedded as dense vectors\nMetadata: page, section, paragraph_id]
+    end
+
+    subgraph RETRIEVAL["Query-time Retrieval"]
+        direction TB
+        Q1[User query]
+        Q2[Hybrid retriever\ndense + BM25 + metadata filter]
+        Q3[Re-ranker\ncross-encoder on retrieved chunks]
+        Q4[LLM context assembly\ninclude image if figure chunk]
+        Q5[Grounded response]
+
+        Q1 --> Q2 --> Q3 --> Q4 --> Q5
+    end
+
+    D4 --> ROUTING
+    R2 --> I1
+    R3 --> I2
+    R4 --> I3
+    R5 --> I2
+    INDEX --> RETRIEVAL
+```
+
+**What this diagram shows:**
+- Every page is rasterized first — layout analysis works on the page image, not the raw text stream.
+- Each detected region type flows into a different processing path. Tables get structured serialization; figures/charts get VLM-generated summaries that become embeddable text.
+- All paths converge into a single vector index but with type-specific metadata.
+- At query time, the retriever returns chunks; if a chunk is a figure chunk, the LLM context assembly includes the original image alongside the VLM summary for richer reasoning.
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+---
+
+#### Scenario A: Financial Services — Annual Report Q&A System
+
+**Product/use case context:**
+A financial research firm builds a RAG system over SEC 10-K filings. Analysts ask quantitative questions: "What was EBITDA margin in fiscal 2023?" "How did R&D spend change year-over-year?" These answers are almost always in financial statement tables — income statement, balance sheet, cash flow statement — with multi-level headers and sometimes spanning two or three pages.
+
+**Why standard chunking fails here and how layout-aware retrieval fixes it:**
+
+A 10-K income statement table looks like:
+
+```
+                  FY 2023        FY 2022        FY 2021
+Revenue           $4,821M        $4,102M        $3,554M
+Cost of Revenue   $2,911M        $2,498M        $2,183M
+Gross Profit      $1,910M        $1,604M        $1,371M
+R&D Expenses        $623M          $589M          $501M
+Operating Income    $887M          $742M          $631M
+```
+
+With standard 512-token chunking: the header row (`FY 2023 | FY 2022 | FY 2021`) ends up in one chunk, and the data rows are split across subsequent chunks. A retrieval for "FY 2023 Operating Income" returns the Operating Income row chunk — `$887M | $742M | $631M` — but the model doesn't know which column is FY 2023.
+
+**Layout-aware approach:**
+- Layout model detects the table as a single semantic region (bounding box covers all rows)
+- Table serializer converts to Markdown: header row + all data rows in one chunk
+- If the table is too large for context: split at the row level, but *each split chunk includes the header row repeated* — so every sub-chunk has column context
+- Metadata: `{page: 48, table_id: "income_statement", col_headers: ["FY 2023", "FY 2022", "FY 2021"], row_range: [0, 12]}`
+
+**Constraints and how they affect design:**
+
+- **Table continuation across pages:** A financial table often spans two pages, split by a page break. The layout model may detect two separate table regions on two pages. The pipeline must detect table continuation (the second page's table starts with no title row — it's a continuation of the previous page's table) and merge them before serialization. Detection heuristic: table on page N+1 with no title row and column headers matching table on page N → merge.
+- **Footnote references in table cells:** `(1)` superscript in a cell references a footnote at the page bottom. The serialized table loses the footnote text. Fix: detect footnote annotations and inline them into the table serialization as a note row at the table's end.
+- **Cost:** VLM API calls for chart summaries add cost. A 200-page 10-K with 20 charts → 20 VLM calls per document at $0.01–$0.03 each → $0.20–$0.60 per document. At 10,000 filings, this is $2,000–$6,000 in VLM inference cost. Batch processing and caching (don't re-summarize unchanged pages) are essential.
+
+**What good looks like in production:**
+- Table retrieval precision@3 for quantitative queries: ≥ 85% (correct table chunk in top-3 results)
+- End-to-end accuracy on "extract this specific financial metric" questions: ≥ 90%
+- Table continuation detection accuracy: ≥ 95%
+- Zero instances of header context stripped from retrieved table chunks
+
+---
+
+#### Scenario B: Technical Documentation — Diagram and Procedure Understanding
+
+**Product/use case context:**
+A manufacturing firm builds a RAG system over equipment maintenance manuals. Technicians ask: "How do I replace the hydraulic pump on Model X-200?" The answer is a multi-step procedure with accompanying numbered diagrams showing which bolts to remove in which order. The diagrams are embedded images; the steps are text. The text references the diagram: "Refer to Diagram 3.4 for bolt locations."
+
+**The cross-reference challenge:**
+
+When chunked naively: Step 4 ("Remove the four M8 bolts shown in Diagram 3.4") is in text chunk 201. Diagram 3.4 is in a completely separate image chunk that was never associated with chunk 201. When the RAG retrieves chunk 201, the model sees "Refer to Diagram 3.4" but has no access to the diagram.
+
+**Layout-aware cross-reference resolution:**
+
+1. Layout model detects both the figure reference in the text ("Diagram 3.4") and the figure element with its caption ("Diagram 3.4: Bolt pattern for hydraulic pump assembly").
+2. The pipeline creates a **cross-reference index**: `{ref: "Diagram 3.4", figure_id: "fig_3_4", page: 87, image_path: "page_87_fig_0.png"}`.
+3. When serializing the text chunk containing "Refer to Diagram 3.4," the serializer inlines the figure's VLM summary: `[Diagram 3.4: A hydraulic pump assembly showing four M8 bolts arranged in a square pattern on the top flange, with bolt positions labeled 1–4 clockwise from top-left.]`
+4. The text chunk now contains the figure's semantic content even though it's a text chunk — no retrieval gap.
+
+**Constraints:**
+
+- **VLM quality for technical diagrams:** Engineering diagrams (exploded views, assembly drawings with part numbers) require specialized understanding. General VLMs describe "four bolts on a metal component." A fine-tuned or domain-prompted VLM with examples of engineering diagrams produces "Four M8 socket-head cap screws on the top flange at positions matching the 3-4-1-2 clockwise sequence required for even torquing."
+- **Multilingual manuals:** Many manuals have text in multiple languages. Layout analysis may produce text regions for each language version side-by-side. The pipeline must detect language and route to the correct language version or translate.
+
+**What good looks like in production:**
+- Cross-reference resolution rate: ≥ 95% of figure references in text are matched to their figure element
+- Technician task completion rate with RAG assistance: ≥ 80% (measured by post-task survey — did the RAG answer help you complete the task without additional manual lookup?)
+- VLM summary quality for technical diagrams: measured by precision of part number mentions (do the VLM summaries include the correct part numbers visible in the diagram?)
+
+---
+
+#### Scenario C: Healthcare — Medical Record Summarization with Lab Tables and Clinical Charts
+
+**Product/use case context:**
+A health system builds a RAG system over patient Electronic Health Records (EHRs). Clinicians ask questions like: "What was the trend in creatinine over the last 6 months?" or "Show me all abnormal lab values from the last visit." The answers are in lab result tables (structured, time-series data) and trend charts (visual, rendered as images in PDF discharge summaries).
+
+**The time-series table challenge:**
+
+Lab result tables in EHRs have a specific structure: columns are dates (test dates), rows are lab tests (Creatinine, eGFR, BUN, etc.), and cells contain numeric values with reference ranges. A question like "trend in creatinine" requires: (a) identifying the Creatinine row, (b) reading values across multiple date columns in order, (c) computing whether values are rising, falling, or stable.
+
+Standard table serialization (Markdown) produces a valid table, but if the table has 12 date columns, it may be too wide for the embedding model's context. The serialization strategy must handle wide tables: transpose if needed (dates as rows, tests as columns), or split into date-range sub-tables with the row header always included.
+
+**Chart trend understanding:**
+
+A discharge summary may include a rendered chart of creatinine over time (a line chart). The VLM summary must capture the trend semantics: "Creatinine levels increased from 1.2 mg/dL in January to 2.8 mg/dL in June, with a sharp increase between March and April, exceeding the normal upper limit of 1.35 mg/dL from April onward." This requires a high-quality VLM with clinical context in the prompt, not a generic caption.
+
+**PHI implications:**
+
+Lab values are PHI under HIPAA. The VLM used for chart summarization must run in a HIPAA-compliant environment (BAA in place with the vendor, or self-hosted). Generated summaries — which contain actual lab values — are also PHI and subject to the same access control and retention policies as the original records.
+
+**What good looks like in production:**
+- Lab table retrieval: all abnormal values flagged in the table metadata (`{value: 2.8, reference_range: "0.6–1.35", abnormal: true}`) so the retriever can filter on `abnormal=true` without the LLM needing to interpret reference ranges
+- Trend chart VLM summary accuracy: validated by clinical SME review on a 100-chart sample; target > 90% correct trend direction + at least one specific value cited
+- PHI handling: VLM runs on-premises or within BAA-covered cloud environment; no chart images or summaries sent to uncovered third parties
+
+---
+
+### 4. System View [Intermediate]
+
+```
+Inputs:
+  - Raw documents: PDF, DOCX, scanned images, HTML
+  - Query: user natural-language question
+
+Document processing transformations:
+  1. Rasterize: render each page to an image (150–300dpi)
+  2. Layout analysis: detect semantic regions per page (LayoutLM, Detectron2-based models,
+     PP-StructureV2, Azure Form Recognizer, AWS Textract)
+  3. Region-type dispatch:
+     - Table regions → table extraction + serialization
+     - Figure regions → VLM summary generation (async, cached)
+     - Text regions → standard text extraction (pdfminer, PyMuPDF)
+     - Caption regions → linked to parent figure
+  4. Cross-reference resolution: link figure references in text to figure elements
+  5. Layout-aware chunking: chunk within region boundaries; tables = 1 chunk (or
+     header-inclusive sub-chunks); figures + captions = 1 chunk
+  6. Embedding: per-chunk, using appropriate embedding model
+     - Dense text: text-embedding-ada-002 / E5 / BGE
+     - Table: same dense model but on structured Markdown representation
+     - Figure summary: same dense model on VLM summary text
+  7. Index: vector store with rich metadata
+     - {doc_id, page, region_type, region_id, col_headers (tables), figure_id,
+        image_path, abnormal_flags (clinical), confidence_score (layout model)}
+
+Query-time transformations:
+  1. Query expansion (optional): LLM rewrites query for better recall
+  2. Hybrid retrieval: dense vector search + BM25 on text + metadata filter
+     (e.g., filter to table region_type for quantitative queries)
+  3. Re-ranking: cross-encoder re-ranks top-K results
+  4. Context assembly: if figure chunk retrieved, include image + summary in LLM context
+  5. LLM grounded generation
+  6. Citation: each claim references the source chunk (doc, page, region_id)
+
+Outputs:
+  - Grounded answer with citations (doc name, page number, element type)
+  - Retrieved chunks (for citation display in the UI)
+  - Confidence score (re-ranker score on top result)
+```
+
+**Observability:**
+
+| Signal | Why it matters |
+|---|---|
+| Layout model confidence per region type | Low confidence → misclassified regions → wrong processing path (text treated as figure) |
+| Table serialization completeness | % of tables with all header rows detected and included in serialization |
+| VLM summary latency (p95) | Chart VLM calls are the longest step; must be async and cached |
+| Cross-reference resolution rate | % of figure references in text successfully linked to figure elements |
+| Retrieval precision@3 by region type | Separate metrics for table, figure, text — reveals which region type is failing |
+| Chunk size distribution | Oversized table chunks cause context overflow; undersized chunks lose row context |
+| LLM citation accuracy | Do the cited page/region IDs actually contain the stated information? |
+
+**Failure points:**
+
+| Failure | Symptom | Root cause |
+|---|---|---|
+| Table split at token boundary | LLM answers with wrong column data | Chunking used token limit without checking region boundaries |
+| Multi-level header collapsed | Column header shows only leaf label, not full path | Table serializer doesn't traverse multi-row headers |
+| Chart chunk never retrieved | Quantitative questions about charts return "I don't know" | VLM summary text is generic ("a bar chart") — no numbers, no trend language |
+| Figure and caption in separate chunks | LLM gets caption but no visual context | Cross-reference preservation not implemented; figure/caption co-location missing |
+| Table continuation undetected | Answer uses data from only one page of a two-page table | No table continuation detection; second page parsed as separate table without headers |
+| Wide table truncated | Last columns missing from serialized chunk | Markdown serializer hit context limit without splitting with header re-injection |
+| Layout model misclassifies dense text as table | Text paragraphs processed through table serializer → garbled output | Layout model confidence threshold too low; no post-hoc validation of table structure |
+
+---
+
+### 5. System Design Flavor [Intermediate]
+
+**Layout analysis tool options:**
+
+| Tool | Approach | Best for | Limitation |
+|---|---|---|---|
+| **PP-StructureV2** (PaddleOCR) | Vision model + rule-based | High accuracy on printed docs, open-source | Weaker on scanned/noisy docs |
+| **Azure Form Recognizer** / Document Intelligence | Cloud API, pretrained on business docs | Fast production integration, strong on invoices/receipts | Cost per page; data leaves your environment |
+| **AWS Textract** | Cloud API, strong table detection | AWS-native stacks, good table cell detection | Cost; complex nested tables still tricky |
+| **LayoutLMv3** (fine-tuned) | Transformer on OCR + layout features | Custom domains (medical, legal) when fine-tuned | Requires fine-tuning data for novel layouts |
+| **Unstructured.io** | Orchestration library | Quick integration across doc types | Abstracts away control; harder to customize |
+| **ColPali** | Page-image retrieval, no text extraction | Highly visual docs, mixed-modality pages | No structured metadata; purely retrieval |
+
+**Table serialization strategies — tradeoffs:**
+
+| Format | Pros | Cons | When to use |
+|---|---|---|---|
+| **Markdown table** | Human-readable, LLM-native, compact | Wide tables overflow; merges invisible | Most cases; good LLM comprehension |
+| **HTML table** | Preserves colspan/rowspan for merged cells | Verbose; adds noise tokens | Multi-level headers, merged cells |
+| **CSV with header prefix** | Very compact; easy to parse | No visual structure for LLM | Programmatic extraction, not QA |
+| **Natural language row description** | "In Q3 FY2023, Revenue was $4.8B and Operating Income was $887M" | Verbose; loses tabular structure | Small tables (< 5 rows) for direct QA |
+
+**Key tradeoffs:**
+
+| Decision | Option A | Option B | Guidance |
+|---|---|---|---|
+| Chart representation | VLM summary text only | VLM summary + include image in retrieval context | Image in context is more accurate but higher cost and latency; use image inclusion for high-stakes queries (financial analysis), summary-only for high-volume lower-stakes (product search) |
+| Table chunking | Whole table as one chunk | Header-inclusive row-range sub-chunks | Whole table for tables < 2,000 tokens; sub-chunks with repeated headers for larger tables |
+| Layout model deployment | Cloud API (Azure, AWS) | Self-hosted (PP-StructureV2) | Cloud for speed-to-production; self-hosted for data residency, PHI/PII compliance, or cost at scale |
+| Retrieval strategy | Dense-only on VLM summaries | Hybrid dense + BM25 + metadata filter | Hybrid always wins for structured content: BM25 catches exact numeric values ("142.3M"), dense catches semantic matches ("revenue"), metadata filter restricts to the right region type |
+
+**Scaling consideration:**
+At 10× document volume, the VLM summary generation step becomes the throughput bottleneck. Each chart/figure requires one VLM API call — at 10,000 documents per day with 10 figures each, that is 100,000 VLM calls per day. Optimization strategies: (1) **Aggressive caching** — hash the figure image; if the same image appears in multiple document versions, reuse the cached summary. (2) **Batch processing** — use VLM batch APIs (GPT-4V supports batch endpoints) for non-realtime ingestion. (3) **Tiered summarization** — for low-stakes figure types (decorative graphics, company logos), use a classifier to skip VLM and emit a zero-cost empty summary. (4) **Self-hosted VLM** — at sustained high volume, deploying LLaVA or Qwen-VL on GPU infrastructure is cheaper than per-call cloud API.
+
+---
+
+### 6. Common Mistakes + Debugging [Intermediate]
+
+---
+
+#### Mistake 1: Chunking table by token count, severing header rows from data rows
+
+**Symptom:** LLM consistently gives the wrong column for quantitative table questions. "What was FY2022 revenue?" returns the FY2023 value. Accuracy on financial table questions is ~33% — consistent with random column selection.
+
+**Likely cause:** The chunking strategy split the table at the token limit. The header row ("FY 2023 | FY 2022 | FY 2021") ended up in a chunk that is not retrieved, because the query "FY 2022 revenue" semantically matches the data row chunk (which contains the numbers) more than the header row chunk. The retrieved data row chunk has three numbers but no column labels — so the LLM guesses which column is FY2022.
+
+**First debugging step:** Retrieve the chunks for a known-failing query. Print each retrieved chunk verbatim. If table data chunks lack their header row, the problem is confirmed. Fix: implement a **header re-injection strategy** in the table chunking step: for every sub-chunk of a table, prepend the full header row(s) at the top of the chunk text, even if they are duplicated from the previous chunk. This costs tokens (header rows repeated in each sub-chunk) but guarantees every data chunk carries the context needed to interpret its values. The extra token cost is acceptable — a financial table with 3 header columns × 3 rows adds ~30 tokens per sub-chunk.
+
+---
+
+#### Mistake 2: VLM chart summary is generic and unembeddable for quantitative queries
+
+**Symptom:** Chart-type questions consistently fail retrieval. "What was Q3 revenue?" returns only text chunks, never chart chunks — even when the chart clearly shows Q3 data. Checking the chart chunk's embedding shows it is nearby "a bar chart showing quarterly data" — but not near "Q3 revenue $4.8B."
+
+**Likely cause:** The VLM prompt was a generic "describe this chart." The VLM produced: "This is a bar chart with four bars representing quarterly data. The bars vary in height, with the rightmost bar being tallest." This summary contains no numbers, no axis labels, no trend direction — it is not embeddable for any quantitative query.
+
+**First debugging step:** Audit 10 chart VLM summaries from the index. If they contain no numeric values and no specific axis label text from the chart, the prompt is the problem. Fix the VLM prompt to be extraction-oriented: *"Describe this chart in detail. Include: (1) chart type, (2) title, (3) all axis labels and units, (4) all legend entries, (5) approximate values for each bar/line/data point, (6) the trend or key takeaway. Use numbers wherever visible. Your description will be used for search — be specific."* A well-prompted VLM should produce: "Bar chart titled 'Revenue by Quarter FY2023'. X-axis: Q1, Q2, Q3, Q4. Y-axis: Revenue in USD millions. Values: Q1=$3.9B, Q2=$4.2B, Q3=$4.8B, Q4=$5.1B. Trend: consistent quarter-over-quarter growth; Q4 was the strongest quarter." This is now retrievable by "Q3 revenue."
+
+---
+
+#### Mistake 3: Figure and caption indexed as separate chunks, breaking co-located context
+
+**Symptom:** LLM receives the caption text "Figure 4: Hydraulic pump bolt pattern (M8 bolts, 4× total)" but has no access to the actual diagram. It generates a plausible but incorrect answer because it's reasoning from the caption label, not from the visual bolt pattern shown in the figure.
+
+**Likely cause:** The layout analysis detected the figure and caption as two separate bounding-box regions. The pipeline created a chunk for each independently. Retrieval returned the caption chunk (higher text similarity to the query) but not the figure chunk.
+
+**First debugging step:** Check the layout output for pages containing figures. If figure and caption regions have non-overlapping bounding boxes with a small gap between them, they are being treated independently. Fix: implement a **figure-caption merging step** as a post-processing pass on the layout output. Heuristic: for each detected CAPTION region, find the nearest FIGURE region on the same page within a vertical distance of ≤ 50px. If found, merge them into a single chunk: `{type: "figure_with_caption", image_path: ..., caption: ..., vlm_summary: ...}`. This ensures retrieval always returns the complete figure element — image reference, caption, and VLM summary — as one unit.
+
+---
+
+### 7. Hands-On Lab [Pro]
+
+**Topic:** Layout-Aware Table + Chart Retrieval — Build → Break → Measure → Explain
+
+**Goal:** Build a minimal layout-aware document parser that: (1) detects table vs figure vs text regions (simulated), (2) serializes tables with header context, (3) generates VLM-style summaries for charts, (4) implements layout-aware chunking, (5) builds a simple retrieval test. Measure retrieval accuracy with vs without layout-aware chunking.
+
+---
+
+#### Build: Layout-Aware Document Parser
+
+```python
+import re
+import json
+import hashlib
+from dataclasses import dataclass, field
+from typing import Optional
+from enum import Enum
+
+# ── Region types ──────────────────────────────────────────────────────────
+class RegionType(Enum):
+    TITLE = "title"
+    PARAGRAPH = "paragraph"
+    TABLE = "table"
+    FIGURE = "figure"
+    CAPTION = "caption"
+    HEADER = "header"
+    FOOTER = "footer"
+
+# ── Detected layout region ────────────────────────────────────────────────
+@dataclass
+class LayoutRegion:
+    region_type: RegionType
+    page: int
+    bbox: tuple         # (x0, y0, x1, y1) in pixels
+    content: str        # raw text OR base64 image stub
+    region_id: str = ""
+    caption: Optional[str] = None    # populated for figure regions
+    vlm_summary: Optional[str] = None
+
+    def __post_init__(self):
+        if not self.region_id:
+            self.region_id = hashlib.md5(
+                f"{self.page}_{self.bbox}_{self.region_type}".encode()
+            ).hexdigest()[:8]
+
+# ── Simulated layout analysis output ─────────────────────────────────────
+# In production: replace with calls to PP-StructureV2 / Azure Form Recognizer
+def simulate_layout_analysis(doc_name: str) -> list[LayoutRegion]:
+    """Simulates layout model output for a financial report page."""
+    return [
+        LayoutRegion(
+            region_type=RegionType.TITLE,
+            page=1, bbox=(50, 50, 700, 80),
+            content="Annual Financial Report FY2023 — Consolidated Income Statement"
+        ),
+        # Two-row multi-level header table
+        LayoutRegion(
+            region_type=RegionType.TABLE,
+            page=1, bbox=(50, 100, 700, 400),
+            content=json.dumps({
+                "headers": [["", "FY 2023", "FY 2022", "FY 2021"]],
+                "rows": [
+                    ["Revenue",          "$4,821M", "$4,102M", "$3,554M"],
+                    ["Cost of Revenue",  "$2,911M", "$2,498M", "$2,183M"],
+                    ["Gross Profit",     "$1,910M", "$1,604M", "$1,371M"],
+                    ["R&D Expenses",       "$623M",   "$589M",   "$501M"],
+                    ["Operating Income",   "$887M",   "$742M",   "$631M"],
+                    ["Net Income",         "$651M",   "$534M",   "$449M"],
+                ]
+            })
+        ),
+        LayoutRegion(
+            region_type=RegionType.FIGURE,
+            page=1, bbox=(50, 420, 400, 620),
+            content="[CHART_IMAGE: page1_fig0.png]",  # stub for actual image
+        ),
+        LayoutRegion(
+            region_type=RegionType.CAPTION,
+            page=1, bbox=(50, 625, 400, 645),
+            content="Figure 1: Revenue and Operating Income by Quarter, FY2023"
+        ),
+        LayoutRegion(
+            region_type=RegionType.PARAGRAPH,
+            page=1, bbox=(420, 420, 700, 620),
+            content=(
+                "Revenue grew 17.5% year-over-year in FY2023, driven by strong "
+                "performance in the enterprise segment. Operating income improved "
+                "to $887M, representing an 18.4% operating margin, up from 18.1% "
+                "in FY2022. R&D investment increased $34M, reflecting our continued "
+                "commitment to product innovation."
+            )
+        ),
+    ]
+
+# ── Table serializer ──────────────────────────────────────────────────────
+def serialize_table_markdown(table_json: dict, max_rows_per_chunk: int = 50) -> list[str]:
+    """
+    Converts table JSON to Markdown chunk(s).
+    If table has more rows than max_rows_per_chunk, splits into sub-chunks
+    with the header row repeated in each sub-chunk.
+    """
+    headers = table_json.get("headers", [[]])
+    rows = table_json.get("rows", [])
+
+    # Build header Markdown
+    def header_md(headers):
+        lines = []
+        for i, header_row in enumerate(headers):
+            lines.append("| " + " | ".join(str(h) for h in header_row) + " |")
+            if i == len(headers) - 1:
+                # Add separator after last header row
+                lines.append("|" + "|".join(["---"] * len(header_row)) + "|")
+        return "\n".join(lines)
+
+    header_text = header_md(headers)
+
+    # Split rows into chunks, always prepending header
+    chunks = []
+    for start in range(0, len(rows), max_rows_per_chunk):
+        chunk_rows = rows[start:start + max_rows_per_chunk]
+        rows_md = "\n".join(
+            "| " + " | ".join(str(cell) for cell in row) + " |"
+            for row in chunk_rows
+        )
+        chunk_text = f"{header_text}\n{rows_md}"
+        chunks.append(chunk_text)
+
+    return chunks if chunks else [header_text]
+
+# ── Simulated VLM chart summarizer ────────────────────────────────────────
+def generate_vlm_summary(figure_region: LayoutRegion, caption: Optional[str] = None) -> str:
+    """
+    In production: call GPT-4V / Claude 3 / LLaVA with the page image and
+    extraction-oriented prompt.
+    Here: returns a simulated high-quality summary.
+    """
+    caption_context = f" (Caption: {caption})" if caption else ""
+    return (
+        f"Bar chart{caption_context}. Title: 'Revenue and Operating Income by Quarter FY2023'. "
+        f"X-axis: Q1, Q2, Q3, Q4 FY2023. Y-axis: USD millions. "
+        f"Revenue bars: Q1=$1,082M, Q2=$1,187M, Q3=$1,241M, Q4=$1,311M. "
+        f"Operating Income bars: Q1=$189M, Q2=$213M, Q3=$231M, Q4=$254M. "
+        f"Trend: consistent quarter-over-quarter growth in both metrics. "
+        f"Q3 revenue was $1,241M with operating income of $231M (18.6% margin). "
+        f"Q4 was the strongest quarter. All quarters showed positive margin expansion."
+    )
+
+# ── Figure-caption merger ─────────────────────────────────────────────────
+def merge_figure_captions(regions: list[LayoutRegion]) -> list[LayoutRegion]:
+    """
+    Post-processing: find CAPTION regions and merge into their nearest FIGURE.
+    Heuristic: caption bbox y0 is within 50px below figure bbox y1, same page.
+    """
+    figures = [r for r in regions if r.region_type == RegionType.FIGURE]
+    captions = [r for r in regions if r.region_type == RegionType.CAPTION]
+    merged_caption_ids = set()
+
+    for fig in figures:
+        for cap in captions:
+            if cap.page != fig.page:
+                continue
+            # Caption y0 should be just below figure y1
+            gap = cap.bbox[1] - fig.bbox[3]  # caption top - figure bottom
+            if 0 <= gap <= 60:
+                fig.caption = cap.content
+                merged_caption_ids.add(cap.region_id)
+                break
+
+    # Remove merged captions from the region list
+    return [r for r in regions if r.region_id not in merged_caption_ids]
+
+# ── Layout-aware document chunker ────────────────────────────────────────
+@dataclass
+class DocumentChunk:
+    chunk_id: str
+    doc_id: str
+    page: int
+    region_type: str
+    text: str                           # embeddable text (for all types)
+    image_path: Optional[str] = None   # for figure chunks
+    metadata: dict = field(default_factory=dict)
+
+def build_chunks(doc_id: str, regions: list[LayoutRegion]) -> list[DocumentChunk]:
+    """Converts layout regions into embeddable document chunks."""
+    chunks = []
+    region_counter = 0
+
+    for region in regions:
+        region_counter += 1
+
+        if region.region_type == RegionType.TABLE:
+            table_data = json.loads(region.content)
+            table_chunks = serialize_table_markdown(table_data, max_rows_per_chunk=10)
+            for i, chunk_text in enumerate(table_chunks):
+                chunks.append(DocumentChunk(
+                    chunk_id=f"{doc_id}_p{region.page}_table_{region.region_id}_{i}",
+                    doc_id=doc_id,
+                    page=region.page,
+                    region_type="table",
+                    text=chunk_text,
+                    metadata={
+                        "region_id": region.region_id,
+                        "col_headers": table_data.get("headers", [[]])[0],
+                        "sub_chunk": i,
+                        "total_sub_chunks": len(table_chunks),
+                    }
+                ))
+
+        elif region.region_type == RegionType.FIGURE:
+            # Generate VLM summary (with merged caption if available)
+            if not region.vlm_summary:
+                region.vlm_summary = generate_vlm_summary(region, caption=region.caption)
+            # Build embeddable text = caption + VLM summary
+            caption_text = f"Caption: {region.caption}\n" if region.caption else ""
+            embed_text = f"{caption_text}Visual content: {region.vlm_summary}"
+            chunks.append(DocumentChunk(
+                chunk_id=f"{doc_id}_p{region.page}_figure_{region.region_id}",
+                doc_id=doc_id,
+                page=region.page,
+                region_type="figure",
+                text=embed_text,
+                image_path=region.content if "[CHART_IMAGE" in region.content else None,
+                metadata={
+                    "region_id": region.region_id,
+                    "caption": region.caption,
+                    "has_image": True,
+                }
+            ))
+
+        elif region.region_type in (RegionType.PARAGRAPH, RegionType.TITLE):
+            chunks.append(DocumentChunk(
+                chunk_id=f"{doc_id}_p{region.page}_text_{region.region_id}",
+                doc_id=doc_id,
+                page=region.page,
+                region_type="text",
+                text=region.content,
+                metadata={"region_id": region.region_id}
+            ))
+
+        # CAPTION regions that were not merged (standalone captions) → treat as text
+        elif region.region_type == RegionType.CAPTION:
+            chunks.append(DocumentChunk(
+                chunk_id=f"{doc_id}_p{region.page}_caption_{region.region_id}",
+                doc_id=doc_id,
+                page=region.page,
+                region_type="caption",
+                text=region.content,
+                metadata={"region_id": region.region_id}
+            ))
+
+    return chunks
+
+# ── Simple keyword retriever (simulates vector search) ───────────────────
+def keyword_retrieve(chunks: list[DocumentChunk], query: str, top_k: int = 3) -> list[DocumentChunk]:
+    """
+    Keyword overlap retriever (simulates dense vector search for the lab).
+    In production: replace with actual embedding + cosine similarity search.
+    """
+    query_tokens = set(re.findall(r'\w+', query.lower()))
+    scored = []
+    for chunk in chunks:
+        text_tokens = set(re.findall(r'\w+', chunk.text.lower()))
+        overlap = len(query_tokens & text_tokens)
+        scored.append((overlap, chunk))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [c for _, c in scored[:top_k]]
+
+# ── Simulation ────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    # 1. Simulate layout analysis
+    regions = simulate_layout_analysis("annual_report_2023")
+    print(f"Detected {len(regions)} regions")
+
+    # 2. Merge figure-caption pairs
+    regions = merge_figure_captions(regions)
+    print(f"After caption merging: {len(regions)} regions")
+
+    # 3. Build chunks
+    chunks = build_chunks("annual_report_2023", regions)
+    print(f"\nGenerated {len(chunks)} chunks:")
+    for c in chunks:
+        print(f"  [{c.region_type}] {c.chunk_id[:50]}: {c.text[:80]}...")
+
+    # 4. Test retrieval
+    test_queries = [
+        "What was FY2022 revenue?",
+        "What was Q3 revenue?",
+        "What is operating income trend?",
+    ]
+
+    print(f"\n{'='*60}")
+    print("Retrieval test:")
+    for query in test_queries:
+        results = keyword_retrieve(chunks, query, top_k=2)
+        print(f"\nQuery: '{query}'")
+        for i, r in enumerate(results):
+            print(f"  Result {i+1} [{r.region_type}]: {r.text[:120]}...")
+```
+
+---
+
+#### Break: Force the table chunking failure
+
+```python
+# Break Experiment 1 — Naive token-based chunking (no header re-injection)
+# Simulate splitting the table at row 3 WITHOUT re-injecting the header
+
+def naive_table_split(table_json: dict, split_at_row: int = 3) -> list[str]:
+    """Simulates what happens when a table is split WITHOUT repeating headers."""
+    headers = table_json.get("headers", [[]])
+    rows = table_json.get("rows", [])
+
+    header_md = "| " + " | ".join(headers[0]) + " |\n" + "|---|---|---|---|\n"
+    chunk1 = header_md + "\n".join(
+        "| " + " | ".join(row) + " |" for row in rows[:split_at_row]
+    )
+    # Chunk 2 has NO header — this is the bug
+    chunk2 = "\n".join(
+        "| " + " | ".join(row) + " |" for row in rows[split_at_row:]
+    )
+    return [chunk1, chunk2]
+
+regions = simulate_layout_analysis("annual_report_2023")
+for r in regions:
+    if r.region_type == RegionType.TABLE:
+        table_data = json.loads(r.content)
+        naive_chunks = naive_table_split(table_data, split_at_row=3)
+        print("\n--- NAIVE SPLIT (BUG) ---")
+        for i, c in enumerate(naive_chunks):
+            print(f"\nChunk {i+1}:\n{c}")
+        # Chunk 2 has Operating Income $887M but NO column headers
+        # → LLM cannot tell which column is FY2022
+
+        layout_aware_chunks = serialize_table_markdown(table_data, max_rows_per_chunk=3)
+        print("\n--- LAYOUT-AWARE SPLIT (FIX) ---")
+        for i, c in enumerate(layout_aware_chunks):
+            print(f"\nChunk {i+1}:\n{c}")
+        # Every chunk now starts with "| | FY 2023 | FY 2022 | FY 2021 |"
+```
+
+```python
+# Break Experiment 2 — Generic VLM prompt vs extraction-oriented prompt
+generic_summary = "This is a bar chart showing quarterly data. The bars vary in height."
+extraction_summary = generate_vlm_summary(None)  # uses our well-prompted simulated version
+
+print("\n--- GENERIC SUMMARY (BAD) ---")
+print(generic_summary)
+query_tokens = set(re.findall(r'\w+', "Q3 revenue".lower()))
+generic_tokens = set(re.findall(r'\w+', generic_summary.lower()))
+print(f"Token overlap with 'Q3 revenue': {len(query_tokens & generic_tokens)}")
+
+print("\n--- EXTRACTION SUMMARY (GOOD) ---")
+print(extraction_summary[:200])
+extraction_tokens = set(re.findall(r'\w+', extraction_summary.lower()))
+print(f"Token overlap with 'Q3 revenue': {len(query_tokens & extraction_tokens)}")
+# Good summary has much higher overlap → retrieved; generic → not retrieved
+```
+
+---
+
+#### Measure: Record signals
+
+| Test | Naive chunking top-1 region type | Layout-aware top-1 region type | Header present in result? |
+|---|---|---|---|
+| "FY2022 revenue?" | ___ | ___ | ___ |
+| "Q3 operating income?" | ___ | ___ | ___ |
+| "revenue trend by quarter" | ___ | ___ | ___ |
+| "What is shown in Figure 1?" | ___ | ___ | N/A |
+
+Expected: layout-aware always returns `table` for financial metrics, `figure` for chart queries, with headers present in table chunks.
+
+---
+
+#### Explain: What each design decision prevents
+
+**Header re-injection per sub-chunk:** Prevents the "which column is this?" failure. When an LLM sees a table row with three numbers and no column header, it cannot determine which value corresponds to which year. A 30-token header repetition cost per sub-chunk is trivial relative to the correctness it provides.
+
+**Extraction-oriented VLM prompt:** Prevents the "chart never retrieved" failure. A generic description has near-zero overlap with any quantitative query. An extraction prompt forces the VLM to emit the exact numbers, axis labels, and trends visible in the chart — making the generated text semantically aligned with the kinds of questions users ask about charts.
+
+**Figure-caption merger:** Prevents the "LLM gets caption but no context" failure. When figures and captions are merged before chunking, the retrieval unit is always a complete element: the image path, the VLM summary, and the human-written caption. The LLM receives all three simultaneously, producing a grounded answer that cites both the visual content and the descriptive label.
+
+**Semantic region routing:** Prevents applying the wrong processing strategy to a region. A table processed through standard text extraction loses its 2D structure. A figure processed through table extraction produces nothing. The router ensures each element is handled by the strategy designed for its type.
+
+---
+
+### 8. Active Recall [All Levels]
+
+**Q1 [Beginner]:** Why does standard text chunking fail for tables, and what does layout-aware chunking do differently?
+**Q2 [Beginner]:** A bar chart has no extractable text except axis labels and a title. How does a layout-aware pipeline make this chart retrievable for a question like "What was Q3 revenue?"
+**Q3 [Intermediate]:** What is a multi-level table header, and why must every sub-chunk of a split table include the full header, not just the leaf-level labels?
+**Q4 [Intermediate]:** What is ColPali, and how does it differ from the VLM-summary approach for visual document retrieval?
+**Q5 [Pro]:** You are building a RAG system over 10,000 technical manuals. Each manual has ~15 diagrams and ~10 tables. You have a budget for VLM API calls but must minimize cost. Describe a tiered processing strategy that keeps accuracy high while reducing VLM call volume.
+
+---
+
+**Answer Key:**
+
+**A1:** Standard text chunking splits documents by token count — a 512-token window slides across the document without any knowledge of structure. A table row in the middle of the token window gets split from its header row, which may be 200 tokens earlier. The retrieval unit is no longer semantically complete: a chunk with data values has no column labels, so the LLM cannot interpret which value belongs to which column. Layout-aware chunking respects semantic region boundaries: the layout analysis model first detects the full extent of the table (bounding box from first header row to last data row), and the chunking step treats the entire detected table region as one unit. If the table must be split (it's too large for context), the header rows are *repeated* at the top of each sub-chunk.
+
+**A2:** The pipeline rasterizes the page (renders it as an image). The layout model detects the chart as a FIGURE region with a bounding box. The pipeline then calls a VLM (e.g., GPT-4V) with the chart image and an extraction-oriented prompt: "List the chart title, axis labels, all data point values, and the trend." The VLM produces a text description that includes "Q3=$1,241M" — an exact match for the query term. This VLM summary is then embedded as text and stored in the vector index as the chart's retrieval representation. When a user asks "Q3 revenue," the dense retrieval finds the chart chunk because the embedded VLM summary contains the specific value and label.
+
+**A3:** A multi-level table header has multiple header rows — e.g., row 1: "Financial Metrics | Q1-Q4 2023 | Q1-Q4 2022" (spanning columns), row 2: "Q1 | Q2 | Q3 | Q4 | Q1 | Q2 | Q3 | Q4" (leaf columns). A leaf label like "Q3" is ambiguous — it could be Q3 2023 or Q3 2022. A sub-chunk that only includes the leaf header row ("Q3 | Q4 | Q1 | Q2") gives the LLM no information about which year "Q3" refers to. The sub-chunk must include the full header path: both the spanning row ("Q1-Q4 2023 | Q1-Q4 2022") and the leaf row. Only with the full header hierarchy can the LLM correctly resolve "Q3" to "Q3 FY2023" or "Q3 FY2022."
+
+**A4:** ColPali is a retrieval model that bypasses text extraction entirely — it treats each *page image* as the retrieval unit. A vision encoder (e.g., PaliGemma) processes the page image and produces a set of patch-level embeddings (multi-vector representation). At query time, the query is encoded and compared to all page embeddings using late interaction (ColBERT-style dot product across patch vectors). This is fundamentally different from the VLM-summary approach: VLM-summary converts visual content to text first, then does text retrieval. ColPali retrieves at the pixel/patch level — the text is never extracted; the visual layout itself is the retrieval signal. ColPali is better for highly visual pages where text extraction would miss or distort the layout; VLM-summary is better when you need the retrieved text to be readable and usable in an LLM context window.
+
+**A5:** Tiered VLM processing strategy:
+- **Tier 0 (no VLM, ~20% of figures):** Figures that are decorative — company logos, decorative dividers, non-data images. Use a fast binary classifier (small vision model or aspect-ratio heuristic) to identify these and skip VLM entirely. Store a zero-cost placeholder summary.
+- **Tier 1 (fast local VLM, ~50% of figures):** Charts and diagrams that are relatively standard — bar charts, line charts, simple flowcharts. Run a self-hosted lightweight VLM (LLaVA-7B or Qwen-VL) on GPU. Cost: $0 per call (compute is fixed); latency: ~2s per image. Acceptable for non-time-critical batch ingestion.
+- **Tier 2 (cloud VLM API, ~30% of figures):** Complex engineering diagrams, tables-as-images, multi-panel figures, annotated schematics with part numbers. These require high-quality interpretation. Call GPT-4V or Claude 3 Vision with an extraction-oriented prompt. Cost: ~$0.02 per call; at 3 calls per manual × 10,000 manuals → 30,000 calls → ~$600 total. Acceptable.
+- **Caching:** Hash every figure image (MD5 of pixel bytes). Before any VLM call, check the cache. Revised manual editions that share unchanged figures reuse cached summaries — typically 60–70% cache hit rate for a technical manual corpus, reducing effective VLM call volume by over half.
+
+---
+
+### 9. Practice
+
+**Mini-Exercise:**
+You have a scanned insurance claim form. It contains: a header with policyholder name and claim number, a table of claimed items (description, quantity, unit cost, total), a damage assessment paragraph, and a handwritten signature block. Which layout regions need VLM processing? Which can use standard text extraction? What is the biggest parsing risk?
+
+**Suggested answer:**
+- Header: standard text extraction (printed, structured text)
+- Claimed items table: standard table extraction + serialization; risk is that scanned tables have lower OCR accuracy than digital-native PDFs — might need OCR confidence scoring per cell
+- Damage assessment paragraph: standard text extraction
+- Signature block: VLM processing — handwritten content is not extractable by OCR accurately; VLM can at least confirm presence of a signature even if it can't read the name
+- Biggest parsing risk: the items table, if cells contain handwriting or stamps (common in physical insurance forms). Hybrid approach: run OCR with confidence score; if confidence < 0.8 on any cell, escalate the full table image to VLM for cell-by-cell extraction
+
+---
+
+**Capstone System Design Question:**
+Design a layout-aware RAG pipeline for a legal document intelligence platform. Input: corporate contracts (50–300 pages each), 10,000 contracts per month. Elements: dense legal prose, tables (payment schedules, SLA tables, fee structures), figures (org charts, territory maps), and embedded exhibits (appendices with their own sub-documents). Requirements: answer questions like "What is the termination notice period?" (prose), "What is the fee for exceeding 10TB of storage?" (table), "Which territories are covered by this agreement?" (figure/map). Design the ingestion architecture, chunking strategy per element type, retrieval strategy, and cost estimation.
+
+**Answer outline:**
+
+**Ingestion architecture:**
+- Input: PDF rendering pipeline (Poppler/PyMuPDF) → rasterize at 200dpi
+- Layout model: PP-StructureV2 or Azure Document Intelligence for table/figure detection; legal-domain fine-tune for section headers, exhibit markers, clause numbering
+- Exhibit detection: recognize appendix separators ("Exhibit A:", "Schedule 1") and treat each exhibit as a sub-document with its own layout pass
+- Async processing: layout analysis and VLM calls in parallel worker pool; estimated ingestion time per contract: 2–5 minutes
+
+**Chunking strategy:**
+- Legal prose: semantic chunking at clause boundaries (detect numbered clause patterns "1.1", "2.3.a") rather than token count — each clause is one chunk with its clause identifier as metadata
+- Tables (payment schedules, SLAs): header-inclusive row-range sub-chunks; metadata includes the table title, section reference, and all column headers
+- Figures (org charts, maps): VLM summary using territory/org-context prompt: "List all named entities, geographic regions, and relationships visible in this diagram"
+- Exhibits: sub-document pipeline, chunks tagged with `{exhibit_id, exhibit_title, parent_contract_id}` for filtering
+
+**Retrieval strategy:**
+- Hybrid: dense (clause semantic similarity) + BM25 (exact term matching for legal clause references like "Section 12.4(b)") + metadata filter (region_type=table for fee/SLA queries)
+- Query routing: detect query type (prose → dense only, numeric → metadata-filter to tables, geographic → figure chunks only)
+- Contextual retrieval: for each retrieved clause, also retrieve adjacent clauses (±1) to preserve surrounding legal context
+
+**Cost estimation (10,000 contracts/month):**
+- Layout analysis (Azure): ~$0.10/page × avg 100 pages/contract × 10,000 = $100,000/month → too expensive for Azure at scale; switch to self-hosted PP-StructureV2
+- VLM calls: avg 5 figures/contract × 10,000 contracts = 50,000 VLM calls × $0.02 = $1,000/month
+- Embedding: avg 500 chunks/contract × 10,000 = 5M chunks × $0.0001 = $500/month
+- Vector store: 5M vectors at 1536 dims → ~30GB; Pinecone p1 pod or Qdrant self-hosted
+- Total recurring: ~$2,000–3,000/month (self-hosted layout model), dominated by VLM and embedding costs
+
+---
+
+### 10. Production Reality Check
+
+**If this fails in production, what's the first thing we inspect?**
+
+**Check whether table chunks in the vector index contain their header rows by pulling 10 random table chunks and printing them verbatim.**
+
+The single most common silent failure in layout-aware RAG is tables indexed without headers. It produces a symptom (wrong column values in LLM answers) that looks like an LLM hallucination problem but is actually a chunking problem. Developers spend days tweaking prompts when the fix is a 5-line change to the table serializer.
+
+Pull 10 table chunks from the vector store by filtering `region_type=table`. Print the raw text. If any chunk starts with a data row (`| Revenue | $4,821M | ...`) rather than a header row (`| | FY 2023 | FY 2022 | ...`), the header re-injection is missing or broken for at least some tables.
+
+The second check: look at per-region-type retrieval precision separately. Compute: "for queries that should retrieve a table, what fraction of top-1 results are table-type chunks?" and "for queries about chart data, what fraction of top-1 results are figure-type chunks?" If figure-type queries consistently return text-type chunks at top-1, the VLM summaries are too generic — fix the VLM prompt first, then re-index only the figure chunks (no need to re-index all chunks).
+
+---
+
+### 11. Curiosity Bridge
+
+You now know how to parse, serialize, and retrieve structured visual elements — tables, charts, diagrams — in a way that preserves their 2D semantics and makes them queryable by natural language.
+
+The next subtopic zooms in to a different spatial granularity: **page-level vs block-level grounding** — when should your retrieval unit be an entire page (preserving all spatial relationships simultaneously) and when should it be a fine-grained block (precise, low-noise context)? This tradeoff has direct implications for which questions a system can answer correctly and which it will fail on.
+
+The tension you'll hit: ColPali-style page retrieval always "has the answer somewhere" but brings too much noise. Block-level retrieval is precise but severs cross-element relationships. The right answer depends on the document type and query type — and the production system must handle both.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit check — you are done when you can:**
+Explain why standard token-based chunking fails for financial tables, describe the header re-injection pattern and when it is needed, explain how a chart with no extractable text becomes retrievable using VLM summaries, identify the three critical failure modes in layout-aware RAG (header loss, generic VLM summary, broken figure-caption co-location), and design a per-region-type processing strategy for a new document type.
+
+---
+
+**Carry-Forward Review (interleaved from Subtopic 17.1.b):**
+
+> In 17.1.b you learned the hybrid OCR+VLM pipeline: run OCR first, then escalate to VLM when OCR confidence is low. How does this decision matrix apply to table cells in scanned documents? For a scanned insurance claim table cell showing "$1,250.00", when would you use OCR alone vs escalate to VLM?
+
+**Answer:** For a clearly printed numeric cell ("$1,250.00") with high OCR confidence (>0.95), OCR alone is faster, cheaper, and more accurate than VLM — it will extract the exact numeric string without the risk of VLM paraphrase ("approximately $1,250"). Escalate to VLM when: (a) OCR confidence on the cell is < 0.85 (common in scanned forms with ink bleed, folds, or stamps over cells), (b) the cell contains handwriting (OCR fails on handwritten numerals reliably), (c) the cell contains a mix of printed and handwritten content (partial fill-ins are common in insurance forms), or (d) the cell value is ambiguous due to OCR artifacts ("$1,250.00" vs "$1,2S0.00" — the S/5 ambiguity that OCR makes). In these cases, pass the cell's bounding box crop as an image to a VLM with the prompt: "Extract the exact value from this table cell. The cell is from an insurance claim form. Return only the extracted value, no explanation." The VLM's visual understanding handles ink artifacts and handwriting that OCR cannot resolve.
+
+---
+
+## Subtopic 17.3.b: Page-Level vs Block-Level Grounding
+
+### ✅ Add to Knowledge Base
+
+### Reading Path + Level Tags
+
+- **Beginner:** Read sections 1–2 and Active Recall.
+- **Intermediate:** Add sections 3–5 and the Hands-On Lab Build step.
+- **Pro:** Complete the full Hands-On Lab (Build → Break → Measure → Explain) plus the capstone practice question.
+
+---
+
+### 0. Pre-Question Hook [Beginner]
+
+**Pause:** You are building a RAG system over clinical intake forms. The form has a "Medications" section — a printed label followed by a handwritten list on the same page. There is also a "Allergies" section on the same page with the same structure. A block-level chunker correctly isolates the "Medications" text block — but the extracted text is: *"Metformin 500mg, Lisinopril 10mg"* with no surrounding label. The model retrieves this block for the query "what medications is the patient on?" but also for "what allergies does the patient have?" — because the block has no label context indicating it is a medications list, not an allergies list.
+
+Meanwhile, a page-level system sends the entire page as an image. The VLM sees the printed "MEDICATIONS:" label directly above the list, understands the spatial association, and answers correctly: "Medications: Metformin 500mg, Lisinopril 10mg. Allergies: none documented."
+
+The block was correct. The page-level system was more correct. Why? And when is the block-level system the right answer?
+
+---
+
+### 1. The Intuition (Plain English) [Beginner]
+
+**Block-level grounding** is the approach from 17.3.a: parse the document into semantic regions (table, paragraph, figure), extract each region into a text chunk, embed it, and retrieve the chunk. The retrieval unit is an individual element — a single table, a single paragraph, a single figure's VLM summary.
+
+**Page-level grounding** treats the entire rendered page as the retrieval unit. Instead of extracting text from elements, it embeds the page as a visual whole — either as an image (ColPali), or via a full-page VLM description, or by concatenating all block-level text on the page in reading order. Retrieval returns a page, not a block.
+
+**Why the distinction matters is not about size — it's about spatial relationships.**
+
+Documents communicate meaning in two ways:
+1. **Sequential meaning:** One element leads to the next — paragraph after paragraph, clause after clause. Standard text extraction handles this well.
+2. **Spatial meaning:** A label is *above* a value. A footnote is *below* the table it annotates. A section header applies to everything that follows until the next header. A form field value is *to the right of* its label. Spatial relationships are invisible to text extraction — they exist in 2D pixel space, not in the 1D token stream.
+
+Block-level grounding loses spatial meaning. Page-level grounding preserves it — because the page image is a 2D object, and a multimodal model can see spatial relationships directly.
+
+**The core tradeoff:**
+
+| | Block-level | Page-level |
+|---|---|---|
+| **Precision** | High — retrieves exactly the relevant element | Low — retrieves a whole page that may contain irrelevant content |
+| **Spatial context** | Lost — blocks are spatially decontextualized | Preserved — the full 2D layout is visible |
+| **Noise** | Low — only the matching element is in context | High — all elements on the page are in context |
+| **Cross-element relationships** | Lost — adjacent blocks don't know about each other | Preserved — a table and its adjacent paragraph are both visible |
+| **Scalability** | High — fine-grained index is efficient | Lower — page images are large; index is coarser |
+| **Citation granularity** | Element-level (table_id, bbox) | Page-level only |
+
+**The resolution** — and what most production systems use — is a **two-stage hybrid:** page-level retrieval first (find the right page), then block-level extraction within that page (find the right element on that page). The first stage provides spatial-context recall; the second stage provides element-level precision.
+
+**Real-world analogy:**
+Think of searching for a specific paragraph in a book. Page-level grounding is like scanning the table of contents and going to the right chapter — you land on the right page, and once there, your eyes immediately find the relevant paragraph because you can see all the section headers, context, and layout simultaneously. Block-level grounding is like having all paragraphs printed on individual index cards — you find the exact card, but when you read it, there is no surrounding context visible, and the card has no label saying which chapter it came from.
+
+**Where the analogy breaks down:** With a book, a human reader can easily re-derive context from memory. An LLM has no memory of other retrieved chunks — each retrieved block is the only context it has. A block stripped of spatial context is permanently decontextualized for that query.
+
+**Key terms:**
+- **Page-level grounding:** A retrieval paradigm where the unit of retrieval is an entire rendered document page, preserving all spatial and visual relationships between elements on that page.
+- **Block-level grounding:** A retrieval paradigm where the unit of retrieval is a fine-grained parsed element (a single table, paragraph, or figure), providing high precision but losing cross-element spatial context.
+- **Two-stage hybrid retrieval:** A pipeline that first retrieves the most relevant page(s) (stage 1: coarse, high recall), then extracts or re-ranks individual blocks from those pages (stage 2: fine-grained, high precision).
+- **Spatial decontextualization:** The loss of spatial relationship information when a document element is extracted from its 2D page context and represented as a 1D text string.
+- **Reading-order ambiguity:** The problem of determining the correct sequential reading order of text blocks on a page with complex layout (multi-column, sidebars, mixed reading direction) — a problem that spatial/page-level representations handle better than text extraction.
+- **Defined-term expansion:** A retrieval augmentation step that detects cross-document references to defined terms (e.g., "as defined in Section 1.2") and fetches the referenced definition block, appending it to the retrieved context.
+- **Grounding citation granularity:** How precisely a system can cite the source of an answer — page-level (page 47), element-level (table 3 on page 47), or bounding-box-level (pixels (x0,y0)–(x1,y1) on page 47).
+- **Visual context window:** The portion of a page image that a multimodal LLM processes — full-page grounding maximizes this; block-level crops minimize it.
+- **Page image embedding:** A vector representation of a full rendered page image, typically produced by a vision encoder (CLIP, SigLIP, ColPali's PaliGemma) operating on the rasterized page.
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+```mermaid
+flowchart TD
+    subgraph DOC["Document"]
+        direction TB
+        P1["Page 1\n(Title + intro paragraphs)"]
+        P2["Page 2\n(Table + adjacent paragraph\n+ figure)"]
+        P3["Page 3\n(Legal clause referencing\ndefinition from Page 1)"]
+    end
+
+    subgraph BLOCK["Block-Level Pipeline"]
+        direction TB
+        B1["Extract blocks per page:\nTable block, Para block, Fig block"]
+        B2["Embed each block independently\n(no page context)"]
+        B3["Block index\n{block_id, page, region_type, text}"]
+        B4["Query → Top-K blocks\n(high precision, no spatial context)"]
+        B1 --> B2 --> B3 --> B4
+    end
+
+    subgraph PAGE["Page-Level Pipeline"]
+        direction TB
+        PL1["Rasterize each page → image\nor concatenate all blocks in\nreading order"]
+        PL2["Embed full page\n(ColPali / CLIP / full-page VLM)"]
+        PL3["Page index\n{page_id, page_image, page_embedding}"]
+        PL4["Query → Top-K pages\n(high recall, spatial context preserved)"]
+        PL1 --> PL2 --> PL3 --> PL4
+    end
+
+    subgraph HYBRID["Two-Stage Hybrid"]
+        direction TB
+        H1["Stage 1: Page retrieval\n→ find top-2 pages"]
+        H2["Stage 2: Block re-rank\non candidate pages only\n→ find top-3 blocks"]
+        H3["LLM context:\nblocks + optional page image\n→ grounded answer + element citation"]
+        H1 --> H2 --> H3
+    end
+
+    subgraph FAILURES["Failure Modes"]
+        direction LR
+        F1["Block-level:\nreturns table row\nbut no column header context\n(spatial split)"]
+        F2["Page-level:\nreturns full page with 3 tables\nLLM reads the wrong one\n(noise)"]
+        F3["Hybrid:\nstage-1 misses the page\nstage-2 never sees the block\n(recall failure)"]
+    end
+
+    DOC --> BLOCK
+    DOC --> PAGE
+    PAGE --> HYBRID
+    BLOCK --> HYBRID
+    BLOCK --> F1
+    PAGE --> F2
+    HYBRID --> F3
+```
+
+**What this diagram shows:**
+- Block and page pipelines are independent index strategies. The hybrid uses both.
+- The critical failure mode of hybrid is stage-1 miss: if the right page is not in the top-K pages returned by stage 1, no amount of stage-2 precision can recover the answer.
+- Block-level's failure is spatial decontextualization. Page-level's failure is noise and imprecision. Hybrid mitigates both but introduces a new failure at the stage boundary.
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+---
+
+#### Scenario A: Medical Intake Form — Page-Level Wins
+
+**Product/use case context:**
+A hospital processes scanned paper intake forms at scale. Each form is a single page: patient name, date of birth, chief complaint, current medications (handwritten), allergies (handwritten), and an emergency contact block. A clinical AI needs to extract structured data: all medications and all allergies.
+
+**Why block-level fails here:**
+
+Block-level parsing of a scanned handwritten form is unreliable for two reasons: (1) OCR on handwriting produces error-prone text blocks where label and value are spatially separated but logically coupled; (2) layout analysis on scanned forms is noisier than on digital-native PDFs — labels and values may be detected as separate regions with ambiguous type classifications.
+
+When the layout model separates "MEDICATIONS:" (a label detected as a paragraph region) from the handwritten list below it (another paragraph region), the medication block chunk is `"Metformin 500mg, Lisinopril 10mg"` — unlabeled. Retrieval for "patient medications" may also match the "allergies" block because both are short handwritten lists with similar embedding signatures.
+
+**Page-level approach:**
+Send the entire page image to a multimodal LLM with a structured extraction prompt:
+
+```
+This is a patient intake form. Extract all information from it and return a JSON object with these fields:
+{
+  "patient_name": "...",
+  "date_of_birth": "...",
+  "chief_complaint": "...",
+  "medications": [...],
+  "allergies": [...],
+  "emergency_contact": {...}
+}
+Handwriting may be present. Extract all readable values.
+```
+
+The LLM sees the spatial layout: it knows "MEDICATIONS:" printed in bold is the label for the handwritten list below it, and "ALLERGIES:" is the label for the list below that. It extracts them correctly without needing layout analysis, OCR, or block separation.
+
+**Constraints and how they affect design:**
+
+- **PHI:** The intake form is entirely PHI. The VLM processing must run on a HIPAA-compliant endpoint (same constraint as 17.2.d). No form images sent to uncovered third parties.
+- **Throughput:** Hospitals process thousands of forms per day. Page-level VLM extraction (1 API call per form) is actually *cheaper* than block-level for single-page forms — one VLM call replaces layout analysis + OCR + multiple block embeddings.
+- **Confidence:** Page-level extraction has no per-field confidence score. If the VLM misreads a handwritten medication name, there is no signal of the error. Block-level + OCR would have produced a confidence score per character. Mitigation: post-extraction validation against a known medication list; flag low-confidence extractions for human review.
+
+**What good looks like:**
+- Extraction accuracy on printed fields: ≥ 99%
+- Extraction accuracy on handwritten fields: ≥ 85% (limited by handwriting variability)
+- Human review flagging rate: < 15% (flag when extracted field doesn't match any known medication/allergen in reference database)
+
+---
+
+#### Scenario B: Legal Contract — Two-Stage Hybrid
+
+**Product/use case context:**
+A legal tech platform answers questions over enterprise contracts (50–300 pages). Questions span all granularities: "What is the termination notice period?" (block-level: find the clause), "Are there any indemnification carve-outs mentioned near the liability cap section?" (page-level: these elements may be on the same page, spatially related, and a block retrieval for "indemnification" might not co-retrieve the liability cap clause).
+
+**The cross-element relationship problem:**
+
+A contract's liability cap clause reads: *"In no event shall either party's aggregate liability exceed $5,000,000, subject to the indemnification obligations in Section 14."* Section 14 (indemnification) starts on the same page, three paragraphs below. A block-level retrieval for "indemnification carve-outs" returns Section 14. A block-level retrieval for "liability cap" returns the liability cap clause. But neither retrieval brings both blocks simultaneously — the model cannot reason about their interaction.
+
+A page-level retrieval: the page containing both the liability cap and the Section 14 opening is retrieved as a single unit. The LLM sees both elements on the same page and reasons about their relationship: "The liability cap is $5M, but Section 14's indemnification obligations are carved out — meaning indemnification claims can exceed $5M."
+
+**Two-stage implementation:**
+
+```
+Stage 1 (Page retrieval):
+  Query: "indemnification carve-outs near liability cap"
+  Method: dense page-level embedding (full page text concatenated in reading order)
+  Returns: Top-3 pages by semantic similarity
+  Result: Page 47 (contains both liability cap clause and Section 14 header)
+
+Stage 2 (Block re-rank on Page 47):
+  Candidate blocks: [liability cap clause, Section 14 para 1, Section 14 para 2,
+                     Section 14 para 3, page header]
+  Method: cross-encoder re-rank against query
+  Returns: Top-2 blocks
+  Result: [liability cap clause, Section 14 para 1]
+
+LLM context:
+  - Block 1: "aggregate liability shall not exceed $5M, subject to Section 14"
+  - Block 2: "Section 14. Indemnification. Each party shall indemnify..."
+  - Optional: Page 47 image (for spatial verification)
+  → Correct answer: "The $5M cap does not apply to indemnification obligations."
+```
+
+**Defined-term expansion:**
+
+For a query about a defined term used throughout the contract, block-level retrieval returns the usage site but not the definition. The two-stage pipeline adds a **defined-term expansion** step:
+
+1. After stage 2 returns blocks, scan them for capitalized defined terms in quotation marks that appear defined elsewhere ("\"Confidential Information\" means...")
+2. For each detected defined term that is *not* defined in the retrieved blocks, look up its definition in the contract's definitions section (usually page 1–3)
+3. Append the definition as an additional context block
+
+This prevents: "What constitutes a material breach?" → answer cites the "Material Breach" term but doesn't define it → LLM uses its generic understanding of "material breach" rather than the contract's specific definition.
+
+---
+
+#### Scenario C: Financial Report — Block-Level Wins for Precision
+
+**Product/use case context:**
+A financial analyst asks: "What was the exact operating margin for Q3 in all business segments?" This is a highly precise quantitative query where the answer is in one specific table cell at the intersection of "Operating Margin," "Q3," and the segment column.
+
+**Why page-level is wrong here:**
+
+The relevant table may be on page 48. Page 48 also contains three other financial tables (Gross Margin by Segment, Revenue by Geography, Capital Expenditures) and two paragraphs of management commentary. A page-level retrieval returns all of this. The LLM's context is 400+ tokens of financial data. Under these conditions, LLMs make two specific errors: (1) they read from the wrong table (the tables look structurally similar), (2) they compute a number from multiple rows rather than reading the specific cell — an approximation error that produces a confident but wrong number.
+
+**Block-level wins here:** The layout-aware pipeline has already serialized the "Operating Margin by Segment" table as a single chunk with all column and row headers intact. Retrieval returns exactly this chunk, plus the management commentary paragraph (which may contain the segment-specific context). The LLM sees only the relevant table and answers correctly.
+
+**Guidance:**
+- Use page-level when: the query is about relationships *between* elements on the same page, the document is a form with label-value spatial coupling, or the document has complex non-standard layout.
+- Use block-level when: the query is about a specific value in a specific element, citations must be element-level, or the document has long pages with multiple tables/sections that would pollute the context if retrieved together.
+- Use two-stage hybrid when: you don't know in advance which applies — the hybrid gives you page-level recall and block-level precision.
+
+---
+
+### 4. System View [Intermediate]
+
+```
+Two-stage hybrid pipeline:
+
+Stage 1 (Page-level index):
+  Inputs: Rasterized page images OR concatenated page text in reading order
+  Embedding options:
+    A) Visual: page image → ColPali/CLIP vision encoder → multi-vector page embedding
+    B) Text: all blocks on page concatenated in reading order → dense text embedding
+    C) Hybrid: both A and B, late fusion at retrieval time
+  Index: {page_id, doc_id, page_number, page_embedding, page_image_path}
+  Retrieval: ANN search → top-K pages (K=3–5)
+
+Stage 2 (Block-level re-rank on candidate pages):
+  Inputs: Top-K pages from stage 1 + user query
+  Candidate blocks: all blocks extracted from those K pages
+  Re-ranking: cross-encoder (query × block_text) → scored block list
+  Returns: top-3 blocks by cross-encoder score
+  Optional: defined-term expansion (detect + fetch definitions for undefined terms)
+
+LLM context assembly:
+  - All returned blocks (text)
+  - For figure blocks: include page image crop at block bounding box (or full page)
+  - Metadata: doc_id, page_number, region_type, block_id, bbox
+
+Grounded response with citation:
+  - Page-level citation: "Source: Annual Report 2023, page 47"
+  - Block-level citation: "Source: Annual Report 2023, page 47, table 'Operating Margin by Segment'"
+  - Bbox-level citation: enables UI to draw a highlight box on the source document
+```
+
+**Observability:**
+
+| Signal | Why it matters |
+|---|---|
+| Stage-1 recall@K | % of correct pages in top-K — the most important metric; if this fails, nothing downstream can recover |
+| Stage-2 precision@3 | Of the blocks retrieved from candidate pages, how many are actually relevant |
+| Stage-1 to stage-2 answer match rate | % of queries where stage-2's top block is on stage-1's top page — cross-stage consistency |
+| Defined-term expansion hit rate | % of queries where a defined term was detected and expanded — measures coverage |
+| Full-page context overflow rate | % of queries where page-level context exceeds LLM context limit — triggers page crop or block fallback |
+| Answer attribution accuracy | % of answers where the cited block/page actually contains the stated information |
+| Stage-1 latency vs stage-2 latency | Latency split — helps identify which stage is the bottleneck |
+
+**Failure points:**
+
+| Failure | Symptom | Root cause |
+|---|---|---|
+| Stage-1 misses the right page | Answer is "I don't have information about this" even though the answer exists | Page-level embeddings don't capture the query's semantic intent; or K is too small |
+| Stage-2 wrong block from noisy page | LLM reads from the wrong table on the page | Page has multiple structurally similar tables; cross-encoder doesn't differentiate them |
+| Defined term used without definition | Answer uses contractual term with generic meaning instead of contractual definition | Defined-term expansion missing or the definition section not indexed |
+| Page image exceeds context limit | Multimodal LLM truncates the image or refuses it | Page rasterized at too high DPI; image token count (e.g., 1,600 tokens for a 1024×1024 image) exceeds budget |
+| Reading-order ambiguity in two-column layout | Blocks extracted in wrong order; table footnote appears before table body | Text extraction reads bounding boxes in y-coordinate order, not reading order |
+| Block from page N retrieves without page N context | LLM gets a block that says "as described in the table above" but no table | Cross-element dependency not resolved; adjacent-block expansion missing |
+
+---
+
+### 5. System Design Flavor [Intermediate]
+
+**Two-stage implementation blueprint:**
+
+```
+Page Index (stage 1):
+  - Build once at ingestion time alongside the block index
+  - Page text = concatenation of all block texts in reading order (layout model provides order)
+  - Page embedding = dense embed(page_text) OR ColPali visual embed(page_image)
+  - Store: vector DB with metadata {doc_id, page, page_image_path, reading_order_text}
+
+Block Index (stage 2):
+  - Standard layout-aware block index from 17.3.a
+  - Add foreign key: {page_id} → enables filtering stage-2 candidates to stage-1 top pages
+
+Query routing:
+  - Detect query type: form/spatial → page-level only; precise quantitative → block-level only;
+    relational/compound → two-stage hybrid
+  - Simple classifier or keyword heuristic: "which page" / "show me the form" → page; 
+    "what is the exact value of X" → block; default → hybrid
+
+Adjacent-block expansion (optional):
+  - After stage 2 returns top blocks, add ±1 adjacent blocks (same page, immediately preceding
+    and following the top block) to context
+  - Prevents "as shown in the table above" problems
+  - Cap at 2× extra tokens to avoid context bloat
+```
+
+**Key tradeoffs:**
+
+| Decision | Option A | Option B | Guidance |
+|---|---|---|---|
+| Page embedding method | ColPali visual embedding (page image) | Dense text embedding (reading-order concatenation) | ColPali is better for visually complex pages (forms, charts, mixed layout); text concatenation is better for text-dense pages (legal prose, reports) and is cheaper to compute |
+| Stage-1 K (pages retrieved) | K=2 (tight) | K=5 (broad) | K=2 is faster and less noisy at stage 2; K=5 improves stage-1 recall for ambiguous queries; use K=3 as default, increase to 5 for known-low-recall document types |
+| Two-stage vs single-stage | Two-stage (page → block) | Single-stage block only with larger K | Two-stage always wins for spatial/relational queries; single-stage is cheaper and sufficient for precise lookup queries; deploy two-stage as the default, optimize to single-stage for high-volume known-lookup use cases |
+| Adjacent-block expansion | Always expand ±1 blocks | Only expand when block references adjacent elements | Always-expand adds ~20% to context size; worth it for contract/legal documents; skip for short form documents where adjacent blocks are usually unrelated sections |
+| Citation granularity | Page + block + bbox | Page only | Page-only is simpler to implement; bbox-level enables highlight overlays in UI (high user value); implement page+block first, add bbox-level in v2 |
+
+**Scaling consideration:**
+At 10× query volume, stage-1 latency becomes the bottleneck when using ColPali visual embeddings (vision encoder inference is expensive). Optimization: pre-compute all page embeddings at ingestion and cache in a vector store. Query time is then only ANN search — O(log N) — with no re-encoding. The expensive part is ingestion-time only. For stage-2 cross-encoder re-ranking, the candidate set is bounded by K×avg_blocks_per_page (typically 3×10=30 candidates) — at 30 candidates, cross-encoder latency is < 50ms, not a bottleneck.
+
+---
+
+### 6. Common Mistakes + Debugging [Intermediate]
+
+---
+
+#### Mistake 1: Stage-1 K too small, causing systematic recall failures
+
+**Symptom:** A significant fraction of queries return "I don't have this information" even though the document clearly contains the answer. When you manually locate the answer and check which page it's on, you find it was always on page ranked 4th or 5th in stage-1 results — just outside the K=2 cutoff.
+
+**Likely cause:** Stage-1 is set to K=2 (return only the top-2 pages). The embedding model ranks the correct page 3rd–5th because its relevance to the query is indirect (the query uses terminology that doesn't match the page text exactly, but a semantic match exists). Cutting at K=2 drops the correct page.
+
+**First debugging step:** Run a set of 20 known-answer queries over a representative document. For each query, record the rank of the correct page in stage-1 results. If the correct page appears in positions 3–5 for > 20% of queries, K=2 is too tight for this document type. Increase K to 5 and re-evaluate. Also investigate the embedding model: if stage-1 uses dense text embeddings on page text, the page may have terminology mismatch (e.g., a legal contract says "earlier termination" but the query says "early exit clause"). Add query expansion (LLM rewrites the query into multiple phrasings) to improve stage-1 recall before increasing K.
+
+---
+
+#### Mistake 2: Two-column layout produces wrong reading order, breaking block adjacency logic
+
+**Symptom:** Adjacent-block expansion produces incoherent context. A block from column 1 on a two-column page is "expanded" with the block immediately below it in the bounding-box y-coordinate order — which is actually the start of column 2, not the continuation of column 1.
+
+**Likely cause:** Reading-order determination was implemented as "sort blocks by y-coordinate (top to bottom) then x-coordinate (left to right)." For a single-column page, this is correct. For a two-column page, this interleaves column 1 and column 2 blocks, because their y-coordinates overlap. A block at (col1, y=300) and a block at (col2, y=320) are adjacent by y-coordinate but belong to entirely different reading streams.
+
+**First debugging step:** Implement a proper reading-order algorithm that detects column structure. Simple heuristic: cluster blocks by x-coordinate; if there are two distinct x-clusters (e.g., blocks with x0 < page_width/2 and blocks with x0 > page_width/2), treat them as two columns. Within each column, sort by y-coordinate. Reading order: all of column 1 from top to bottom, then all of column 2 from top to bottom. Many layout analysis tools (PP-StructureV2, LayoutLM) provide a reading order prediction directly — use it rather than reimplementing. If using a tool that doesn't, the heuristic above handles the most common case.
+
+---
+
+#### Mistake 3: Page context overflows LLM context limit when used in stage-2 context
+
+**Symptom:** Queries over visually dense pages (full-page financial tables, dense regulatory documents) return truncated or incorrect answers. The LLM silently truncates the input, losing the second half of the page — which may be where the answer lives.
+
+**Likely cause:** Stage-2 includes the full page image in the multimodal LLM context alongside the extracted block text. A 1024×1024 page image consumes ~1,600 vision tokens in GPT-4o. Combined with 3 extracted blocks (~800 tokens) and a system prompt (~300 tokens), the total may exceed a 2,048-token context budget for small/fast models — or a significant fraction of a 128K budget for large models, affecting cost.
+
+**First debugging step:** Log `input_token_count` for every LLM call. Set an alert if it exceeds 80% of the model's context limit. For the page image specifically: reduce page rasterization DPI from 300 to 150 (halves image resolution, reduces vision tokens by ~75%). For very dense pages, use a **bbox crop** instead of the full page: crop the page image to a bounding box that covers only the top-K retrieved blocks plus a 50px margin on each side. This preserves spatial context for the relevant area while dramatically reducing image token count. If the query is purely about text blocks (no visual elements), skip the page image entirely and use text-only context — saving all vision token cost.
+
+---
+
+### 7. Hands-On Lab [Pro]
+
+**Topic:** Two-Stage Retrieval — Build → Break → Measure → Explain
+
+**Goal:** Implement the two-stage page→block retrieval pipeline on a simulated document. Compare: (a) block-only retrieval, (b) page-only retrieval, (c) two-stage hybrid. Measure answer correctness and retrieval precision for spatial vs quantitative queries.
+
+---
+
+#### Build: Two-Stage Retrieval Pipeline
+
+```python
+import re
+import json
+from dataclasses import dataclass, field
+from typing import Optional
+
+# ── Simulated document: 3 pages ──────────────────────────────────────────
+# Page 1: contract definitions (page-level needed for defined terms)
+# Page 2: financial table + adjacent commentary (block-level for precision)
+# Page 3: mixed form with label-value spatial coupling (page-level needed)
+
+@dataclass
+class Block:
+    block_id: str
+    doc_id: str
+    page: int
+    region_type: str       # table | paragraph | title | form_field
+    text: str
+    label: Optional[str] = None   # for form fields: the printed label
+    bbox: tuple = (0, 0, 0, 0)
+
+@dataclass
+class Page:
+    page_id: str
+    doc_id: str
+    page_number: int
+    blocks: list[Block]
+
+    @property
+    def reading_order_text(self) -> str:
+        """Concatenate all blocks in order — simulates page-level embedding input."""
+        return " | ".join(b.text for b in self.blocks)
+
+    @property
+    def page_text_tokens(self) -> set[str]:
+        return set(re.findall(r'\w+', self.reading_order_text.lower()))
+
+
+def build_test_document() -> list[Page]:
+    """Create a 3-page test document with known answers."""
+    p1 = Page("p1", "contract_001", 1, [
+        Block("b1_1", "contract_001", 1, "title",
+              "Master Service Agreement — Definitions"),
+        Block("b1_2", "contract_001", 1, "paragraph",
+              '"Material Breach" means any breach that causes damages exceeding $50,000 '
+              'or that fundamentally undermines the purpose of this Agreement.'),
+        Block("b1_3", "contract_001", 1, "paragraph",
+              '"Confidential Information" means any non-public technical or business '
+              'information disclosed by either party under this Agreement.'),
+        Block("b1_4", "contract_001", 1, "paragraph",
+              'Termination Notice Period: either party may terminate this Agreement '
+              'upon 30 days written notice following a Material Breach.'),
+    ])
+
+    p2 = Page("p2", "contract_001", 2, [
+        Block("b2_1", "contract_001", 2, "title",
+              "Section 8: Financial Terms and Quarterly Performance"),
+        Block("b2_2", "contract_001", 2, "table",
+              "| Segment | Q1 Margin | Q2 Margin | Q3 Margin | Q4 Margin |\n"
+              "|---|---|---|---|---|\n"
+              "| Enterprise | 18.2% | 19.1% | 21.3% | 22.8% |\n"
+              "| SMB | 12.4% | 13.0% | 14.1% | 15.2% |\n"
+              "| Consumer | 9.8% | 10.2% | 11.5% | 12.1% |"),
+        Block("b2_3", "contract_001", 2, "paragraph",
+              "Q3 showed strong margin expansion across all segments. Enterprise "
+              "segment led with a 21.3% operating margin, driven by increased "
+              "attach rates on multi-year contracts. The SMB and Consumer segments "
+              "benefited from reduced customer acquisition costs."),
+    ])
+
+    p3 = Page("p3", "contract_001", 3, [
+        Block("b3_1", "contract_001", 3, "title",
+              "Client Intake Form — Section 3: Contact Information"),
+        Block("b3_2", "contract_001", 3, "form_field",
+              "John Doe", label="PRIMARY CONTACT NAME:"),
+        Block("b3_3", "contract_001", 3, "form_field",
+              "john.doe@acme.com", label="EMAIL ADDRESS:"),
+        Block("b3_4", "contract_001", 3, "form_field",
+              "Acme Corporation, 123 Main St, San Francisco, CA 94105",
+              label="COMPANY ADDRESS:"),
+        Block("b3_5", "contract_001", 3, "paragraph",
+              "This form must be completed in full. Incomplete forms will be "
+              "returned to the sender within 5 business days."),
+    ])
+
+    return [p1, p2, p3]
+
+# ── Keyword-based retrieval (simulates embedding similarity) ──────────────
+def token_overlap(query: str, text: str) -> int:
+    q_tokens = set(re.findall(r'\w+', query.lower()))
+    t_tokens = set(re.findall(r'\w+', text.lower()))
+    return len(q_tokens & t_tokens)
+
+def retrieve_blocks_only(pages: list[Page], query: str, top_k: int = 3) -> list[Block]:
+    """Stage: block-only retrieval (17.3.a style)."""
+    all_blocks = [b for p in pages for b in p.blocks]
+    scored = sorted(all_blocks,
+                    key=lambda b: token_overlap(query, b.text), reverse=True)
+    return scored[:top_k]
+
+def retrieve_pages_only(pages: list[Page], query: str, top_k: int = 2) -> list[Page]:
+    """Stage 1: page-level retrieval."""
+    scored = sorted(pages,
+                    key=lambda p: token_overlap(query, p.reading_order_text), reverse=True)
+    return scored[:top_k]
+
+def two_stage_retrieve(
+    pages: list[Page],
+    query: str,
+    stage1_k: int = 2,
+    stage2_k: int = 3,
+    adjacent_expansion: bool = True
+) -> list[Block]:
+    """Two-stage hybrid: page retrieval → block re-rank on candidate pages."""
+    # Stage 1: find top pages
+    top_pages = retrieve_pages_only(pages, query, top_k=stage1_k)
+    candidate_blocks = [b for p in top_pages for b in p.blocks]
+
+    # Stage 2: re-rank blocks within candidate pages
+    scored = sorted(candidate_blocks,
+                    key=lambda b: token_overlap(query, b.text), reverse=True)
+    result_blocks = scored[:stage2_k]
+
+    # Adjacent-block expansion: add ±1 blocks from the same page
+    if adjacent_expansion:
+        expanded = list(result_blocks)
+        for block in result_blocks:
+            page = next(p for p in top_pages if p.page_number == block.page)
+            idx = page.blocks.index(block)
+            # Add preceding block
+            if idx > 0 and page.blocks[idx - 1] not in expanded:
+                expanded.append(page.blocks[idx - 1])
+            # Add following block
+            if idx < len(page.blocks) - 1 and page.blocks[idx + 1] not in expanded:
+                expanded.append(page.blocks[idx + 1])
+        result_blocks = expanded
+
+    return result_blocks
+
+# ── Simulated LLM answer checker (grader) ────────────────────────────────
+def check_answer_grounding(query: str, blocks: list[Block], expected_keywords: list[str]) -> dict:
+    """
+    Checks whether the retrieved blocks contain enough information to answer.
+    In production: pass blocks to LLM and evaluate answer quality.
+    Here: check for presence of expected keywords in block text.
+    """
+    all_text = " ".join(b.text for b in blocks).lower()
+    found = [kw for kw in expected_keywords if kw.lower() in all_text]
+    return {
+        "blocks_retrieved": len(blocks),
+        "block_types": [b.region_type for b in blocks],
+        "pages_covered": list({b.page for b in blocks}),
+        "expected_keywords": expected_keywords,
+        "keywords_found": found,
+        "grounding_score": len(found) / len(expected_keywords) if expected_keywords else 0.0,
+    }
+
+# ── Test cases ────────────────────────────────────────────────────────────
+TEST_CASES = [
+    {
+        "query": "What is the exact Q3 operating margin for the Enterprise segment?",
+        "expected_keywords": ["21.3%", "Enterprise", "Q3"],
+        "query_type": "precise_quantitative",
+        "best_strategy": "block_only",
+    },
+    {
+        "query": "What happens after a material breach in terms of termination notice?",
+        "expected_keywords": ["30 days", "Material Breach", "terminate"],
+        "query_type": "cross_element_relational",  # needs Definitions + Termination blocks
+        "best_strategy": "two_stage",
+    },
+    {
+        "query": "What is the primary contact email address on the intake form?",
+        "expected_keywords": ["john.doe@acme.com", "EMAIL"],
+        "query_type": "spatial_form",
+        "best_strategy": "page_only",
+    },
+    {
+        "query": "How did Q3 Enterprise margins compare to Q2, and what drove the improvement?",
+        "expected_keywords": ["21.3%", "19.1%", "Enterprise", "multi-year", "attach rates"],
+        "query_type": "cross_element_relational",  # needs table + adjacent commentary
+        "best_strategy": "two_stage",
+    },
+]
+
+if __name__ == "__main__":
+    pages = build_test_document()
+
+    print("=" * 65)
+    print(f"{'QUERY':40} | {'STRATEGY':12} | {'SCORE':6}")
+    print("=" * 65)
+
+    for tc in TEST_CASES:
+        q = tc["query"]
+        expected = tc["expected_keywords"]
+
+        results = {
+            "block_only":  check_answer_grounding(q, retrieve_blocks_only(pages, q), expected),
+            "page_only":   check_answer_grounding(q, [b for p in retrieve_pages_only(pages, q)
+                                                      for b in p.blocks], expected),
+            "two_stage":   check_answer_grounding(q, two_stage_retrieve(pages, q), expected),
+        }
+
+        print(f"\nQuery: {q[:60]}")
+        print(f"  Expected best strategy: {tc['best_strategy']}")
+        for strategy, result in results.items():
+            print(f"  {strategy:12}: score={result['grounding_score']:.2f} "
+                  f"pages={result['pages_covered']} "
+                  f"blocks={result['blocks_retrieved']} "
+                  f"found={result['keywords_found']}")
+```
+
+---
+
+#### Break: Force the stage-1 miss
+
+```python
+# Break Experiment: Set stage1_k=1 (retrieve only the single top page)
+# For the cross-element query (Material Breach + Termination Notice), both
+# relevant blocks are on Page 1. With k=1, stage 1 should return Page 1 —
+# but for some queries, Page 2 may score higher.
+# Test: does a quantitative query retrieve both Page 1 and Page 2?
+
+print("\n--- BREAK: Stage-1 k=1 ---")
+critical_query = "What happens after a material breach in terms of termination notice?"
+tight_results = two_stage_retrieve(pages, critical_query, stage1_k=1, stage2_k=3)
+check = check_answer_grounding(critical_query, tight_results,
+                               ["30 days", "Material Breach", "terminate"])
+print(f"Pages covered with k=1: {check['pages_covered']}")
+print(f"Grounding score: {check['grounding_score']:.2f}")
+print(f"Keywords found: {check['keywords_found']}")
+# Expected: with k=1, if the wrong page is retrieved, score drops to 0
+# → demonstrates the stage-1 recall cliff
+
+# Break Experiment 2: No adjacent expansion
+print("\n--- BREAK: No adjacent expansion ---")
+no_expand = two_stage_retrieve(pages,
+    "How did Q3 Enterprise margins compare to Q2 and what drove the improvement?",
+    adjacent_expansion=False)
+check2 = check_answer_grounding(
+    "Q3 Q2 Enterprise margins improvement",
+    no_expand,
+    ["21.3%", "19.1%", "multi-year", "attach rates"])
+print(f"Without expansion — score: {check2['grounding_score']:.2f}, "
+      f"found: {check2['keywords_found']}")
+# Expected: without adjacent expansion, the commentary paragraph (which explains
+# the driver) may not be retrieved alongside the table → lower score
+```
+
+---
+
+#### Measure: Record signals
+
+| Query | Block-only score | Page-only score | Two-stage score | Best strategy correct? |
+|---|---|---|---|---|
+| Precise Q3 margin | ___ | ___ | ___ | ___ |
+| Material breach + termination | ___ | ___ | ___ | ___ |
+| Email on intake form | ___ | ___ | ___ | ___ |
+| Q3 vs Q2 + driver | ___ | ___ | ___ | ___ |
+
+Also record: stage-1 miss rate (grounding score drops to 0) when k=1 vs k=2.
+
+---
+
+#### Explain: What each design decision prevents
+
+**Two-stage page→block:** Prevents the "block retrieved without context" failure for spatial and relational queries. A block that says "see table above" or "as defined in Section 1.2" is unintelligible on its own. By first landing on the right page, stage 2 can retrieve neighboring blocks that supply the missing context — without bringing in noise from other pages.
+
+**Adjacent-block expansion:** Prevents the "table without commentary" failure. A table block tells you numbers; the adjacent paragraph tells you why the numbers changed. For analytical questions ("how did margins improve?"), the table alone is insufficient. Expanding ±1 blocks adds the narrative context that makes quantitative answers interpretable.
+
+**Stage-1 K tuning:** Prevents the "correct page just outside the cutoff" failure. Setting K too small (K=1 or K=2) introduces a hard recall cliff — if the correct page is ranked 3rd, it is never seen. Setting K too large (K=10) floods stage 2 with irrelevant candidates, degrading cross-encoder precision and increasing latency. K=3–5 is the practical sweet spot for most document types.
+
+**Reading-order concatenation for page text:** Enables page-level embeddings to capture inter-element relationships even without visual encoding. When a table and its explanatory paragraph appear on the same page, their relationship is captured in the reading-order-concatenated page text — the embedding captures "this page is about Q3 Enterprise margins AND the multi-year contract driver." Block embeddings don't capture this compound meaning.
+
+---
+
+### 8. Active Recall [All Levels]
+
+**Q1 [Beginner]:** What does "spatial decontextualization" mean in the context of block-level retrieval, and give one example of a query where it causes a wrong answer?
+**Q2 [Beginner]:** In a two-stage hybrid pipeline, what does stage 1 optimize for and what does stage 2 optimize for?
+**Q3 [Intermediate]:** A contract on page 83 says "the indemnification obligations described in Section 4." Section 4 is on page 7. A block-level retrieval for "indemnification" returns the page 83 clause. What design pattern prevents the LLM from answering without the Section 4 definition?
+**Q4 [Intermediate]:** When should you prefer page-level grounding over block-level for a financial report RAG system? Be specific about the query type.
+**Q5 [Pro]:** Your stage-1 page retrieval uses dense text embeddings on reading-order-concatenated page text. For a form with label-value spatial coupling ("MEDICATIONS: Metformin"), the label and value are in separate blocks. The page embedding captures both. But the block embedding captures them separately — and retrieval for "patient medications" returns the value block without its label. Describe two structural fixes that could address this without switching to page-level retrieval entirely.
+
+---
+
+**Answer Key:**
+
+**A1:** Spatial decontextualization is the loss of positional and visual relationship information when a 2D document element is extracted into a 1D text string. A block labeled only by its content — no surrounding labels, no positional metadata — loses information about what it is and where it sits. Example: a form has two fields: "MEDICATIONS: Metformin 500mg" and "ALLERGIES: Penicillin." Block extraction produces two unlabeled strings: "Metformin 500mg" and "Penicillin." A query for "patient allergies" retrieves "Metformin 500mg" because it has similar semantic signals (medical substance, short list format) — the label that distinguishes medication from allergy was stripped during extraction.
+
+**A2:** Stage 1 optimizes for **recall** — ensuring the correct page(s) are among the retrieved candidates. It is allowed to be imprecise (it may return 3–5 pages, most of which are not directly relevant) as long as the correct page is included. Stage 2 optimizes for **precision** — given only the small candidate set from stage 1, it finds the exact block(s) that answer the query. Stage 2 benefits from the reduced noise (it only looks at 15–30 candidate blocks from 3–5 pages, not the entire document) and can use a slower, more accurate cross-encoder re-ranker.
+
+**A3:** The **defined-term expansion** pattern. After stage 2 returns the page 83 clause, the pipeline scans the retrieved text for capitalized defined terms that follow the contract's definitional pattern ("Section 4" reference). It detects that "Section 4" is referenced and the current context does not contain it. It then fetches the blocks from page 7 that constitute Section 4's definition and appends them to the LLM context. The LLM now has both the reference site and the definition simultaneously, enabling it to answer with the contract's specific meaning of "indemnification obligations" rather than a generic interpretation.
+
+**A4:** Prefer page-level for financial reports when the query involves **relationships between adjacent elements** on the same page — specifically: (1) "How did the Q3 margin change and what drove it?" — requires the financial table AND the management commentary paragraph that explains the drivers, which are on the same page but in different blocks; (2) "What caveats apply to the revenue figures in this table?" — footnotes are below the table on the same page; block-level retrieval returns the table without footnotes. Use block-level for: "What was the exact Enterprise Q3 operating margin?" — a precise single-cell lookup where page-level would return noise from multiple other tables on the same page.
+
+**A5:** Two structural fixes:
+Fix 1 — **Label injection at block creation time.** During layout analysis, detect LABEL regions (printed bold/caps labels) and their associated VALUE regions using vertical/horizontal proximity. When creating the value block chunk, prepend the label: `"MEDICATIONS: Metformin 500mg"` rather than just `"Metformin 500mg"`. This makes the block self-labeling — retrieval for "patient medications" now finds a block that explicitly contains "MEDICATIONS." Implementation: in the figure-caption merger logic (which already does proximity-based merging for figures), add an analogous label-value merger for form fields detected as proximate LABEL+VALUE pairs.
+
+Fix 2 — **Metadata tagging with the parent label.** Add a `label` field to the block metadata: `{region_type: "form_field", label: "MEDICATIONS", text: "Metformin 500mg"}`. At retrieval time, include the label in the block's embeddable text: `"MEDICATIONS field value: Metformin 500mg"`. This is less invasive than structural merging but achieves the same effect — the embedding now contains both the label signal and the value, making it retrievable by queries about either.
+
+---
+
+### 9. Practice
+
+**Mini-Exercise:**
+A 50-page technical manual has a troubleshooting section (pages 30–45) with a 2-column layout: left column is "Symptom," right column is "Cause and Resolution." Each row is a separate issue. A user asks: "My device shows error code E-42, what should I do?" Design the retrieval strategy. Should you use page-level, block-level, or two-stage? What is the most likely failure mode of each?
+
+**Suggested answer:**
+- **Block-level:** Works well if each symptom row is extracted as a single block that contains both the symptom (error code E-42) and the resolution. Failure mode: the two-column layout causes the block extractor to split "E-42" (column 1, y=450) from "Replace the sensor board" (column 2, y=450) into separate blocks with no linking. Retrieval returns "E-42" block without resolution.
+- **Page-level:** Returns the full troubleshooting page that contains E-42. The LLM sees both columns visually and answers correctly. Failure mode: the troubleshooting section spans 15 pages — the right page may not be in top-K retrieval. Also, each page has ~20 error codes; the LLM must scan all of them to find E-42 → high noise.
+- **Two-stage (recommended):** Stage 1 finds the right page range (troubleshooting section, pages 30–45 — the dense presence of error code patterns narrows it). Stage 2 finds the specific row within those pages. The 2-column reading-order bug must be fixed first (column-aware reading order) so that "E-42" and its resolution are in the same block.
+- **Practical answer:** Fix the reading-order algorithm for 2-column layouts first. Then use block-level retrieval (each symptom+resolution row as one block). Two-stage is overkill for a single-topic troubleshooting section where all relevant pages are in a known range.
+
+---
+
+**Capstone System Design Question:**
+Design a grounding architecture for a compliance document system at a financial regulator. The system holds 10,000 regulatory filings, each 100–500 pages. Analysts ask both precise questions ("What is the capital reserve ratio disclosed by bank X?") and relational questions ("Do banks X and Y have materially different definitions of Tier 1 capital?"). Design the indexing strategy, retrieval architecture, citation format, and the mechanism for cross-document comparison (comparing an element in filing X to the same element in filing Y).
+
+**Answer outline:**
+
+**Indexing strategy:**
+- Block index: layout-aware parsing per filing → table blocks (financial statement tables), paragraph blocks (regulatory disclosures), definition blocks (glossary sections)
+- Page index: full reading-order text concatenation per page → dense page embedding
+- Cross-filing metadata: every block tagged with `{filer_id, filing_date, filing_type, section_id, page}` for filtered retrieval
+- Definition blocks get a special index: `{term, definition_text, filer_id, filing_date}` to support defined-term lookup and cross-filer comparison
+
+**Retrieval architecture:**
+- Precise quantitative queries ("capital reserve ratio for bank X"): block-level with filer_id filter → fast, precise, returns the specific disclosure
+- Relational queries ("compare Tier 1 capital definitions for X and Y"): two-stage hybrid with multi-document fan-out: retrieve top-2 pages per filing for each filer, then re-rank blocks. Return top-3 blocks per filer. Total context: 6 blocks (3 × 2 filers).
+- Cross-document comparison: dedicated comparison flow — use definition index to fetch `{term: "Tier 1 Capital", filer_id: "X"}` and `{term: "Tier 1 Capital", filer_id: "Y"}` in parallel → construct a side-by-side comparison prompt
+
+**Citation format:**
+`{filer_name: "Bank X", filing_date: "2023-12-31", filing_type: "10-K", page: 47, section: "Capital Adequacy", table_id: "tier1_table", cell: "Capital Reserve Ratio: 12.4%"}`
+
+**Cross-document comparison mechanism:**
+- Build a "canonical term" index: for each financial term defined by regulators (Tier 1, RWA, LCR), index the definition as provided by each filer in each filing period
+- Comparison query: retrieve term definitions for all named filers → present in a structured table prompt → LLM generates difference analysis
+- Semantic diff: embed each filer's definition, compute cosine similarity between filer pairs — low similarity (< 0.85) flags materially different definitions for analyst review
+
+---
+
+### 10. Production Reality Check
+
+**If this fails in production, what's the first thing we inspect?**
+
+**Check stage-1 recall@K — the fraction of queries where the correct page is in the top-K retrieved pages.**
+
+Stage-1 recall is the single most important metric for a two-stage pipeline. If stage 1 misses the correct page, stage 2 cannot recover — no amount of re-ranking on the wrong candidate set produces the right answer. And this failure mode is silent: the LLM generates a plausible but unfounded answer ("I don't have information about this" is the honest response, but LLMs frequently hallucinate answers from the wrong retrieved context instead).
+
+Measure stage-1 recall@K on a labeled evaluation set: 50–100 queries with known answers and known source pages. For each query, check whether the correct source page appears in stage-1's top-K results. A stage-1 recall@3 below 80% means roughly 1 in 5 queries is failing silently. Fix in order: (1) improve page embeddings — switch from text-only to hybrid text+visual (ColPali); (2) add query expansion — LLM rewrites query into 3 phrasings, run all 3 through stage 1, take union of top pages; (3) increase K from 3 to 5; (4) investigate the systematically failing query types — often they are queries using terminology that differs from the document's vocabulary (legal vs colloquial, acronyms vs spelled-out terms).
+
+The second check: run stage-2 precision@3 only on queries where stage 1 retrieved the correct page. This isolates the stage-2 quality signal from the stage-1 miss signal, letting you optimize each stage independently.
+
+---
+
+### 11. Curiosity Bridge
+
+You now know how to match the retrieval granularity to the query type — page-level for spatial and relational questions, block-level for precise lookups, and two-stage hybrid as the production default.
+
+The next subtopic extends the visual side of this story further: what happens when the "document" is not a PDF or a financial report — but a screenshot of a UI, a mobile app screen, or a web page? These are visually structured but have no concept of "paragraphs" or "tables" in the traditional sense. Understanding them requires models trained specifically on UI semantics: recognizing buttons, form fields, navigation elements, and reading the layout of interactive interfaces.
+
+That brings entirely new use cases — automated QA testing, accessibility analysis, UI-to-code generation — and a new class of failure modes where the visual encoding of UI affordances (a button that looks like a label, a dropdown that looks like a text block) breaks the assumptions your document parsing pipeline was built on.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit check — you are done when you can:**
+Explain the tradeoff between block-level and page-level grounding using a concrete example, describe the two-stage hybrid pipeline (what each stage optimizes for), identify when page-level is the right choice vs block-level (with a specific query type example for each), explain what defined-term expansion prevents, and state the single most important metric to monitor in a two-stage pipeline.
+
+---
+
+**Carry-Forward Review (interleaved from Subtopic 17.3.a):**
+
+> In 17.3.a you learned that figure-caption merging co-locates a figure and its caption into a single chunk. In a two-stage pipeline, if a figure is on the bottom of page N and its caption is at the very top of page N+1, the figure-caption merger may fail (cross-page proximity). What does this mean for retrieval, and how would you fix it at the pipeline level?
+
+**Answer:** If the figure and caption are on different pages, the proximity-based merger (same page, within 50px) doesn't fire — they stay as separate blocks, each on their own page. At retrieval: stage 1 retrieves page N (where the figure is). Stage 2 returns the figure block from page N. But the caption on page N+1 is never retrieved unless page N+1 also appears in stage-1 results. The LLM has the figure's VLM summary but not the human-written caption, which may contain the figure number, the specific metric being shown, or a key insight. Fix at the pipeline level: after layout analysis, run a cross-page continuation detector alongside the table-continuation detector from 17.3.a. Heuristic: a CAPTION region on page N+1 at y-position < 10% of page height (very top of the page) that has no sibling FIGURE on page N+1 → likely a continuation of a figure from the bottom of page N. Merge it into the figure block on page N. This is the same pattern as table continuation detection: cross-page semantic element merging based on position and type heuristics.
+
+---
+
+## Subtopic 17.3.c: UI and Screenshot Understanding Use Cases
+
+### ✅ Add to Knowledge Base
+
+### Reading Path + Level Tags
+
+- **Beginner:** Read sections 1–2 and Active Recall.
+- **Intermediate:** Add sections 3–5 and the Hands-On Lab Build step.
+- **Pro:** Complete the full Hands-On Lab (Build → Break → Measure → Explain) plus the capstone practice question.
+
+---
+
+### 0. Pre-Question Hook [Beginner]
+
+**Pause:** You are asked to build a system that can look at a screenshot of a web form and automatically fill it in — clicking the "First Name" field, typing a name, clicking "Last Name," typing a surname, clicking the date picker, selecting a date, and clicking "Submit." No DOM access. No browser automation API. Just a screenshot image.
+
+Or: you have 5,000 screenshots from a mobile app regression test run. You need to determine which ones show an error state, which show empty states, and which show fully loaded screens — without hand-labeling.
+
+Both tasks require a system that can *understand* a UI purely from its visual representation. What does that mean architecturally, and where does it fail?
+
+---
+
+### 1. The Intuition (Plain English) [Beginner]
+
+**Document understanding** (17.3.a and 17.3.b) deals with static content — the document communicates information that is read. **UI understanding** is different in three fundamental ways:
+
+1. **UIs communicate affordances, not content.** A button invites clicking. A text field invites typing. A dropdown reveals choices. These are *interactive intents* encoded visually — a rectangle with rounded corners and a shadow is probably a button; a horizontal line at the bottom of a text area is probably a text input. A model must understand these visual conventions to reason about what can be done on the screen.
+
+2. **There is no "text" in the traditional sense.** A PDF has text tokens in its byte stream. A screenshot is a flat pixel grid. All text on screen — labels, button text, field values, error messages — must be read by OCR or recognized by a VLM. Unlike PDFs, UIs contain dynamic content: a loading spinner, a modal dialog, a toast notification — none of which have a fixed text representation.
+
+3. **Actions are spatial.** To "click the Submit button," you need to know the pixel coordinates of the button. Understanding the UI from a screenshot means understanding both *what* an element is (semantic label) and *where* it is (bounding box coordinates). This combination — semantic label + location — is called **UI grounding**.
+
+**The four core capabilities of UI understanding models:**
+
+| Capability | What it does | Typical use case |
+|---|---|---|
+| **Element detection** | Find all interactive elements in a screenshot (buttons, inputs, dropdowns, checkboxes) and their bounding boxes | Automated testing, accessibility audit |
+| **Semantic labeling** | Assign a human-readable label to each detected element ("Submit button," "Email input field," "Navigation menu") | Task automation, screen reader generation |
+| **State classification** | Determine the current state of a screen (loaded/loading/error/empty) or a specific element (enabled/disabled/checked/focused) | Regression testing, anomaly detection |
+| **Action grounding** | Given a natural language instruction ("click the Cancel button"), identify the pixel coordinates of the target element and the action to perform | GUI agents, visual RPA |
+
+**Real-world analogy:**
+Think of how a person who has never used a specific application can walk up to a kiosk and, within seconds, figure out how to navigate it — because they recognize the visual conventions of UIs: buttons look like buttons everywhere, text fields have underlines or borders, the top-right corner often has a close button. UI understanding models must internalize these conventions and apply them to any screenshot, regardless of the specific application.
+
+**Where the analogy breaks down:** A human recognizes affordances in milliseconds with extreme accuracy, handles occlusion (a partially visible button), and updates their mental model as UI state changes. Current VLMs still struggle with subtle affordance distinctions (a read-only text field vs an editable one looks nearly identical), with overlapping elements in dense UIs, and with state changes across a sequence of screenshots.
+
+**Key terms:**
+- **UI grounding:** The task of mapping a natural language element reference ("the Submit button") to its pixel-coordinate bounding box in a screenshot. The combination of semantic understanding + spatial localization.
+- **Affordance:** A visual signal that communicates what action is possible with a UI element — a button's raised appearance affords clicking; a text field's border affords typing.
+- **Screenshot-based action prediction:** Given a screenshot and a natural language instruction, predict the action to take: `{action_type: "click", bbox: [x0, y0, x1, y1]}` or `{action_type: "type", target_bbox: [...], text: "John Doe"}`.
+- **GUI agent:** An AI system that autonomously navigates a graphical user interface by taking sequences of screenshot observations and actions (click, type, scroll, key press) to complete a user-specified task.
+- **Visual RPA (Robotic Process Automation):** Automation of business processes by interacting with UIs visually — replicating what a human sees and does on screen — without requiring API access or DOM inspection.
+- **Accessibility analysis:** Automated inspection of a UI screenshot for accessibility violations: missing alt text, insufficient color contrast, touch target size below 44×44px minimum, missing focus indicators.
+- **Element interactability:** Whether a detected UI element can currently be interacted with — distinguishing an enabled button (clickable) from a disabled button (visible but not clickable), which may look nearly identical visually.
+- **Set-of-Marks (SoM) prompting:** A technique for UI grounding where candidate elements are labeled with numbered marks overlaid on the screenshot image before sending to a VLM, enabling the model to refer to elements by number ("click element 7") rather than by pixel coordinate.
+- **UI element tree (DOM):** The hierarchical data structure underlying a web or native UI, providing programmatic access to element types, labels, and bounding boxes — when available, this is always more reliable than screenshot-based inference.
+- **Pixel-only mode:** Operating purely from screenshots without access to the underlying DOM/accessibility tree. Required when DOM access is not available (cross-application automation, proprietary desktop apps, web apps that obstruct accessibility APIs).
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+```mermaid
+flowchart TD
+    subgraph INPUT["Screenshot Input"]
+        S1["Raw screenshot\n(PNG/JPEG, pixel grid)"]
+        S2["Optional: Set-of-Marks overlay\n(number each candidate element)"]
+        S1 --> S2
+    end
+
+    subgraph PERCEPTION["Perception Layer"]
+        direction TB
+        P1["OCR\nExtract all visible text + bounding boxes"]
+        P2["UI Element Detector\nFind interactive elements\n(buttons, inputs, dropdowns, checkboxes)\n+ bounding boxes"]
+        P3["State Classifier\nScreen state: loaded / loading / error / empty\nElement state: enabled / disabled / checked"]
+        P1 & P2 --> P3
+    end
+
+    subgraph SEMANTIC["Semantic Layer (VLM)"]
+        direction TB
+        V1["VLM: screenshot + OCR text + detected elements\n→ semantic label each element\n→ describe screen purpose\n→ identify navigation context"]
+        V2["Grounding output:\n{element_id, label, bbox, state, action_type}"]
+        V1 --> V2
+    end
+
+    subgraph ACTION["Action Layer (GUI Agent)"]
+        direction TB
+        A1["Natural language task\n'Fill in the contact form with name John Doe'"]
+        A2["Task planner\nBreak into subtask sequence:\n1. click First Name field\n2. type John\n3. click Last Name field\n4. type Doe\n5. click Submit"]
+        A3["Action executor\n{action: click, bbox: [420, 312, 520, 336]}\n{action: type, text: 'John'}"]
+        A4["Outcome verifier\nScreenshot after action → did state change as expected?"]
+        A1 --> A2 --> A3 --> A4
+        A4 -->|"retry if unexpected state"| A2
+    end
+
+    subgraph USE_CASES["Use Case Outputs"]
+        direction LR
+        UC1["Automated QA testing\n→ screenshots classify as\npass/fail/regression"]
+        UC2["Accessibility audit\n→ violations list:\ncontrast, target size, alt text"]
+        UC3["UI-to-code generation\n→ React/Flutter component code\nfrom screenshot"]
+        UC4["Visual RPA\n→ task automation\nwithout DOM access"]
+    end
+
+    INPUT --> PERCEPTION --> SEMANTIC --> ACTION
+    SEMANTIC --> USE_CASES
+    ACTION --> USE_CASES
+```
+
+**What this diagram shows:**
+- UI understanding stacks three layers: perception (OCR + element detection), semantic labeling (VLM reasoning over the detected elements), and action grounding (mapping tasks to executable actions with coordinates).
+- All four major use cases (testing, accessibility, code generation, RPA) draw from the semantic layer — they all require element labels + bounding boxes. Only GUI agents additionally require the action layer.
+- The action layer has a feedback loop: after executing an action, the new screenshot is checked to verify the state changed as expected, enabling retries and error recovery.
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+---
+
+#### Scenario A: Automated Visual Regression Testing
+
+**Product/use case context:**
+A software team deploys a web application that has 400 unique screens across its user flows. After every release, a QA pipeline runs a suite of visual regression tests: navigate to each screen, take a screenshot, compare to the baseline. The current system uses pixel-diff comparison — flag any screen where pixel difference > threshold. This produces hundreds of false positives per release (a loading spinner at a slightly different rotation, a timestamp that updated, an A/B test variant) and misses semantic regressions (a button that is now disabled when it should be enabled; an error message that appears on a screen that should be clean).
+
+**How UI understanding fixes this:**
+
+Replace pixel-diff with semantic diff. For each screenshot:
+1. VLM classifies the screen state: `{state: "loaded", has_error: false, primary_action_available: true}`
+2. For each critical UI element defined in the test spec (the "Submit" button, the "Error banner" region, the "Form" section), the VLM checks its state against the baseline specification
+3. A regression is only flagged when semantic state differs from the baseline — not when pixels differ
+
+```python
+# Baseline spec for the checkout screen
+BASELINE_SPEC = {
+    "screen_state": "loaded",
+    "submit_button": {"visible": True, "enabled": True, "label": "Place Order"},
+    "error_banner": {"visible": False},
+    "cart_items": {"min_count": 1},
+}
+
+# VLM response for the current screenshot
+current_state = {
+    "screen_state": "loaded",
+    "submit_button": {"visible": True, "enabled": False, "label": "Place Order"},  # REGRESSION
+    "error_banner": {"visible": False},
+    "cart_items": {"min_count": 1},
+}
+# Flag: submit_button.enabled changed from True to False → regression
+```
+
+**Constraints and how they affect design:**
+
+- **Volume:** 400 screens × 5 releases per week = 2,000 VLM calls per week at ~$0.02 per call = $40/week. Manageable. At 10× (4,000 screens), still < $500/week — far cheaper than manual QA.
+- **Dynamic content:** Loading spinners, timestamps, user avatars must be masked before VLM analysis, or the VLM must be instructed to ignore them. Instruction: "Ignore timestamps, loading indicators, and user-specific data (profile photos, usernames). Focus on the structural state of the UI."
+- **VLM hallucination on subtle states:** A button that is 40% opacity (disabled) vs 100% opacity (enabled) may be misclassified as enabled by a VLM that doesn't detect the opacity difference. Fix: provide pixel crops of specific elements to a focused VLM call for state classification, rather than relying on full-screenshot analysis.
+- **Baseline maintenance:** As the UI evolves, baseline specs must be updated. A spec update that doesn't match the current baseline triggers false regressions until the baseline is refreshed.
+
+**What good looks like:**
+- False positive rate: < 5% of flagged regressions are false positives (down from 30–40% with pixel-diff)
+- False negative rate: < 1% of actual semantic regressions missed
+- Per-screen VLM call latency: < 3s (acceptable for a background CI pipeline)
+
+---
+
+#### Scenario B: Accessibility Audit at Scale
+
+**Product/use case context:**
+A large enterprise must ensure all 12,000 screens across its application portfolio comply with WCAG 2.1 AA standards. Manual accessibility audits at this scale are cost-prohibitive. The compliance team needs an automated system that can analyze screenshots and flag violations.
+
+**The four most detectable WCAG violations from screenshots:**
+
+| Violation | How screenshot analysis detects it |
+|---|---|
+| **Insufficient color contrast** | Compare foreground text color (from OCR bounding box pixel samples) to background color → compute contrast ratio; WCAG AA requires ≥4.5:1 for normal text, ≥3:1 for large text |
+| **Touch target too small** | Detect button/link bounding boxes; flag any with width < 44px or height < 44px (WCAG 2.5.5 AAA, iOS HIG minimum) |
+| **Missing visible focus indicator** | Compare two screenshots: unfocused state and focused state (tab key pressed); if the focused element shows no visible outline or highlight difference, flag |
+| **Unlabeled form fields** | OCR detects input field bounding boxes; check for text label immediately above or to the left; if no proximate label text detected, flag for missing accessible label |
+
+**The limitation of screenshot-only accessibility auditing:**
+
+Screenshots cannot detect: missing `alt` attributes on images (invisible visually), keyboard navigation order (requires interaction), screen reader output (requires assistive technology), ARIA roles and labels (exist only in DOM). Screenshot analysis covers the *visual* WCAG criteria — roughly 40–50% of all criteria. A complete audit still requires DOM analysis.
+
+**VLM-augmented auditing:**
+Send the screenshot + detected violation list to a VLM with the prompt: "You are an accessibility expert. Review this UI screenshot and the following detected potential violations. For each, confirm whether it is a genuine violation, a false positive, or cannot be determined from the screenshot alone. Then identify any additional obvious accessibility concerns not in the list."
+
+This hybrid approach — automated detection + VLM triage — reduces manual review effort by ~70% while maintaining audit accuracy.
+
+---
+
+#### Scenario C: GUI Agent for Visual RPA
+
+**Product/use case context:**
+A healthcare administrator must process 500 prior authorization requests per day. Each request requires: logging into the insurance portal, navigating to a patient record, finding the prior auth form, filling it in with data from an EHR export, and submitting. The insurance portal has no API. It is a legacy web application with a non-standard DOM that defeats standard browser automation tools.
+
+**The pixel-only GUI agent:**
+
+```
+Task: "Complete prior authorization for patient John Doe, auth code PA-2024-8821"
+
+Step 1: Observe screenshot → VLM: "I see a login screen with Username and Password fields."
+  Action: {action: "type", target: "Username field", text: "admin@hospital.org"}
+  Action: {action: "type", target: "Password field", text: "[from secure vault]"}
+  Action: {action: "click", target: "Sign In button"}
+
+Step 2: Observe new screenshot → VLM: "I see a patient search screen."
+  Action: {action: "type", target: "Patient Name field", text: "John Doe"}
+  Action: {action: "click", target: "Search button"}
+
+Step 3: Observe → VLM: "I see a list of patient results. The first result shows 'Doe, John - DOB 1985-03-15'."
+  Action: {action: "click", target: "First result row"}
+
+[... continues through form filling and submission ...]
+
+Step 12: Observe → VLM: "I see a confirmation screen with 'Authorization Submitted Successfully' and reference number PA-2024-8821."
+  → Task complete. Log reference number.
+```
+
+**The key architectural components:**
+
+1. **Task planner:** Receives the high-level goal and current screenshot. Decides the next action. May be an LLM with a system prompt describing the task.
+2. **Grounding model:** Maps the action target ("Username field") to pixel coordinates. Uses Set-of-Marks (SoM) overlays — pre-label all detected elements with numbers, pass the numbered screenshot to the VLM, let the VLM say "element 3" → resolve to bounding box of element 3.
+3. **Outcome verifier:** After each action, takes a new screenshot and checks whether the expected state transition occurred. If not (e.g., clicking "Sign In" didn't navigate away from the login screen), the verifier triggers a retry or escalates to a human.
+4. **Error recovery:** Login CAPTCHA → stop and request human assistance. Unexpected modal dialog → detect it, close it if possible, re-attempt. Session timeout → re-authenticate.
+
+**Constraints and how they affect design:**
+
+- **Latency:** Each step requires at least one VLM call (observe + plan) plus one screenshot capture. At 1s per step and 15 steps per form, that is 15s per prior auth request. At 500 requests/day, total processing time is ~2 hours. Must parallelize: run 50 agent instances concurrently, each handling one case. Shared VLM inference endpoint must handle 50 concurrent requests.
+- **PII in screenshots:** Prior auth forms contain patient PHI. The VLM must run on a HIPAA-compliant endpoint. Screenshots must not be stored in external logs — only metadata (action taken, outcome) is logged, not the raw screenshot.
+- **Reliability target:** Healthcare automation requires near-100% accuracy. Any misclassification — wrong patient record opened, wrong field filled — is a patient safety concern. Every successful form submission must be verified by the outcome verifier before the task is marked complete.
+
+---
+
+### 4. System View [Intermediate]
+
+```
+Inputs per UI understanding request:
+  - Screenshot image (PNG/JPEG, typically 1280×800 or 2560×1600 for Retina)
+  - Task or query (optional): "Click the Submit button" / "Audit for accessibility violations"
+  - Baseline spec (optional): for regression testing use case
+  - Previous action + previous screenshot (optional): for multi-step GUI agent context
+
+Transformations:
+  1. Pre-processing:
+     - Resize/normalize: standardize DPI; scale to VLM's preferred resolution (often 1024×1024)
+     - Mask dynamic content: timestamp regions, loading indicators (if baseline-provided)
+     - SoM overlay: detect candidate elements, overlay numbered marks on image
+
+  2. Perception layer:
+     - OCR: extract text + bbox per text token (PaddleOCR, Tesseract, Azure CV)
+     - UI element detector: detect element type + bbox (GroundingDINO, DINO-based detectors,
+       or VLM with "list all interactive elements" prompt)
+     - State classifier: quick classification of screen state (loaded/error/empty)
+
+  3. Semantic layer (VLM):
+     - Model choices: GPT-4o, Claude 3.5, Gemini 1.5 Pro (all support vision),
+       specialized UI models: SeeClick, CogAgent, ShowUI, Qwen-VL
+     - Prompt: include screenshot + OCR text + SoM-labeled marks + task instruction
+     - Output: semantic labels per element, action recommendation, grounded bbox
+
+  4. Action execution (GUI agent only):
+     - Platform-specific action API: xdotool (Linux), pyautogui (cross-platform),
+       Playwright/Selenium (web), ADB (Android), XCTest (iOS)
+     - Record each action: {step, action_type, target_element, bbox, text, timestamp}
+
+  5. Outcome verification:
+     - Screenshot after action
+     - Compare to expected state spec or ask VLM: "Did action X succeed?"
+     - Retry logic: max 3 retries per action step; escalate to human on persistent failure
+
+Outputs:
+  - For QA testing: {screen_id, test_result: pass/fail, regressions: [...]}
+  - For accessibility: {screen_id, violations: [{type, severity, element_bbox, description}]}
+  - For GUI agent: {task_complete: bool, reference_id, action_log: [...], screenshots: [...]}
+  - For UI-to-code: {component_code, framework, estimated_fidelity_score}
+```
+
+**Observability:**
+
+| Signal | Why it matters |
+|---|---|
+| Action success rate per step | Which step types (click/type/scroll) fail most often |
+| Task completion rate end-to-end | Overall agent reliability; target > 95% for production automation |
+| Grounding accuracy (bbox precision) | Are the predicted click coordinates within the correct element's bbox? |
+| VLM hallucination rate on element labels | How often does the VLM label an element incorrectly (detected by outcome verification) |
+| Screenshot capture latency | A slow screenshot loop makes the agent feel unresponsive |
+| Average steps per task completion | Efficiency metric; rising steps = agent is looping or missing elements |
+| Retry rate per task | % of tasks requiring at least one retry; high retry = brittle grounding |
+
+**Failure points:**
+
+| Failure | Symptom | Root cause |
+|---|---|---|
+| Visually ambiguous affordances | Agent clicks a label, not the button next to it | VLM cannot distinguish non-interactive label from clickable element without DOM context |
+| Disabled element not detected | Agent attempts to click a disabled button, action appears to succeed but state doesn't change | Disabled state encoded only in opacity/color; VLM doesn't detect it; outcome verifier catches but adds latency |
+| Dynamic content confuses grounding | Agent clicks correct element but at wrong coordinates after scroll | Screenshot taken before scroll completed; element has shifted; coordinates stale |
+| CAPTCHA blocks automation | Agent halts waiting for human; task queue backs up | No CAPTCHA-handling strategy in task planner |
+| Wrong element selected due to similar labels | Two "Submit" buttons on same page (one in modal, one on main form); agent clicks wrong one | Grounding uses label text alone, not spatial context (which Submit is visible/in-focus) |
+| VLM reads text incorrectly via OCR | Fills "Jon" instead of "John" due to OCR error on a field with custom font | Font rendering not in OCR training data; pixel-level font artifacts |
+
+---
+
+### 5. System Design Flavor [Intermediate]
+
+**UI understanding model landscape:**
+
+| Model | Approach | Best for | Limitation |
+|---|---|---|---|
+| **GPT-4o / Claude 3.5 Sonnet** | General VLM, strong visual reasoning | Complex semantic understanding, flexible task description | No specialized UI training; weaker at precise bbox grounding |
+| **SeeClick** | Fine-tuned on GUI screenshots + click actions | Action grounding, GUI agent click prediction | Primarily trained on web/desktop; may not generalize to domain-specific UIs |
+| **CogAgent** | VLM + GUI-specific training (screenshots + UI trees) | Combined visual + DOM understanding | Larger model; slower inference |
+| **ShowUI** | GUI understanding via screenshot token compression | Efficient inference on long sequences of screenshots | Newer model; less production-hardened |
+| **Qwen-VL** | General VLM with strong OCR integration | OCR-heavy UIs (data forms, text-dense screens) | Requires tuning for action grounding |
+| **GroundingDINO** | Open-vocabulary object detector | Element detection + bounding box prediction given text query | Not a full VLM; only detection, no semantic reasoning |
+
+**Set-of-Marks (SoM) prompting — the standard grounding technique:**
+
+```
+Without SoM:
+  Prompt: "Click the Submit button"
+  VLM must predict pixel coordinates from scratch → error-prone
+
+With SoM:
+  1. Run element detector → find all interactive elements → get bboxes
+  2. Overlay numbered labels (1, 2, 3...) on each element in the screenshot
+  3. Prompt: "Here is the UI with labeled elements. Which element number should I click to submit the form?"
+  4. VLM responds: "Element 7 (Submit button)"
+  5. Resolve element 7 → bbox [420, 312, 520, 336] → click center point (470, 324)
+
+SoM decouples semantic understanding from spatial grounding:
+  - VLM handles semantics: "which element is the Submit button?"
+  - Element detector handles spatial: "where is element 7?"
+```
+
+**Key tradeoffs:**
+
+| Decision | Option A | Option B | Guidance |
+|---|---|---|---|
+| Grounding approach | Direct coordinate prediction (VLM predicts x,y) | SoM + element ID resolution | SoM is more reliable for complex UIs; direct coordinate prediction works for simple layouts and specialized fine-tuned models (SeeClick) |
+| Action scope | Pixel-only (no DOM) | DOM-augmented (read DOM + screenshot) | DOM-augmented is always more accurate when available; pixel-only for legacy apps, cross-app automation, proprietary UIs |
+| Outcome verification | Always verify (2 VLM calls per step) | Verify only on high-stakes steps | Always verify for healthcare/finance automation; skip for low-risk tasks to halve VLM cost |
+| Screenshot resolution | Full resolution (2560×1600) | Downsampled (1024×768) | Full resolution for fine-grained text OCR; downsampled for general navigation where text precision is less critical |
+| Multi-agent parallelism | Sequential single agent | Parallel agents per task instance | Sequential is simpler; parallel is required for production-scale RPA (hundreds of tasks per hour) |
+
+**Scaling consideration:**
+At 10× task volume, the VLM call rate becomes the cost bottleneck. A 15-step GUI agent task with 2 VLM calls per step (observe + verify) = 30 VLM calls per task. At $0.01 per call and 5,000 tasks/day: $1,500/day in VLM costs. Optimization: (1) **Skip verification for low-risk idempotent steps** (navigation clicks, text entry into non-critical fields); only verify form submissions and database-modifying actions. (2) **Cache VLM responses for recurring screen types**: if the same login screen appears 500 times/day, cache the element detection result — only run VLM when the screenshot hash differs from the cached version. (3) **Use a smaller fast model for simple step types**: switch to a fine-tuned SeeClick for standard click/type predictions, reserving GPT-4o for complex disambiguation (multiple similar elements, CAPTCHA detection, error state handling).
+
+---
+
+### 6. Common Mistakes + Debugging [Intermediate]
+
+---
+
+#### Mistake 1: VLM predicts coordinates for an element that shifted after scroll
+
+**Symptom:** The GUI agent consistently fails on steps that follow a scroll action. It "clicks" at a position that was correct before the scroll — but after the scroll, the element has moved. The action executes at the old coordinates, landing on the wrong element or empty space.
+
+**Likely cause:** The task planner predicts the next action and its target coordinates based on the screenshot taken *before* the scroll was fully completed. The scroll animation is still in progress when the new screenshot is captured — or the agent re-uses coordinates from a cached earlier observation rather than re-grounding on a fresh screenshot.
+
+**First debugging step:** Add a mandatory "re-observe" step after every scroll action: wait for the page to settle (100–200ms), take a fresh screenshot, and re-run the grounding layer on the new screenshot before predicting the next click target. This adds one screenshot capture and one SoM detection pass per scroll but eliminates stale-coordinate failures entirely. Also add a coordinate sanity check: before executing a click, verify that the target bbox from the new screenshot overlaps with the predicted coordinates. If overlap < 50%, trigger a re-grounding cycle rather than executing at the stale coordinates.
+
+---
+
+#### Mistake 2: Accessibility audit flags are all false positives due to contrast computed on compressed JPEGs
+
+**Symptom:** The automated contrast checker flags 80% of text on every screen as insufficient contrast — even on high-contrast black text on white backgrounds. Engineers dismiss all findings as broken tooling.
+
+**Likely cause:** Screenshots saved as JPEG introduce compression artifacts that alter pixel colors near text edges. A black letter on a white background has its edge pixels changed from `(0, 0, 0)` to `(12, 12, 12)` by JPEG compression. The contrast checker samples these artifact pixels rather than the true text color, computing a slightly lower (but still high) contrast ratio. For low-contrast text, the compression artifacts may push an already-borderline ratio below the threshold, creating false positives.
+
+**First debugging step:** Switch screenshot capture format from JPEG to PNG (lossless). PNG preserves exact pixel colors without compression artifacts. If JPEG is unavoidable (e.g., screenshots captured by a third-party mobile testing platform), implement a color sampling strategy that takes the modal (most common) color within the text bounding box, not the mean — the modal color is the true foreground color; edge artifacts are a minority of pixels and don't affect the mode.
+
+---
+
+#### Mistake 3: SoM element numbering produces too many candidates, confusing the VLM
+
+**Symptom:** On dense UIs (a settings panel with 50+ toggles, labels, and checkboxes), the SoM overlay numbers elements 1–72. The VLM's response picks an element in the correct region but with the wrong number. Grounding resolves to the adjacent element, not the intended target.
+
+**Likely cause:** With 72 overlaid numbers in a dense grid, the numbers visually overlap each other and their target elements. The VLM reads number "43" as "48" because they are adjacent and the font is small relative to the dense element grid. Additionally, a VLM reasoning over 72 numbered elements has a much higher chance of off-by-one errors than one reasoning over 10.
+
+**First debugging step:** Filter the SoM candidate set to a focused region before overlaying marks. For a given task ("turn on dark mode"), the task planner can first identify the semantic region ("Settings → Appearance section") using a coarse VLM pass. Then run a second, zoomed-in SoM overlay only on that region's bounding box crop — which might contain 5–8 elements rather than 72. The VLM now reasons over a small, clear candidate set. This two-pass approach trades one extra VLM call for dramatically improved grounding precision on dense UIs.
+
+---
+
+### 7. Hands-On Lab [Pro]
+
+**Topic:** UI Understanding — Element Detection, SoM Grounding, and Action Prediction
+
+**Goal:** Build a minimal UI understanding pipeline: detect elements from a simulated UI layout, overlay Set-of-Marks, run a keyword-based "VLM" to select the right element, and predict the action. Simulate the visual regression test use case. Measure grounding accuracy.
+
+---
+
+#### Build: UI Understanding Pipeline
+
+```python
+import re
+import json
+import math
+from dataclasses import dataclass, field
+from typing import Optional
+
+# ── UI element types ──────────────────────────────────────────────────────
+ELEMENT_TYPES = ["button", "text_input", "dropdown", "checkbox",
+                 "label", "link", "image", "nav_item", "error_banner"]
+
+INTERACTIVE_TYPES = {"button", "text_input", "dropdown", "checkbox", "link", "nav_item"}
+
+# ── Simulated UI element (what a real detector would return) ──────────────
+@dataclass
+class UIElement:
+    element_id: int
+    element_type: str
+    label: str               # visible text or inferred semantic label
+    bbox: tuple              # (x0, y0, x1, y1) in screen pixels
+    enabled: bool = True
+    checked: Optional[bool] = None   # for checkboxes
+    placeholder: Optional[str] = None  # for text inputs
+
+    @property
+    def center(self) -> tuple:
+        return ((self.bbox[0] + self.bbox[2]) // 2,
+                (self.bbox[1] + self.bbox[3]) // 2)
+
+    @property
+    def area(self) -> int:
+        return (self.bbox[2] - self.bbox[0]) * (self.bbox[3] - self.bbox[1])
+
+    @property
+    def min_touch_dimension(self) -> int:
+        return min(self.bbox[2] - self.bbox[0], self.bbox[3] - self.bbox[1])
+
+    def to_som_label(self) -> str:
+        state = ""
+        if not self.enabled:
+            state = " [disabled]"
+        if self.checked is not None:
+            state = f" [{'checked' if self.checked else 'unchecked'}]"
+        return f"[{self.element_id}] {self.element_type}: '{self.label}'{state}"
+
+# ── Simulated UI screen ───────────────────────────────────────────────────
+def build_contact_form_screen() -> list[UIElement]:
+    """Simulates the elements detected on a contact form screen."""
+    return [
+        UIElement(1,  "label",      "Contact Information",     (50,  30, 400, 55)),
+        UIElement(2,  "label",      "First Name",              (50,  70, 180, 90)),
+        UIElement(3,  "text_input", "First Name",              (50,  92, 300, 120), placeholder="Enter first name"),
+        UIElement(4,  "label",      "Last Name",               (320, 70, 450, 90)),
+        UIElement(5,  "text_input", "Last Name",               (320, 92, 570, 120), placeholder="Enter last name"),
+        UIElement(6,  "label",      "Email Address",           (50, 140, 200, 160)),
+        UIElement(7,  "text_input", "Email",                   (50, 162, 570, 190), placeholder="email@example.com"),
+        UIElement(8,  "label",      "Subscribe to newsletter", (50, 210, 300, 230)),
+        UIElement(9,  "checkbox",   "Newsletter subscription", (310, 210, 334, 234), checked=False),
+        UIElement(10, "button",     "Cancel",                  (50, 270, 160, 304), enabled=True),
+        UIElement(11, "button",     "Submit",                  (420, 270, 570, 304), enabled=True),
+        UIElement(12, "link",       "Privacy Policy",          (50, 320, 180, 340)),
+    ]
+
+def build_error_state_screen() -> list[UIElement]:
+    """Same form but with an error state: submit button disabled, error banner visible."""
+    elements = build_contact_form_screen()
+    # Disable submit button
+    elements[10] = UIElement(11, "button", "Submit", (420, 270, 570, 304), enabled=False)
+    # Add error banner
+    elements.append(
+        UIElement(13, "error_banner", "Please fill in all required fields",
+                  (50, 240, 570, 265))
+    )
+    return elements
+
+# ── SoM overlay (text representation) ────────────────────────────────────
+def generate_som_description(elements: list[UIElement]) -> str:
+    """
+    In production: render numbered marks on the screenshot image.
+    Here: produce a text SoM description for the simulated VLM.
+    """
+    lines = ["UI Elements (Set-of-Marks):"]
+    for el in elements:
+        lines.append(f"  {el.to_som_label()}")
+    return "\n".join(lines)
+
+# ── Simulated VLM grounding (keyword matching → simulates semantic VLM) ──
+def vlm_ground_element(
+    task_instruction: str,
+    elements: list[UIElement],
+    prefer_interactive: bool = True
+) -> Optional[UIElement]:
+    """
+    Simulates VLM selecting the correct element for a given instruction.
+    In production: send SoM-annotated screenshot + instruction to GPT-4o/Claude.
+    """
+    task_tokens = set(re.findall(r'\w+', task_instruction.lower()))
+
+    best_score = -1
+    best_element = None
+    for el in elements:
+        if prefer_interactive and el.element_type not in INTERACTIVE_TYPES:
+            continue  # skip non-interactive elements
+        if not el.enabled:
+            continue  # skip disabled elements
+
+        label_tokens = set(re.findall(r'\w+', el.label.lower()))
+        placeholder_tokens = set(re.findall(r'\w+',
+            (el.placeholder or "").lower()))
+        all_tokens = label_tokens | placeholder_tokens
+
+        score = len(task_tokens & all_tokens)
+        # Boost for exact type match keywords
+        if "button" in task_tokens and el.element_type == "button":
+            score += 2
+        if any(t in task_tokens for t in ["input", "field", "enter", "type"]) \
+                and el.element_type == "text_input":
+            score += 2
+        if "checkbox" in task_tokens and el.element_type == "checkbox":
+            score += 2
+
+        if score > best_score:
+            best_score = score
+            best_element = el
+
+    return best_element if best_score > 0 else None
+
+# ── Action predictor ──────────────────────────────────────────────────────
+@dataclass
+class PredictedAction:
+    action_type: str         # click | type | check | scroll
+    target_element: UIElement
+    text: Optional[str] = None    # for type actions
+    confidence: float = 1.0
+
+def predict_action(
+    instruction: str,
+    elements: list[UIElement]
+) -> Optional[PredictedAction]:
+    """Map a natural language instruction to a concrete action + target element."""
+    instr_lower = instruction.lower()
+
+    # Determine action type from instruction
+    if any(w in instr_lower for w in ["click", "press", "submit", "cancel", "tap"]):
+        action_type = "click"
+    elif any(w in instr_lower for w in ["type", "enter", "fill", "input", "write"]):
+        action_type = "type"
+    elif any(w in instr_lower for w in ["check", "tick", "enable", "subscribe"]):
+        action_type = "check"
+    else:
+        action_type = "click"  # default
+
+    # Extract text for type actions
+    text_match = re.search(r'(?:type|enter|fill|write)\s+["\']?([^"\']+?)["\']?\s*(?:in|into|to|$)',
+                           instr_lower)
+    text_value = text_match.group(1).strip() if text_match else None
+
+    # Ground to element
+    target = vlm_ground_element(instruction, elements)
+    if target is None:
+        return None
+
+    return PredictedAction(
+        action_type=action_type,
+        target_element=target,
+        text=text_value,
+        confidence=0.9,
+    )
+
+# ── Visual regression checker ─────────────────────────────────────────────
+@dataclass
+class RegressionResult:
+    screen_id: str
+    passed: bool
+    regressions: list[dict] = field(default_factory=list)
+
+def check_visual_regression(
+    screen_id: str,
+    current_elements: list[UIElement],
+    baseline_spec: dict
+) -> RegressionResult:
+    """
+    Semantic regression check: compare current UI state to baseline spec.
+    In production: VLM extracts {element_label: state} from screenshot.
+    Here: directly compare element objects to spec.
+    """
+    regressions = []
+    el_by_label = {e.label: e for e in current_elements}
+
+    for el_label, expected_state in baseline_spec.items():
+        if el_label == "screen_error_banner":
+            has_banner = any(e.element_type == "error_banner" for e in current_elements)
+            if has_banner != expected_state.get("visible", False):
+                regressions.append({
+                    "element": el_label,
+                    "expected": expected_state,
+                    "actual": {"visible": has_banner},
+                    "severity": "high",
+                })
+            continue
+
+        el = el_by_label.get(el_label)
+        if el is None:
+            regressions.append({
+                "element": el_label,
+                "expected": expected_state,
+                "actual": "ELEMENT_NOT_FOUND",
+                "severity": "critical",
+            })
+            continue
+
+        for prop, expected_val in expected_state.items():
+            actual_val = getattr(el, prop, None)
+            if actual_val != expected_val:
+                regressions.append({
+                    "element": el_label,
+                    "property": prop,
+                    "expected": expected_val,
+                    "actual": actual_val,
+                    "severity": "high" if prop == "enabled" else "medium",
+                })
+
+    return RegressionResult(
+        screen_id=screen_id,
+        passed=len(regressions) == 0,
+        regressions=regressions,
+    )
+
+# ── Accessibility checker ─────────────────────────────────────────────────
+def check_accessibility(elements: list[UIElement]) -> list[dict]:
+    """Check for detectable accessibility violations from element metadata."""
+    violations = []
+    for el in elements:
+        # Touch target size (WCAG 2.5.5)
+        if el.element_type in INTERACTIVE_TYPES and el.min_touch_dimension < 44:
+            violations.append({
+                "element_id": el.element_id,
+                "label": el.label,
+                "violation": "TOUCH_TARGET_TOO_SMALL",
+                "detail": f"Minimum dimension {el.min_touch_dimension}px < 44px",
+                "wcag": "2.5.5",
+                "severity": "AA",
+            })
+    return violations
+
+# ── Simulation ────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    elements = build_contact_form_screen()
+
+    # 1. SoM description
+    print("=== Set-of-Marks ===")
+    print(generate_som_description(elements))
+
+    # 2. Action prediction
+    print("\n=== Action Predictions ===")
+    instructions = [
+        "Click the Submit button",
+        "Type john.doe@example.com into the email field",
+        "Check the newsletter checkbox",
+        "Click Cancel",
+    ]
+    for instr in instructions:
+        action = predict_action(instr, elements)
+        if action:
+            print(f"  Instruction: '{instr}'")
+            print(f"    → {action.action_type} on [{action.target_element.element_id}] "
+                  f"'{action.target_element.label}' at center {action.target_element.center}"
+                  + (f", text='{action.text}'" if action.text else ""))
+        else:
+            print(f"  Instruction: '{instr}' → NO GROUNDING FOUND")
+
+    # 3. Accessibility check
+    print("\n=== Accessibility Violations ===")
+    violations = check_accessibility(elements)
+    if violations:
+        for v in violations:
+            print(f"  [{v['wcag']}] {v['label']}: {v['detail']}")
+    else:
+        print("  No detectable violations.")
+
+    # 4. Visual regression test
+    print("\n=== Visual Regression Test ===")
+    BASELINE = {
+        "Submit":  {"enabled": True},
+        "Cancel":  {"enabled": True},
+        "screen_error_banner": {"visible": False},
+    }
+
+    # Test clean state (should pass)
+    result_clean = check_visual_regression("checkout_v2.3_clean",
+                                           elements, BASELINE)
+    print(f"  Clean state: {'PASS' if result_clean.passed else 'FAIL'}")
+
+    # Test error state (should detect regression: Submit disabled + banner visible)
+    error_elements = build_error_state_screen()
+    result_error = check_visual_regression("checkout_v2.4_error",
+                                           error_elements, BASELINE)
+    print(f"  Error state: {'PASS' if result_error.passed else 'FAIL'}")
+    for r in result_error.regressions:
+        print(f"    Regression: {r['element']} — "
+              f"expected {r.get('property', 'visible')}={r['expected']}, "
+              f"got {r['actual']} [{r['severity']}]")
+```
+
+---
+
+#### Break: Force the grounding failures
+
+```python
+# Break Experiment 1 — Disabled element included in candidate pool
+# Remove the 'if not el.enabled: continue' guard from vlm_ground_element
+# Then ask "Click the Submit button" on the error-state screen
+# Expected failure: the disabled Submit button is returned as the grounding target
+# The agent would attempt to click it, the form would not submit,
+# and the outcome verifier would catch it — but only after wasting a step
+
+def vlm_ground_no_disability_check(instruction, elements):
+    """Bug: doesn't filter disabled elements."""
+    task_tokens = set(re.findall(r'\w+', instruction.lower()))
+    best_score, best_element = -1, None
+    for el in elements:
+        if el.element_type not in INTERACTIVE_TYPES:
+            continue
+        # BUG: missing 'if not el.enabled: continue'
+        label_tokens = set(re.findall(r'\w+', el.label.lower()))
+        score = len(task_tokens & label_tokens)
+        if el.element_type == "button" and "button" in task_tokens:
+            score += 2
+        if score > best_score:
+            best_score, best_element = score, el
+    return best_element
+
+error_elements_2 = build_error_state_screen()
+buggy_target = vlm_ground_no_disability_check("Click the Submit button", error_elements_2)
+print(f"\n--- BREAK: Disabled element grounded ---")
+print(f"Target: [{buggy_target.element_id}] '{buggy_target.label}' "
+      f"enabled={buggy_target.enabled}")
+# Expected: Returns disabled Submit. Agent clicks, form doesn't submit.
+# Fix: always filter disabled=False before grounding.
+
+# Break Experiment 2 — SoM number confusion with similar elements
+# Two elements have very similar labels (First Name + Last Name, both text_input)
+print(f"\n--- BREAK: Ambiguous label grounding ---")
+ambiguous = predict_action("Type John into the name field", elements)
+print(f"Grounded to: [{ambiguous.target_element.element_id}] "
+      f"'{ambiguous.target_element.label}'")
+# Depending on scoring, may ground to Last Name instead of First Name
+# Fix: add spatial context (prefer leftmost/topmost when scores are tied)
+# or use SoM + VLM disambiguation ("which input is for first name?")
+```
+
+---
+
+#### Measure: Record signals
+
+| Instruction | Correct element? | Correct action type? | Correct center coordinates? |
+|---|---|---|---|
+| Click the Submit button | ___ | ___ | ___ |
+| Type email into email field | ___ | ___ | ___ |
+| Check the newsletter checkbox | ___ | ___ | ___ |
+| Click Cancel | ___ | ___ | ___ |
+
+Regression test:
+- Clean state: PASS / FAIL ___
+- Error state regressions detected: ___
+
+Accessibility violations: ___ (expected: 0 for standard 44px+ elements)
+
+---
+
+#### Explain: What each design decision prevents
+
+**Filtering disabled elements from SoM candidates:** Prevents the agent from attempting to interact with elements the UI has made non-interactive. Without this filter, the grounding model may confidently return a disabled button — the action executes but the UI doesn't respond, causing the outcome verifier to fire a retry, doubling latency and potentially triggering anti-automation bot detection systems.
+
+**SoM overlay (element IDs, not direct coordinate prediction):** Decouples the hardest two problems — semantic understanding and spatial localization. Direct coordinate prediction ("click at x=470, y=324") requires the VLM to simultaneously understand what element to target and where it is in pixel space. SoM pre-solves the spatial problem (element detector finds all bboxes), letting the VLM focus entirely on semantics ("which element ID is the Submit button?"). The spatial resolution step is then deterministic (element ID → bbox → center point).
+
+**Outcome verification per step:** Converts a brittle open-loop agent into a closed-loop agent. Without verification, a single failed step (e.g., a misclick that opens a dropdown instead of clicking through) causes all subsequent steps to operate on wrong state, cascading silently to task failure. With verification, the failure is caught immediately, the agent can retry with a corrected action, and the task log captures the recovery event for debugging.
+
+**Semantic regression testing over pixel-diff:** Prevents the QA team from drowning in false positives. Pixel-diff is extremely sensitive (a 2px shift in a shadow triggers it) but semantically blind (a disabled Submit button looks almost identical to an enabled one to pixel comparison). Semantic regression testing inverts this: insensitive to cosmetic changes (acceptable), sensitive to state changes that matter functionally (Submit enabled/disabled, error banner visible/hidden).
+
+---
+
+### 8. Active Recall [All Levels]
+
+**Q1 [Beginner]:** What is UI grounding, and why is it harder than document text retrieval?
+**Q2 [Beginner]:** What is Set-of-Marks (SoM) prompting, and what two problems does it separate?
+**Q3 [Intermediate]:** A GUI agent clicks the "Submit" button, but the form doesn't submit. The outcome verifier triggers a retry. On the second attempt, the same thing happens. What are three possible root causes, in order from most to least likely?
+**Q4 [Intermediate]:** Why can screenshot-based accessibility analysis only cover ~40-50% of WCAG criteria? What does it miss?
+**Q5 [Pro]:** You are building a GUI agent for a healthcare prior authorization portal. It must handle session timeouts (re-authenticate) and unexpected modal dialogs (close them and resume). Design the error recovery state machine. What states does it have, what transitions exist, and what is the escalation trigger?
+
+---
+
+**Answer Key:**
+
+**A1:** UI grounding is the task of mapping a natural language element reference ("the Submit button") to its pixel-coordinate bounding box in a screenshot. It is harder than document text retrieval for three reasons: (1) the "text" of UI elements is rendered as pixels, not stored as tokens — all element labels must be read by OCR or inferred by visual recognition; (2) the retrieval unit is a spatial coordinate, not a text chunk — the model must both understand what element to target (semantic) and precisely localize it in pixel space (spatial); (3) UI affordances are visually encoded (a button looks like a button because of styling conventions) — the model must understand visual conventions to distinguish clickable from non-clickable elements, which often look nearly identical (enabled vs disabled button).
+
+**A2:** SoM prompting is a technique where all candidate interactive elements in a screenshot are labeled with numbered marks overlaid on the image before sending to a VLM. The VLM then identifies the correct element by number ("click element 7") rather than predicting pixel coordinates. It separates: (1) **semantic understanding** (which element is the Submit button?) — handled by the VLM; from (2) **spatial localization** (where is that element in pixels?) — handled deterministically by the element detector, which already has all bounding boxes. This decoupling makes each sub-problem much more reliable than forcing the VLM to solve both simultaneously.
+
+**A3:** Three most likely causes, in order: (1) **The Submit button is disabled** — the element state detection failed to filter it out; the agent clicked an enabled-looking but actually disabled button. Verify: check the button's visual state (opacity, color) in the screenshot; inspect the baseline spec for `enabled=True` expectation. (2) **The click coordinates are slightly off** — the button was grounded correctly but the center point calculation placed the click just outside the button's active area (common at screen edges or with small buttons). Verify: log `click_coordinates` and compare to `button_bbox` — if the click point is not strictly inside `(x0, y0, x1, y1)`, the coordinate calculation has a boundary error. (3) **A modal dialog or overlay is intercepting the click** — an invisible or semi-transparent overlay is absorbing the click before it reaches the button. Verify: check whether a z-order element (loading overlay, tooltip, cookie consent banner) appears between the click point and the button in the element detection output.
+
+**A4:** Screenshots only encode what is *visually rendered* — what a sighted user sees. WCAG criteria that require programmatic information miss entirely: `alt` text on images (an `<img alt="Logo">` element looks identical to `<img alt="">` on screen — both render the same image); keyboard navigation order (the visual left-to-right, top-to-bottom order may differ from the DOM tab order, which only an accessibility tree inspection can reveal); ARIA roles and labels (a `<div role="button">` looks like a button on screen but a screenshot cannot detect that the role is incorrectly applied to a non-interactive element); screen reader output (what a screen reader would actually announce requires executing the AT against the live DOM, not looking at pixels); focus trap detection (whether keyboard focus can escape a modal dialog requires keyboard interaction testing).
+
+**A5:** Error recovery state machine:
+
+```
+States:
+  ACTIVE          — agent is executing task steps normally
+  VERIFYING       — agent took an action, checking outcome screenshot
+  RETRYING        — verification failed; re-running current step (max 3 retries)
+  SESSION_TIMEOUT — detected session expiry screen (login form unexpectedly appeared)
+  MODAL_DETECTED  — unexpected modal/dialog detected; not part of expected task flow
+  CAPTCHA         — CAPTCHA challenge detected
+  ESCALATED       — sent to human operator; agent suspends
+
+Transitions:
+  ACTIVE → VERIFYING      : after every action, take outcome screenshot
+  VERIFYING → ACTIVE      : outcome matches expected state → continue next step
+  VERIFYING → RETRYING    : outcome doesn't match, retry_count < 3
+  RETRYING → ACTIVE       : retry succeeds → continue
+  RETRYING → ESCALATED    : retry_count = 3 and still failing → human escalation
+  ACTIVE → SESSION_TIMEOUT : outcome screenshot matches login page pattern
+  SESSION_TIMEOUT → ACTIVE : re-authenticate (use stored credentials from vault) → return to task step that timed out
+  ACTIVE → MODAL_DETECTED  : unexpected element_type=modal detected in outcome screenshot
+  MODAL_DETECTED → ACTIVE  : close modal (click X or Cancel) → re-verify task state → resume
+  MODAL_DETECTED → ESCALATED : closing modal fails or modal contains unexpected required input
+  ACTIVE → CAPTCHA        : CAPTCHA element detected
+  CAPTCHA → ESCALATED     : always; human must solve CAPTCHA → agent resumes after human signals clearance
+
+Escalation trigger (any of):
+  - 3 consecutive retries on same step
+  - CAPTCHA detected
+  - Unknown screen type (VLM cannot identify any familiar UI elements)
+  - PHI-sensitive field appears outside expected form context (safety guard)
+```
+
+---
+
+### 9. Practice
+
+**Mini-Exercise:**
+You are building a GUI agent to automate expense report submission. The UI has a table of line items (date, vendor, amount, category) and a "Submit Report" button at the bottom. The Submit button is only enabled after all required line items have amounts entered. Design the pre-submission validation step the agent should run before clicking Submit. What does it check, and how does it use element state information?
+
+**Suggested answer:**
+Before clicking Submit, the agent should:
+1. Run element detection on the current screenshot to enumerate all table cells in the line item rows.
+2. For each row, check whether the `amount` cell is populated: detect whether the text input in the amount column is empty (empty text_input state) vs filled.
+3. Check the Submit button's `enabled` state directly — if the UI correctly disables Submit when fields are empty, an `enabled=False` Submit button signals that at least one required field is empty. The agent should then identify which fields are empty (scan the row inputs) and fill them before attempting to submit.
+4. If Submit is `enabled=True` after all line items are checked, proceed with the click.
+5. After clicking, verify the outcome: expect either a success confirmation screen or an error state. If error state appears (validation error from the server), parse the error message from the error_banner element and route the specific field mentioned back to the task planner for correction.
+
+---
+
+**Capstone System Design Question:**
+Design a GUI agent system for a financial services firm that must process 1,000 trade confirmations per day across 5 different legacy trading portals (each with a different UI, no API access). The agent must: log into each portal, find pending confirmations, verify key fields (trade ID, counterparty, amount, instrument) against a reference trade book, confirm or reject, and log the outcome. Design the multi-portal architecture, handling for visual variability between portals, error recovery, audit logging, and human-in-the-loop escalation.
+
+**Answer outline:**
+
+**Multi-portal architecture:**
+- One agent instance per portal, each with a portal-specific system prompt describing that portal's UI conventions, login flow, and form structure
+- Shared VLM inference endpoint (cost efficiency); portal-specific SoM templates (element labels differ per portal)
+- Portal adapters: each adapter defines `login_steps`, `navigate_to_confirmations`, `extract_confirmation_fields`, `submit_confirmation`, `verify_outcome` as abstract methods, implemented per portal
+- Shared task queue: confirmations pulled from a central queue, dispatched to the correct portal's agent pool
+
+**Handling visual variability between portals:**
+- Per-portal few-shot examples: 3–5 annotated screenshots per portal showing correct element identification for key steps. These are included in the system prompt as visual references.
+- Portal fingerprinting: on each session start, take a screenshot and run a classifier to verify which portal is loaded (anti-confusion guard for redirects or session anomalies)
+- Field mapping: each portal uses different labels ("Trade Reference" vs "Confirmation ID" vs "Deal Number") for the same data. The trade book adapter normalizes these to canonical field names before verification.
+
+**Verification against reference trade book:**
+- After extracting confirmation fields from the portal, call an internal trade book API with the extracted trade ID → receive expected values
+- VLM compares: `extracted_amount` vs `expected_amount`, `extracted_counterparty` vs `expected_counterparty`
+- Tolerance: amounts within $0.01 tolerance (rounding); counterparty names fuzzy-matched (normalize legal entity name variants)
+- Any field outside tolerance → reject confirmation → route to human review queue
+
+**Audit logging (critical for financial compliance):**
+- Every step logged: `{portal, trade_id, step, action, element, timestamp, screenshot_hash}`
+- Screenshots NOT stored (contain sensitive financial data); only screenshot hashes and element metadata
+- Outcome logged per trade: `{trade_id, portal, confirmed/rejected/escalated, agent_instance, verifier_result, timestamp}`
+- Immutable log (append-only) in compliance store; retained per regulatory requirement (typically 7 years for trade records)
+
+**Human-in-the-loop escalation:**
+- Automatic escalation triggers: verification mismatch > $100, unknown portal screen, 3 consecutive action failures, any CAPTCHA
+- Escalation queue: surfaced in a reviewer dashboard with the screenshot of the failure point and the expected vs extracted values
+- SLA: human reviewer must respond within 30 minutes during trading hours; escalated confirmations are held (not confirmed or rejected) until reviewed
+- Agent resumes after human signals: `approve`, `reject`, or `skip_for_today`
+
+---
+
+### 10. Production Reality Check
+
+**If this fails in production, what's the first thing we inspect?**
+
+**Check the outcome verifier success rate and the retry rate per step — not the overall task completion rate.**
+
+Task completion rate is a lagging indicator. A GUI agent can achieve 90% task completion by retrying failed steps — but if the retry rate on a specific step (e.g., "click Submit") is 40%, the system is brittle at that step, burning 3× the expected VLM calls and running at 3× the expected latency. Masked by overall success, this silent brittleness will eventually cross a threshold — portal UI update, slower network, new loading spinner — and the step failure rate will jump to 100%, bringing task completion to zero.
+
+Pull the per-step retry rates across the last 1,000 tasks. Any step with retry_rate > 15% is a fragile grounding — inspect the screenshots from failing attempts. The most common patterns: (1) the element is detected correctly but the bounding box is slightly off (recalibrate center-point calculation or add a small random jitter to avoid hitting the edge); (2) the element changes position between screenshot capture and action execution (add a post-action re-screenshot before computing coordinates); (3) the VLM keeps selecting the wrong element from the SoM (reduce the SoM candidate set by cropping to the relevant UI region before overlaying marks).
+
+---
+
+### 11. Curiosity Bridge
+
+You now understand how AI systems reason about UIs visually — detecting elements, grounding actions, verifying outcomes, and catching accessibility violations. A GUI agent looks at a screenshot the way a human looks at an unfamiliar UI: reading affordances, recognizing conventions, predicting what actions are possible.
+
+The final subtopic of this module — **End-to-end multimodal evaluation** — zooms out from individual techniques to the hardest meta-problem: how do you *measure* whether a multimodal system is actually good? Unlike text RAG (where you can compare the answer to a ground-truth string), evaluating multimodal systems requires dealing with visual grounding accuracy, multi-hop reasoning across modalities, hallucinated visual descriptions, and the absence of clean ground truth for complex visual questions. This is where the gap between "demo works" and "production works" is most visible.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit check — you are done when you can:**
+Explain UI grounding and why it requires both semantic understanding and spatial localization, describe the Set-of-Marks technique and what two problems it separates, identify three failure modes of GUI agents and their root causes, explain why screenshot accessibility audits cover only ~50% of WCAG criteria, and design an error recovery state machine for a GUI agent with session timeout and modal detection handling.
+
+---
+
+**Carry-Forward Review (interleaved from Subtopic 17.3.b):**
+
+> In 17.3.b you learned that stage-1 recall@K is the most critical metric in two-stage retrieval. How does this concept translate to a GUI agent? What is the analogous "stage-1 miss" in a GUI agent context, and what is its production impact?
+
+**Answer:** The analogous "stage-1 miss" in a GUI agent is the **grounding failure** — the agent's element detection and SoM phase fails to include the correct target element in the candidate set before the VLM makes its selection. Just as a stage-1 page miss means stage-2 can never find the right block, a grounding failure means the VLM can never select the correct element — it can only choose from the elements that were detected. The production impact is worse than in document RAG: in RAG, a stage-1 miss produces a "I don't have information" response. In a GUI agent, a grounding miss causes the agent to click the *wrong element* — an active, potentially harmful action in the live system. In healthcare and finance contexts, clicking the wrong record or submitting the wrong value is not a benign "no answer found" — it is an error with real-world consequences. This is why outcome verification (the GUI agent's equivalent of stage-2 re-ranking) is mandatory: it catches the wrong-element action before its effects cascade through the rest of the task flow.
+
+---
+
+## Subtopic 17.3.d: End-to-End Multimodal Evaluation
+
+### ✅ Add to Knowledge Base
+
+### Reading Path + Level Tags
+
+- **Beginner:** Read sections 1–2 and Active Recall.
+- **Intermediate:** Add sections 3–5 and the Hands-On Lab Build step.
+- **Pro:** Complete the full Hands-On Lab (Build → Break → Measure → Explain) plus the capstone practice question.
+
+---
+
+### 0. Pre-Question Hook [Beginner]
+
+**Pause:** You have shipped a multimodal RAG system that answers questions over financial reports with charts and tables. Your offline evaluation says the system is 91% accurate on a 200-question benchmark. But when it goes to production, analysts report that the system frequently gives wrong numbers for charts — specifically, it reads bar heights incorrectly when bars are close together. Your benchmark never caught this because all its chart questions were about clearly separated bars.
+
+Meanwhile, your voice assistant evaluation shows 94% task completion rate. But three weeks in, you discover that "task completion" was measured by whether the tool call fired — not whether the tool call carried the correct slot values. The transfer amount was wrong in 8% of completed sessions.
+
+Both evaluations reported high accuracy. Both evaluations were wrong. Why? And how do you build evaluations that actually catch these failures?
+
+---
+
+### 1. The Intuition (Plain English) [Beginner]
+
+**Evaluating text systems** is already hard. You need ground truth, good metrics, coverage of edge cases, and a way to detect hallucinations. But the problem space is one-dimensional: the model generates text, you compare it to reference text (or use an LLM judge), and you get a score.
+
+**Evaluating multimodal systems is harder along four new dimensions:**
+
+1. **The failure can be in the modality conversion step, not the reasoning step.** The VLM may describe a chart incorrectly (misread bar heights), producing a wrong description that gets embedded and indexed. The retrieval and reasoning pipeline downstream are then correct — but working from wrong inputs. Standard end-to-end evaluation attributes the failure to "wrong answer" without identifying which stage caused it. You need **per-modality failure attribution**: evaluate the VLM summary quality independently from the retrieval quality independently from the reasoning quality.
+
+2. **There is no clean ground truth for visual content.** For a text question, the ground truth is a string. For "describe this bar chart," there are dozens of correct answers — the question is whether the model captured the quantitatively important aspects (values, trends, comparisons) rather than the cosmetic ones (colors, fonts). **Reference-free evaluation** (using a VLM-as-judge that checks factual correctness against the original image) is more appropriate than string-match or BLEU-style metrics.
+
+3. **Multimodal hallucinations are distinct from text hallucinations.** A text LLM hallucinates by generating plausible but false claims. A multimodal system can hallucinate in three additional ways: (a) **object confabulation** — claiming an object exists in an image that doesn't; (b) **visual misattribution** — correctly identifying objects but attributing properties to the wrong one ("the red car is on the left" when it's actually on the right); (c) **cross-modal inconsistency** — the text in the document says "revenue was $4.8B" but the chart shows $4.2B, and the model chooses one source without flagging the conflict.
+
+4. **Task-level evaluation is not the same as step-level evaluation.** A GUI agent that "completes" a task by clicking Submit with the wrong form values has a 100% task completion rate and a 0% task accuracy rate. Voice sessions that "complete" with a tool call that carries wrong slot values are the same failure pattern. **Outcome evaluation** (was the final result correct?) must be separated from **process evaluation** (was each step correct?).
+
+**The evaluation framework you need for multimodal systems:**
+
+```
+Level 0: Modality conversion quality
+  → Are the VLM summaries, OCR extractions, and STT transcripts accurate?
+  → Evaluated: per-modality, independently of downstream pipeline
+
+Level 1: Retrieval quality
+  → Are the right chunks/pages/elements retrieved?
+  → Evaluated: precision@K, recall@K, per-region-type metrics
+
+Level 2: Reasoning quality
+  → Given correct retrieved context, does the model answer correctly?
+  → Evaluated: exact match, F1, VLM-as-judge factual accuracy
+
+Level 3: Task outcome quality (end-to-end)
+  → Was the final task outcome correct and complete?
+  → Evaluated: task-specific metrics (slot accuracy for voice, field accuracy
+    for document extraction, action accuracy for GUI agents)
+```
+
+**Real-world analogy:**
+Think of testing a factory assembly line. You don't just test whether finished products pass quality control — you also test each station independently. If station 3 (welding) produces defective joins, the defect propagates through stations 4 and 5. Final QC catches the defect but can't tell you it started at station 3. Multimodal evaluation is per-station testing of a pipeline where the "stations" are: modality conversion → retrieval → reasoning → action.
+
+**Where the analogy breaks down:** In a physical factory, each station's output is inspectable directly. In a multimodal AI pipeline, intermediate outputs (VLM summaries, embedded representations) may be implicit or distributed, making them harder to inspect without deliberate instrumentation.
+
+**Key terms:**
+- **Per-modality failure attribution:** Independently evaluating each modality conversion step (VLM summary quality, OCR accuracy, STT accuracy) to identify which step introduces errors, rather than only measuring end-to-end accuracy.
+- **Visual grounding accuracy:** A metric measuring how precisely a model localizes a described element in an image — typically measured by IoU (Intersection over Union) between the predicted bounding box and the ground-truth bounding box.
+- **IoU (Intersection over Union):** `area(predicted_bbox ∩ ground_truth_bbox) / area(predicted_bbox ∪ ground_truth_bbox)`. A score of 1.0 is a perfect match; ≥ 0.5 is typically the threshold for "correct" localization.
+- **Object confabulation:** A multimodal hallucination where the model claims an object or element exists in an image that is not present — the visual equivalent of a text hallucination.
+- **Visual misattribution:** Correctly detecting objects or values in an image but assigning properties (position, color, label) to the wrong object — a spatial reasoning failure.
+- **Cross-modal inconsistency:** A conflict between information in different modalities (e.g., the table says $4.8B but the chart shows $4.2B) that the model fails to detect or reconcile.
+- **VQA (Visual Question Answering):** A benchmark task format where a model is given an image and a question about it, and must produce the correct answer — used as both a training objective and an evaluation protocol for multimodal models.
+- **VLM-as-judge:** Using a capable VLM (GPT-4o, Claude 3.5) to evaluate the quality of another model's visual outputs — assessing factual correctness, completeness, and hallucination presence relative to the original image, without requiring pre-authored reference answers.
+- **Task outcome evaluation:** Measuring whether the final result of a multi-step task was correct (e.g., were the extracted document fields accurate? did the voice agent transfer the correct amount?), as opposed to measuring only whether the task reached a terminal state.
+- **Evaluation harness:** A systematic test infrastructure that runs a defined set of evaluation cases against a pipeline, collects outputs at each level, computes metrics, and surfaces per-level failure rates — making regression detectable across pipeline versions.
+- **Hallucination rate by modality:** The proportion of model outputs that contain at least one factually incorrect claim traceable to a specific modality input — used to track where hallucinations originate in a multimodal pipeline.
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+```mermaid
+flowchart TD
+    subgraph PIPELINE["Multimodal Pipeline (production)"]
+        direction LR
+        M0["Raw input\n(doc / audio / screenshot)"]
+        M1["Modality conversion\n(OCR, STT, VLM summary)"]
+        M2["Retrieval\n(embedding + ANN search)"]
+        M3["Reasoning\n(LLM generation)"]
+        M4["Action / Output\n(API call, answer, click)"]
+        M0 --> M1 --> M2 --> M3 --> M4
+    end
+
+    subgraph EVAL["Evaluation Harness (4 levels)"]
+        direction TB
+
+        E0["Level 0: Modality Conversion Quality\nVLM summary accuracy vs image\nOCR field extraction accuracy\nSTT WER vs reference transcript\nMetrics: BLEU/ROUGE on summaries,\nfield-level F1 for OCR,\nWER for STT"]
+
+        E1["Level 1: Retrieval Quality\nDid the right chunk get retrieved?\nMetrics: Precision@K, Recall@K,\nMRR, per-region-type breakdown\n(table vs figure vs text)"]
+
+        E2["Level 2: Reasoning Quality\nGiven correct retrieved context,\nis the answer correct?\nMetrics: Exact match, F1 score,\nVLM-as-judge factual accuracy,\nhallucination rate"]
+
+        E3["Level 3: Task Outcome Quality\nEnd-to-end task correctness\nMetrics: Slot accuracy (voice),\nfield extraction accuracy (docs),\naction success rate (GUI agents),\nIoU for grounding tasks"]
+
+        E0 --> E1 --> E2 --> E3
+    end
+
+    subgraph ATTRIBUTION["Failure Attribution"]
+        direction LR
+        FA1["L0 failure: VLM misread chart\n→ wrong number in summary\n→ wrong answer downstream\nFix: improve VLM prompt / model"]
+        FA2["L1 failure: right page not retrieved\n→ LLM answers from wrong context\nFix: improve embeddings / increase K"]
+        FA3["L2 failure: hallucination in reasoning\n→ answer adds facts not in context\nFix: system prompt, grounding instructions"]
+        FA4["L3 failure: correct answer, wrong action\n→ slot value correct but API call wrong\nFix: tool schema validation"]
+    end
+
+    M1 -.->|"evaluate at"| E0
+    M2 -.->|"evaluate at"| E1
+    M3 -.->|"evaluate at"| E2
+    M4 -.->|"evaluate at"| E3
+
+    E0 --> FA1
+    E1 --> FA2
+    E2 --> FA3
+    E3 --> FA4
+```
+
+**What this diagram shows:**
+- Every stage of the multimodal pipeline has a corresponding evaluation level. Failures at each level have distinct root causes and distinct fixes.
+- Without per-level evaluation, all failures appear as L3 (wrong output) — indistinguishable. Per-level evaluation makes failure attribution precise and actionable.
+- The evaluation harness runs all four levels, not just end-to-end accuracy.
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+---
+
+#### Scenario A: Financial Document QA — Evaluating Chart and Table Extraction Accuracy
+
+**Product/use case context:**
+A quantitative research firm builds a RAG system over 10,000 annual reports. Analysts use it to extract financial metrics: margins, growth rates, segment breakdowns — many from charts. The firm runs a quarterly evaluation to detect model degradation and benchmark new VLM versions.
+
+**The evaluation design challenge — charts have no ground truth strings:**
+
+For a text question ("What was Q3 revenue?"), the ground truth is "$4,821M" and evaluation is string match or number extraction. For a chart question ("What does the revenue trend chart show?"), there is no single correct answer — a VLM may produce any of:
+- "Revenue grew from $3.5B to $4.8B over the four quarters" (correct, specific)
+- "Revenue increased each quarter" (correct, vague)
+- "Revenue was highest in Q1" (wrong — Q4 was highest)
+- "The chart shows quarterly revenue data" (not wrong, but useless)
+
+**The evaluation protocol — three-stage VQA:**
+
+1. **Stage 1: Structured extraction evaluation.** Convert chart questions into structured comparison tasks: *"The chart shows Q1 revenue as $X, Q2 as $Y, Q3 as $Z, Q4 as $W. What are the correct values?"* Provide a ground-truth JSON (`{"Q1": 1082, "Q2": 1187, "Q3": 1241, "Q4": 1311}`) extracted by human annotators. Evaluate the model's extracted values with numeric F1: is each extracted value within 5% of ground truth?
+
+2. **Stage 2: VLM-as-judge.** For open-ended chart description questions, send the model's description AND the original chart image to GPT-4o with the prompt: *"The following is a description of a chart. Compare it to the actual chart image and rate its factual accuracy on a scale of 1–5, identifying any specific numerical errors or trend mischaracterizations."* GPT-4o-as-judge catches: wrong numbers, incorrect trend directions, missing key data points.
+
+3. **Stage 3: Cross-modal consistency check.** For pages where both a table and a chart show the same data, compare the model's answers to the table question vs the chart question about the same metric. If they differ, flag as a cross-modal inconsistency. In a healthy system, both should give the same answer — if they differ, either the table extraction, the chart summarization, or both contain errors.
+
+**Constraints:**
+
+- **Human annotation cost:** Stage 1 requires human-annotated ground truth for each chart. At $2 per chart annotation × 500 charts in the evaluation set = $1,000 for initial annotation. Update cost per quarter: only newly added charts need annotation; cached ground truth covers existing charts.
+- **GPT-4o-as-judge cost:** Stage 2 sends 500 VLM calls per evaluation run. At $0.03/call = $15 per quarterly evaluation. Negligible.
+- **Evaluating model versions:** Run both the current production VLM (for chart summarization) and a candidate new version through the same evaluation set before upgrading. Compare: numeric F1 per chart type (bar, line, pie), VLM-as-judge scores per chart complexity level. Upgrade only if candidate version improves on ≥ 2/3 metrics with no regression on the third.
+
+**What good looks like:**
+- Numeric value extraction F1 (within 5% tolerance): ≥ 0.85
+- VLM-as-judge factual accuracy score mean: ≥ 4.0/5.0
+- Cross-modal inconsistency rate: < 3%
+
+---
+
+#### Scenario B: Voice Assistant — Slot Accuracy and Task Outcome Evaluation
+
+**Product/use case context:**
+A bank's voice assistant handles transfers, balance inquiries, and bill payments. The engineering team runs weekly evaluation to detect model drift and catch regressions before they reach production. The evaluation team learned the hard way that "task completion rate" is a misleading metric — sessions can "complete" with wrong values.
+
+**The failure the original evaluation missed:**
+
+The original evaluation defined success as: *the session reached the confirmation step AND the tool call fired.* This produced a 96% success rate. But the quality team discovered that 8% of tool calls carried a `transfer_amount` that didn't match what the user said — specifically, amounts like "five hundred dollars" were being transcribed as "500" in some STT conditions but hallucinated as "5000" in edge cases (loud background noise, fast speech).
+
+**The correct evaluation hierarchy:**
+
+```
+Level 0 (STT quality):
+  Metric: WER on a 200-utterance test set covering the full range of
+  amount phrasings — "five hundred," "five hundred dollars," "500 bucks,"
+  "half a thousand." Target: WER < 8%.
+
+Level 1 (Slot extraction accuracy):
+  Given a known transcript, does the session state manager extract the
+  correct slot values?
+  Metric: per-slot accuracy = correct slot value extracted / total test cases
+  Test: 100 transcripts with known amounts, account types, destinations
+  Target: per-slot accuracy > 97%
+
+Level 2 (Confirmation state correctness):
+  Does the confirmation step catch any stale or incorrect values?
+  Metric: confirmation accuracy = correct value confirmed / total confirmations
+  Target: 100% (confirmation must always reflect the current slot state)
+
+Level 3 (Task outcome accuracy):
+  Does the tool call payload match the user's final confirmed intent?
+  Metric: field accuracy = tool call field value matches confirmed intent
+  for each field (amount, source, destination)
+  Target: 100% (zero incorrect transfers)
+  Measurement: post-call comparison of tool call log vs session state at confirmation
+```
+
+**The critical insight: L0 failure doesn't always propagate to L3.**
+
+STT may misread "five hundred" as "fife hundred" — but the slot extraction NLP corrects it to 500. Or STT misreads as "500" when the user said "5000" — slot extraction accepts it without normalization, and the confirmation step presents "$500 from savings to checking, correct?" The user says yes to the wrong value. L3 fails. The failure started at L0 but was not caught at L1 (because "500" is a valid number) or L2 (because the user confirmed the wrong value).
+
+**The evaluation must cover this cross-level propagation:** for each test case, trace which level introduced the error, even if earlier levels appeared to pass.
+
+---
+
+#### Scenario C: Document AI Pipeline — Per-Region-Type Evaluation
+
+**Product/use case context:**
+A legal tech firm's document AI system extracts key fields from contracts (parties, dates, payment terms, termination conditions). The extraction runs on 3 region types: tables (payment schedules), paragraphs (termination clauses), and figures (org charts showing party relationships). A quarterly evaluation monitors extraction accuracy by region type.
+
+**The evaluation design insight — region types have different error profiles:**
+
+| Region type | Most common error | Metric most sensitive to it |
+|---|---|---|
+| Table | Wrong column value (header loss) | Field-level precision per column |
+| Paragraph | Hallucinated clause detail | VLM-as-judge factual accuracy |
+| Figure (org chart) | Missing relationship (edge) | Entity relation F1 |
+
+Running a single aggregate accuracy metric (e.g., "87% of fields extracted correctly") hides that tables are at 95%, paragraphs at 89%, and org charts at 71% — the org chart failure is masked by the stronger performance on the other two. Per-region-type breakdown makes the org chart problem visible and actionable.
+
+**Evaluation harness design:**
+
+```python
+# Pseudocode: per-region-type evaluation loop
+for document in evaluation_set:
+    for region in document.regions:
+        extracted = pipeline.extract(region)
+        ground_truth = annotations[document.id][region.id]
+
+        if region.type == "table":
+            score = field_level_f1(extracted.values, ground_truth.values)
+        elif region.type == "paragraph":
+            score = vlm_judge_factual_accuracy(extracted.text, ground_truth.text,
+                                               original_image=region.image)
+        elif region.type == "figure":
+            score = entity_relation_f1(extracted.entities, ground_truth.entities,
+                                       extracted.relations, ground_truth.relations)
+
+        results[region.type].append(score)
+
+# Report per-type, not just aggregate
+for rtype, scores in results.items():
+    print(f"{rtype}: mean={mean(scores):.3f}, p10={percentile(scores,10):.3f}")
+```
+
+This makes regressions detectable at the region-type level: if a new VLM version improves table extraction but degrades figure understanding, the aggregate score might not change — but the per-type breakdown shows the tradeoff clearly.
+
+---
+
+### 4. System View [Intermediate]
+
+```
+Evaluation harness inputs:
+  - Test set: {question_id, question, ground_truth, modality_source, region_type,
+               source_image (for visual questions), expected_tool_call (for agents)}
+  - Pipeline under evaluation: the full multimodal system being tested
+  - Evaluation configuration: {K for retrieval eval, judge_model, numeric_tolerance,
+                                 iou_threshold for grounding}
+
+Evaluation transformations (per level):
+
+  Level 0 — Modality conversion:
+    Run: VLM over chart images from test set → generate summaries
+    Compare: summaries vs human-annotated ground truth
+    Metrics: BLEU/ROUGE on descriptions, numeric value F1, VLM-as-judge score (1–5)
+    Also: WER for STT test cases, field extraction F1 for OCR test cases
+
+  Level 1 — Retrieval:
+    Run: embed queries → retrieve top-K from test index
+    Compare: retrieved chunks vs known relevant chunks from test annotation
+    Metrics: Precision@K, Recall@K, MRR (Mean Reciprocal Rank),
+             per-region-type breakdown (table / figure / text recall separately)
+
+  Level 2 — Reasoning:
+    Run: LLM on correctly retrieved context (oracle retrieval) → generate answer
+    Compare: answer vs ground truth
+    Metrics: Exact match, numeric F1 (within tolerance), VLM-as-judge factual score,
+             hallucination rate (% of answers with at least one unsupported claim)
+
+  Level 3 — Task outcome:
+    Run: end-to-end pipeline → collect final output (tool call payload, extracted JSON,
+         action log)
+    Compare: output vs ground-truth task outcome
+    Metrics: Field-level accuracy, slot accuracy, action success rate, IoU (for grounding)
+
+Outputs:
+  - Per-level score table: {level, metric, score, delta_from_baseline}
+  - Per-region-type breakdown: {region_type, level, metric, score}
+  - Failure cases: {question_id, failure_level, predicted, expected, gap}
+  - Regression alerts: any metric below (baseline - 3%) triggers alert
+```
+
+**Observability:**
+
+| Signal | Why it matters |
+|---|---|
+| Per-level failure rate by level | Identifies which pipeline stage is the bottleneck |
+| Per-region-type accuracy | Catches modality-specific regressions hidden by aggregate scores |
+| Hallucination rate trend over time | Detects model drift when the LLM or VLM is updated |
+| VLM-as-judge score distribution | If scores cluster at 3/5, the model is partially correct — useful for identifying easy vs hard questions |
+| Numeric tolerance sensitivity | How much does accuracy change when tolerance tightens from 5% to 1%? High sensitivity = model is often close but not exact |
+| Evaluation-to-production gap | Do evaluation failures predict production failures? Requires manual review of production errors to check |
+
+**Failure points in evaluation design (not just the pipeline):**
+
+| Evaluation failure | Symptom | Root cause |
+|---|---|---|
+| Benchmark overfitting | Eval score 95% but production performance 70% | Evaluation set is too narrow; doesn't cover edge cases representative of production traffic |
+| Metric-task mismatch | High BLEU score, wrong numeric answers | BLEU rewards surface text similarity, not numeric correctness; wrong metric for quantitative extraction |
+| Oracle retrieval masking retrieval failures | Level-2 reasoning looks good but end-to-end fails | Level 2 was evaluated with correct context injected; real pipeline's retrieval was never tested |
+| VLM-as-judge bias | Judge rates its own model's outputs higher | Judge model and evaluated model are the same (e.g., GPT-4o judging GPT-4o outputs); use a different judge |
+| Level-3 measurement at wrong granularity | "Task complete" = tool call fired; misses wrong field values | Task outcome metric measures completion state, not value accuracy; should measure field-level correctness |
+| Ground truth stale after UI/doc update | Eval annotations describe old document version | Evaluation set not versioned; new document format changes field locations but annotations still reference old locations |
+
+---
+
+### 5. System Design Flavor [Intermediate]
+
+**Evaluation set construction for multimodal systems:**
+
+```
+What a good multimodal evaluation set must contain:
+
+1. Modality coverage:
+   - Pure text questions (baseline)
+   - Chart-only questions (value extraction, trend detection)
+   - Table questions (multi-row, multi-column, multi-header)
+   - Mixed questions (table + chart covering the same data)
+   - OCR questions (scanned forms, handwritten fields)
+   - Voice questions (tested as recorded audio files, not text)
+   - UI grounding questions (annotated screenshots + task descriptions)
+
+2. Difficulty tiers:
+   - Easy: single-modality, direct lookup ("What is Q3 revenue?")
+   - Medium: single-modality, reasoning required ("Which quarter had the highest YoY growth?")
+   - Hard: multi-modality, cross-source reconciliation ("Does the chart contradict the table?")
+   - Adversarial: edge cases known to break the system (closely-spaced bars, multi-level headers,
+     handwritten corrections, background noise in audio)
+
+3. Ground truth format:
+   - Structured answers where possible: {"value": 4821, "unit": "M", "currency": "USD", "period": "Q3"}
+   - Open answers: evaluated by VLM-as-judge with factual rubric
+   - Binary answers (cross-modal consistency): {"consistent": true/false, "conflict_description": "..."}
+   - Grounding annotations: {bbox: [x0, y0, x1, y1], element_label: "Submit button"}
+
+4. Versioning:
+   - Every evaluation set has a version number
+   - When document layouts change or VLM models update, create a new version
+   - Track deltas: which questions changed, which were added/removed
+   - Never modify historical evaluation results — always run new evaluations on new versions
+```
+
+**Key tradeoffs:**
+
+| Decision | Option A | Option B | Guidance |
+|---|---|---|---|
+| Ground truth collection | Human annotation (expensive, accurate) | LLM-generated ground truth (cheap, risky) | Human annotation for the evaluation set; LLM-generated for training data augmentation. Never use LLM-generated ground truth for evaluation — it bakes the model's own biases into the benchmark |
+| Judge model | Same model family as evaluated model (GPT-4o judging GPT-4o) | Different model family (Claude judging GPT, or human) | Always use a different judge. Same-family judges have systematic bias toward their own outputs. Cross-family or human judges are more reliable |
+| Evaluation frequency | Quarterly (batch) | Continuous (every deployment) | Continuous is better but expensive; compromise: run L0+L1 on every deployment (cheap), full L0–L3 on major VLM/LLM changes and quarterly |
+| Oracle retrieval in Level 2 | Yes (inject correct context, test reasoning only) | No (use real retrieval) | Oracle at Level 2 is essential for isolating reasoning quality from retrieval quality; without it, Level 2 conflates two failure modes |
+| Numeric tolerance | 0% (exact match) | 5–10% (approximate) | Exact match for fields where precision matters (dollar amounts, dates, account numbers); 5% tolerance for computed metrics (margins, growth rates) where rounding and computation path differ between human and model |
+
+**Scaling consideration:**
+At 10× evaluation set size (5,000 questions), running the full 4-level harness with VLM-as-judge at Level 2 becomes expensive: 5,000 VLM judge calls at $0.03 = $150 per evaluation run. Optimization: (1) Run VLM-as-judge only on questions where structured metrics (exact match, numeric F1) are insufficient — typically open-ended descriptions. Structured questions use cheaper deterministic metrics. (2) Cache judge results: if the question and the model's answer are identical to a previous run (no model change for this question), reuse the cached judge score. (3) Use a smaller, faster judge model (Claude Haiku, GPT-4o-mini) for L0/L1 speed runs; reserve GPT-4o for L3 evaluation of high-stakes failures.
+
+---
+
+### 6. Common Mistakes + Debugging [Intermediate]
+
+---
+
+#### Mistake 1: Using aggregate accuracy to monitor a multi-region-type system
+
+**Symptom:** The quarterly evaluation reports 88% overall accuracy — unchanged from last quarter. Engineers consider the system stable. But three weeks later, analysts report that chart-based answers have gotten noticeably worse. Investigation reveals that a VLM model update improved table extraction (95% → 97%) but degraded chart understanding (82% → 71%). The aggregate stayed at 88% because the gains and losses canceled each other out.
+
+**Likely cause:** The evaluation reports a single aggregate accuracy number. The aggregate masks per-region-type regressions because different region types have different counts in the evaluation set — the larger table count dilutes the chart degradation signal.
+
+**First debugging step:** Add per-region-type breakdowns to every evaluation report — never report only aggregate. The table should always include: `{region_type, current_score, baseline_score, delta, alert_threshold}`. Set a per-type regression alert at `delta < -3%` on any region type, regardless of aggregate performance. When the chart degradation fires an alert, trace it to the specific VLM model change that caused it. Then make the upgrade decision with full information: "VLM v2 improves tables by +2% but degrades charts by -11% — not worth upgrading."
+
+---
+
+#### Mistake 2: Level-2 reasoning evaluation uses oracle retrieval, but Level-3 failure is reported as "reasoning failure"
+
+**Symptom:** The evaluation report shows Level-2 reasoning accuracy of 91% (evaluated with oracle-retrieved context). End-to-end accuracy is 74%. The team concludes "the LLM reasoning is the problem" and spends two weeks on prompt engineering. End-to-end accuracy barely improves.
+
+**Likely cause:** The 17% gap between Level-2 (91%) and Level-3 (74%) is not a reasoning failure — it is a retrieval failure. Level 2 uses oracle context (the correct chunks are injected), so reasoning appears good. But in production, retrieval fails to return the correct chunks in 17% of cases, causing the LLM to answer from wrong context. No amount of prompt engineering fixes a retrieval gap.
+
+**First debugging step:** Before attributing failure to reasoning, compute the Level-1 retrieval gap: run Level-1 evaluation (retrieval-only, no reasoning) on the same question set. If Level-1 recall@3 is 75% (the correct chunk is in top-3 only 75% of the time), then 25% of questions have no correct context to reason over — that 25% failure is a retrieval problem. The correct fix is in the retrieval layer (better embeddings, larger K, hybrid retrieval, query expansion), not the reasoning layer. Always compute Level-1 before blaming Level-2.
+
+---
+
+#### Mistake 3: VLM-as-judge uses the same model family that generated the outputs, producing inflated scores
+
+**Symptom:** Level-2 VLM-as-judge scores for chart descriptions average 4.3/5.0 — suggesting excellent quality. But human reviewers independently rate the same outputs at 2.8/5.0. The judge is systematically overrating the outputs.
+
+**Likely cause:** GPT-4o was used both to generate the chart summaries (the VLM step) and as the judge evaluating those summaries. Models in the same family share training distribution biases — they tend to produce similar text patterns and rate each other's outputs favorably. This is same-family judge bias.
+
+**First debugging step:** Re-run the evaluation using a different model family as judge — Claude 3.5 Sonnet if GPT-4o generated the outputs, or vice versa. Compare the cross-family judge scores to the same-family scores. If cross-family scores are significantly lower (2.8 vs 4.3), same-family bias is confirmed. Going forward: always use a different model family for the judge, or use human evaluation as the ground truth calibration. If budget constrains human evaluation to a small sample (50 questions), use it to calibrate the judge: compute the correlation between human scores and judge scores. A well-calibrated judge should have Pearson r > 0.85 with human ratings.
+
+---
+
+### 7. Hands-On Lab [Pro]
+
+**Topic:** Multimodal Evaluation Harness — Build → Break → Measure → Explain
+
+**Goal:** Build a minimal 4-level evaluation harness for a document AI pipeline. Implement evaluation at each level, compute per-region-type breakdown, and simulate the "aggregate masks regression" failure. Measure how per-level attribution changes the diagnosis.
+
+---
+
+#### Build: Evaluation Harness
+
+```python
+import re
+import json
+import math
+from dataclasses import dataclass, field
+from typing import Optional
+from statistics import mean
+
+# ── Evaluation test case ──────────────────────────────────────────────────
+@dataclass
+class EvalCase:
+    question_id: str
+    question: str
+    region_type: str              # table | figure | paragraph
+    ground_truth: dict            # structured ground truth
+    retrieved_chunks: list[str]   # what retrieval returned (for L1/L2)
+    correct_chunks: list[str]     # the chunks that should have been retrieved
+    model_answer: str             # what the model generated
+    oracle_answer: str            # what model generates given perfect context
+    tool_call_payload: dict       # for L3: what the model called the tool with
+    expected_tool_call: dict      # for L3: correct tool call payload
+
+# ── Level 0: Modality conversion quality ─────────────────────────────────
+def evaluate_level0_numeric(
+    extracted_value: float,
+    ground_truth_value: float,
+    tolerance_pct: float = 0.05
+) -> bool:
+    """Check if extracted numeric value is within tolerance of ground truth."""
+    if ground_truth_value == 0:
+        return extracted_value == 0
+    return abs(extracted_value - ground_truth_value) / abs(ground_truth_value) <= tolerance_pct
+
+def extract_numbers(text: str) -> list[float]:
+    """Extract all numbers from a text string."""
+    return [float(n.replace(',', '')) for n in re.findall(r'\b[\d,]+\.?\d*\b', text)]
+
+def evaluate_level0_vlm_summary(
+    model_summary: str,
+    ground_truth_values: dict,
+    tolerance_pct: float = 0.05
+) -> dict:
+    """
+    Evaluate a VLM chart summary against known ground-truth values.
+    In production: also call a VLM judge with the original image.
+    Here: check whether known numeric values appear correctly in the summary.
+    """
+    results = {}
+    for key, gt_val in ground_truth_values.items():
+        # Check if a number within tolerance of gt_val appears in the summary
+        extracted = extract_numbers(model_summary)
+        found = any(evaluate_level0_numeric(e, gt_val, tolerance_pct) for e in extracted)
+        results[key] = {"expected": gt_val, "found_in_summary": found}
+
+    correct = sum(1 for r in results.values() if r["found_in_summary"])
+    return {
+        "field_recall": correct / len(results) if results else 0.0,
+        "details": results,
+    }
+
+# ── Level 1: Retrieval quality ────────────────────────────────────────────
+def evaluate_level1_retrieval(
+    retrieved: list[str],
+    relevant: list[str],
+) -> dict:
+    """Compute precision@K and recall@K for a single query."""
+    k = len(retrieved)
+    relevant_set = set(relevant)
+    retrieved_set = set(retrieved)
+
+    true_positives = len(retrieved_set & relevant_set)
+    precision = true_positives / k if k > 0 else 0.0
+    recall = true_positives / len(relevant_set) if relevant_set else 0.0
+
+    # MRR: position of first relevant result
+    mrr = 0.0
+    for i, chunk in enumerate(retrieved):
+        if chunk in relevant_set:
+            mrr = 1.0 / (i + 1)
+            break
+
+    return {"precision_at_k": precision, "recall_at_k": recall, "mrr": mrr}
+
+# ── Level 2: Reasoning quality ────────────────────────────────────────────
+def evaluate_level2_exact_match(answer: str, ground_truth: str) -> bool:
+    return answer.strip().lower() == ground_truth.strip().lower()
+
+def evaluate_level2_numeric_f1(
+    answer: str,
+    ground_truth_values: dict,
+    tolerance_pct: float = 0.05
+) -> float:
+    """F1 score for numeric value extraction."""
+    extracted = extract_numbers(answer)
+    gt_values = list(ground_truth_values.values())
+
+    if not gt_values:
+        return 1.0 if not extracted else 0.0
+
+    tp = sum(
+        1 for gt in gt_values
+        if any(evaluate_level0_numeric(e, gt, tolerance_pct) for e in extracted)
+    )
+    precision = tp / len(extracted) if extracted else 0.0
+    recall = tp / len(gt_values)
+    if precision + recall == 0:
+        return 0.0
+    return 2 * precision * recall / (precision + recall)
+
+def simulate_vlm_judge_score(
+    model_answer: str,
+    oracle_answer: str
+) -> float:
+    """
+    Simulates VLM-as-judge scoring (1–5).
+    In production: send both answers + original image to GPT-4o/Claude with rubric.
+    Here: keyword overlap as a proxy for factual agreement.
+    """
+    model_nums = set(re.findall(r'\b\d+\.?\d*\b', model_answer))
+    oracle_nums = set(re.findall(r'\b\d+\.?\d*\b', oracle_answer))
+    if not oracle_nums:
+        return 3.0
+    overlap = len(model_nums & oracle_nums) / len(oracle_nums)
+    # Scale to 1–5
+    return 1.0 + overlap * 4.0
+
+# ── Level 3: Task outcome quality ─────────────────────────────────────────
+def evaluate_level3_field_accuracy(
+    tool_call: dict,
+    expected: dict,
+    numeric_tolerance_pct: float = 0.01   # strict for financial actions
+) -> dict:
+    """Field-by-field comparison of tool call payload vs expected."""
+    results = {}
+    for field_name, expected_val in expected.items():
+        actual_val = tool_call.get(field_name)
+        if isinstance(expected_val, (int, float)) and isinstance(actual_val, (int, float)):
+            correct = evaluate_level0_numeric(actual_val, expected_val, numeric_tolerance_pct)
+        else:
+            correct = str(actual_val).lower() == str(expected_val).lower()
+        results[field_name] = {"expected": expected_val, "actual": actual_val, "correct": correct}
+
+    total = len(results)
+    correct = sum(1 for r in results.values() if r["correct"])
+    return {
+        "field_accuracy": correct / total if total > 0 else 0.0,
+        "fields_correct": correct,
+        "fields_total": total,
+        "details": results,
+    }
+
+# ── Full harness ──────────────────────────────────────────────────────────
+@dataclass
+class HarnessResult:
+    level: str
+    region_type: str
+    metric: str
+    score: float
+    question_id: str
+
+def run_evaluation_harness(cases: list[EvalCase]) -> dict:
+    """Run all 4 evaluation levels across all test cases."""
+    results = []
+
+    for case in cases:
+        # Level 0
+        l0 = evaluate_level0_vlm_summary(
+            case.model_answer,
+            case.ground_truth.get("values", {}),
+        )
+        results.append(HarnessResult("L0", case.region_type,
+                                     "field_recall", l0["field_recall"], case.question_id))
+
+        # Level 1
+        l1 = evaluate_level1_retrieval(case.retrieved_chunks, case.correct_chunks)
+        results.append(HarnessResult("L1", case.region_type,
+                                     "recall_at_k", l1["recall_at_k"], case.question_id))
+        results.append(HarnessResult("L1", case.region_type,
+                                     "precision_at_k", l1["precision_at_k"], case.question_id))
+        results.append(HarnessResult("L1", case.region_type,
+                                     "mrr", l1["mrr"], case.question_id))
+
+        # Level 2
+        l2_f1 = evaluate_level2_numeric_f1(case.oracle_answer,
+                                            case.ground_truth.get("values", {}))
+        l2_judge = simulate_vlm_judge_score(case.model_answer, case.oracle_answer)
+        results.append(HarnessResult("L2", case.region_type,
+                                     "numeric_f1", l2_f1, case.question_id))
+        results.append(HarnessResult("L2", case.region_type,
+                                     "vlm_judge_score", l2_judge / 5.0, case.question_id))
+
+        # Level 3
+        l3 = evaluate_level3_field_accuracy(case.tool_call_payload,
+                                             case.expected_tool_call)
+        results.append(HarnessResult("L3", case.region_type,
+                                     "field_accuracy", l3["field_accuracy"], case.question_id))
+
+    # Aggregate by level and region_type
+    summary = {}
+    for level in ["L0", "L1", "L2", "L3"]:
+        for rtype in ["table", "figure", "paragraph"]:
+            key = f"{level}_{rtype}"
+            matching = [r.score for r in results
+                        if r.level == level and r.region_type == rtype
+                        and r.metric in ("field_recall", "recall_at_k", "numeric_f1", "field_accuracy")]
+            if matching:
+                summary[key] = round(mean(matching), 3)
+
+    # Also compute flat aggregate (the "misleading" single number)
+    all_l3 = [r.score for r in results if r.level == "L3" and r.metric == "field_accuracy"]
+    summary["L3_aggregate"] = round(mean(all_l3), 3) if all_l3 else 0.0
+
+    return summary
+
+# ── Build test cases ──────────────────────────────────────────────────────
+def build_test_cases() -> list[EvalCase]:
+    """Test cases covering all three region types."""
+
+    # TABLE: Q3 revenue from income statement
+    table_good = EvalCase(
+        question_id="q1_table_q3_revenue",
+        question="What was Q3 revenue?",
+        region_type="table",
+        ground_truth={"values": {"Q3_revenue": 1241}},
+        retrieved_chunks=["table_chunk_income_stmt"],
+        correct_chunks=["table_chunk_income_stmt"],
+        model_answer="Q3 revenue was $1,241M.",
+        oracle_answer="Q3 revenue was $1,241M.",
+        tool_call_payload={"amount": 1241, "period": "Q3", "metric": "revenue"},
+        expected_tool_call={"amount": 1241, "period": "Q3", "metric": "revenue"},
+    )
+
+    # TABLE: regression case — wrong chunk retrieved (header strip)
+    table_regression = EvalCase(
+        question_id="q2_table_fy2022_revenue",
+        question="What was FY2022 revenue?",
+        region_type="table",
+        ground_truth={"values": {"FY2022_revenue": 4102}},
+        retrieved_chunks=["table_chunk_no_header"],   # wrong — no header context
+        correct_chunks=["table_chunk_income_stmt"],
+        model_answer="FY2022 revenue was $4,821M.",  # wrong column (FY2023)
+        oracle_answer="FY2022 revenue was $4,102M.",
+        tool_call_payload={"amount": 4821, "period": "FY2022", "metric": "revenue"},
+        expected_tool_call={"amount": 4102, "period": "FY2022", "metric": "revenue"},
+    )
+
+    # FIGURE: chart summary — good VLM description
+    figure_good = EvalCase(
+        question_id="q3_figure_q3_bar",
+        question="What does the revenue chart show for Q3?",
+        region_type="figure",
+        ground_truth={"values": {"Q3_revenue": 1241}},
+        retrieved_chunks=["figure_chunk_revenue_chart"],
+        correct_chunks=["figure_chunk_revenue_chart"],
+        model_answer="Q3 revenue was $1,241M, the third highest quarter.",
+        oracle_answer="Q3 revenue was $1,241M.",
+        tool_call_payload={"amount": 1241, "period": "Q3"},
+        expected_tool_call={"amount": 1241, "period": "Q3"},
+    )
+
+    # FIGURE: chart regression — generic VLM description misses value
+    figure_regression = EvalCase(
+        question_id="q4_figure_q3_bar_generic",
+        question="What was Q3 revenue from the chart?",
+        region_type="figure",
+        ground_truth={"values": {"Q3_revenue": 1241}},
+        retrieved_chunks=["figure_chunk_revenue_chart"],
+        correct_chunks=["figure_chunk_revenue_chart"],
+        model_answer="The chart shows quarterly revenue data with bars of varying height.",
+        oracle_answer="Q3 revenue was $1,241M.",
+        tool_call_payload={"amount": None, "period": "Q3"},    # model failed to extract
+        expected_tool_call={"amount": 1241, "period": "Q3"},
+    )
+
+    # PARAGRAPH: clause extraction
+    paragraph_good = EvalCase(
+        question_id="q5_para_termination",
+        question="What is the termination notice period?",
+        region_type="paragraph",
+        ground_truth={"values": {"notice_days": 30}},
+        retrieved_chunks=["para_chunk_termination"],
+        correct_chunks=["para_chunk_termination"],
+        model_answer="The termination notice period is 30 days.",
+        oracle_answer="Either party may terminate with 30 days written notice.",
+        tool_call_payload={"notice_period_days": 30},
+        expected_tool_call={"notice_period_days": 30},
+    )
+
+    return [table_good, table_regression, figure_good, figure_regression, paragraph_good]
+
+# ── Main evaluation run ───────────────────────────────────────────────────
+if __name__ == "__main__":
+    cases = build_test_cases()
+    summary = run_evaluation_harness(cases)
+
+    print("=== Evaluation Harness Results ===\n")
+    print(f"{'Metric':<30} {'Score':>8}")
+    print("-" * 40)
+
+    # Per-level, per-region-type
+    for rtype in ["table", "figure", "paragraph"]:
+        for level in ["L0", "L1", "L2", "L3"]:
+            key = f"{level}_{rtype}"
+            if key in summary:
+                print(f"{key:<30} {summary[key]:>8.3f}")
+        print()
+
+    # Aggregate (the misleading number)
+    print(f"{'L3_aggregate (misleading)':<30} {summary['L3_aggregate']:>8.3f}")
+    print("\nNote: L3_aggregate masks the figure regression (q4).")
+    print("Per-type breakdown reveals: figure L3 = 0.5, table L3 = 0.5, para L3 = 1.0")
+```
+
+---
+
+#### Break: Demonstrate that aggregate masks per-type regression
+
+```python
+# Break Experiment — same 5 test cases, but only report aggregate
+all_cases = build_test_cases()
+summary_full = run_evaluation_harness(all_cases)
+
+print(f"\n--- BREAK: Aggregate-only reporting ---")
+print(f"Reported accuracy: {summary_full['L3_aggregate']:.0%}")
+# Expected output: ~67% aggregate
+# This hides that paragraphs are perfect (100%), tables are 50% (one regression),
+# and figures are 50% (one regression).
+# An engineer reading 67% aggregate would investigate "the system" broadly.
+# Per-type: engineer immediately knows table L1 recall failure (header strip)
+# and figure L0 failure (generic VLM summary) are distinct problems needing
+# distinct fixes.
+
+# Verify: check per-type breakdown
+print(f"\nPer-type L3 scores:")
+for rtype in ["table", "figure", "paragraph"]:
+    k = f"L3_{rtype}"
+    if k in summary_full:
+        print(f"  {rtype}: {summary_full[k]:.3f}")
+
+# Check L1 vs L3 gap for table regression
+print(f"\nDiagnostic: L1_table recall = {summary_full.get('L1_table', 'n/a')}")
+print(f"Diagnostic: L3_table field_accuracy = {summary_full.get('L3_table', 'n/a')}")
+# If L1_table < L3_table expectation, the table regression is a retrieval problem, not reasoning.
+```
+
+---
+
+#### Measure: Record signals
+
+| Level + Region | Score | Failure identified? |
+|---|---|---|
+| L0 table field_recall | ___ | ___ |
+| L0 figure field_recall | ___ | ___ (should be ~0.0 for generic summary case) |
+| L1 table recall@K | ___ | ___ |
+| L1 figure recall@K | ___ | ___ |
+| L2 table numeric F1 | ___ | ___ |
+| L2 figure numeric F1 | ___ | ___ |
+| L3 table field_accuracy | ___ | ___ |
+| L3 figure field_accuracy | ___ | ___ |
+| L3 paragraph field_accuracy | ___ | ___ |
+| **L3 aggregate** | ___ | ___ (should be the same score as above but hides per-type view) |
+
+---
+
+#### Explain: What each design decision prevents
+
+**Four-level evaluation hierarchy:** Prevents misattribution of failures. Without level separation, every failure appears as an L3 outcome failure — you don't know if it started at modality conversion (L0), retrieval (L1), or reasoning (L2). With level separation: the table regression's L1 recall failure points directly at the chunking/embedding layer; the figure regression's L0 field recall failure points at the VLM prompt. These are completely different fixes requiring completely different engineering work.
+
+**Per-region-type breakdown:** Prevents hidden regressions when one region type improves and another degrades. Aggregate scores are useful for a high-level signal but dangerous as the primary monitoring metric for multimodal systems. The breakdown forces engineers to monitor each modality independently.
+
+**VLM-as-judge using a different model family:** Prevents same-family bias that inflates judge scores. A simulated judge in this lab uses keyword overlap — a deliberately crude proxy that has no family bias. In production, the cross-family judgment is the closest approximation to an unbiased automated evaluation.
+
+**Oracle retrieval at Level 2:** Cleanly separates retrieval failure from reasoning failure. Without oracle retrieval, a Level-2 failure could be caused by either wrong context (retrieval problem) or wrong reasoning over correct context. Oracle injection makes the Level-2 result unambiguous: if the model fails with the correct context, the failure is in the reasoning layer. This diagnostic clarity is what makes per-level failure attribution actionable.
+
+---
+
+### 8. Active Recall [All Levels]
+
+**Q1 [Beginner]:** What is per-modality failure attribution, and why is it necessary for multimodal systems compared to text-only RAG?
+**Q2 [Beginner]:** What are the three types of hallucination specific to multimodal systems that don't occur in text-only systems?
+**Q3 [Intermediate]:** A document AI system reports 89% end-to-end field extraction accuracy. When you add per-region-type breakdown, you find: tables 96%, paragraphs 92%, figures 68%. What specific evaluation steps would you run next to diagnose the figure failure?
+**Q4 [Intermediate]:** Why should the VLM-as-judge never be the same model family as the model generating the outputs being evaluated?
+**Q5 [Pro]:** Your Level-2 reasoning evaluation (with oracle retrieval) shows 91% accuracy. Your Level-3 end-to-end shows 74%. Explain, step by step, how you would diagnose the 17% gap and identify its root cause.
+
+---
+
+**Answer Key:**
+
+**A1:** Per-modality failure attribution evaluates each modality conversion step (VLM summary quality, OCR accuracy, STT accuracy) independently from the downstream pipeline steps (retrieval, reasoning, action). It is necessary for multimodal systems because the failure can originate in the modality conversion — before retrieval or reasoning even runs — and end-to-end evaluation attributes this failure to "wrong answer" without identifying the source. In text-only RAG, there is no modality conversion step; the input is directly tokenizable. In multimodal RAG, a wrong VLM chart description propagates through the entire pipeline and produces a wrong final answer — but the retrieval and reasoning layers may have worked perfectly. Without Level-0 evaluation, engineering teams fix the wrong layer.
+
+**A2:** The three multimodal-specific hallucination types: (1) **Object confabulation** — the model claims an object, value, or entity exists in the image that is not present ("the chart shows a red line for 2022" when there is no 2022 line); (2) **Visual misattribution** — the model correctly identifies objects but assigns properties to the wrong one ("the leftmost bar shows Q3" when Q3 is the third bar from the left, not the leftmost); (3) **Cross-modal inconsistency** — the model fails to detect or reconcile a conflict between information presented in different modalities (a table says revenue is $4.8B; the adjacent chart shows $4.2B; the model confidently picks one without flagging the discrepancy).
+
+**A3:** Next steps for diagnosing the figure failure (68%): First, run a Level-0 evaluation on figure regions specifically: take the VLM summaries generated for figure chunks in the evaluation set and compare them to human-annotated ground truth using numeric F1. If Level-0 field_recall for figures is below 0.7, the VLM summaries are not capturing the quantitative data — the problem is at modality conversion. Fix: improve the VLM prompt to be extraction-oriented. If Level-0 is acceptable (>0.85), run a Level-1 retrieval evaluation filtered to figure-type chunks: are the correct figure chunks being retrieved for figure-dependent questions? If Level-1 figure recall@K is below 0.7, the figure chunk embeddings are poor (generic summaries embed poorly for specific queries). Fix: re-embed with improved summaries. If Level-1 is also acceptable, run Level-2 with oracle retrieval on figure questions: do the figure summaries, when perfectly retrieved, produce correct answers? A Level-2 failure here indicates the LLM is not properly using the figure summary — possibly an instruction anchoring problem (the model doesn't treat the VLM summary as authoritative visual evidence).
+
+**A4:** Same-family judges have systematic bias toward outputs from their own model family because they share training distribution, output style patterns, and implicit preferences for certain phrasings and structures. A GPT-4o judge evaluating GPT-4o outputs tends to rate them higher than a Claude judge would, because both the generator and judge share similar "what good looks like" internalization from their training. This inflates evaluation scores in a way that doesn't correlate with actual quality improvements. The inflated scores make it appear the system is improving when model changes haven't actually improved real-world accuracy. Calibration against human ratings (which have no model-family bias) reveals this gap: cross-family judges typically have higher correlation with human ratings than same-family judges.
+
+**A5:** Step-by-step diagnosis of the 17% gap between Level-2 (91%) and Level-3 (74%):
+- **Step 1: Run Level-1 retrieval evaluation.** Compute recall@K for the same question set. If recall@K is 78% (correct chunks in top-K for only 78% of questions), then 22% of questions never had the correct context. These 22% will fail at Level-3 regardless of reasoning quality. Level-1 failure explains up to 22% of the end-to-end gap.
+- **Step 2: Run Level-3 on only the questions where Level-1 retrieval succeeded.** Compare Level-3 accuracy for "retrieval succeeded" vs "retrieval failed" cases. If accuracy for "retrieval succeeded" cases is 91% (matching Level-2), then 100% of the L3 gap is explained by retrieval failures — it's not a reasoning problem at all.
+- **Step 3: If Level-2 accuracy on retrieval-succeeded cases is still below 91%**, there is a residual reasoning failure even with correct context. This could be: (a) the model's system prompt doesn't adequately ground it to the retrieved context (add explicit grounding instruction: "answer only from the provided context"); (b) context window ordering effects (put the most relevant chunk first); (c) hallucination on specific question types that trip the model even with correct context.
+- **Root cause summary:** In most multimodal pipelines, the L2→L3 gap is dominated by retrieval failures (Level 1) rather than reasoning failures (Level 2). The fix is in the retrieval layer — better embeddings, hybrid retrieval, query expansion, larger K — not in the reasoning prompt.
+
+---
+
+### 9. Practice
+
+**Mini-Exercise:**
+You are evaluating a voice banking assistant. You have 50 test sessions with ground-truth slot values and tool call logs. Design a 4-level evaluation checklist: what specific metric do you compute at each level, what does a "failure" look like at each level, and what is the action if that level is the bottleneck?
+
+**Suggested answer:**
+- **Level 0 (STT quality):** Metric: WER per test utterance vs reference transcript. Failure: WER > 8% on amount utterances. Action: retrain or switch STT model; add domain vocabulary fine-tuning for financial amounts.
+- **Level 1 (Slot extraction accuracy):** Given correct transcripts (oracle STT), does the session state manager extract correct slot values? Metric: per-slot accuracy (amount/source/destination). Failure: per-slot accuracy < 97%. Action: improve NLP normalization (number word → digit); audit slot extractor for edge cases (compound amounts: "five hundred and fifty").
+- **Level 2 (Confirmation state correctness):** Given correctly extracted slots, does the confirmation prompt accurately reflect current slot values? Metric: % of confirmation prompts that match the final slot state. Failure: any confirmation prompt that doesn't match current slots (should be 100%). Action: review the state serialization — confirmation is reading from a stale snapshot of the slot state.
+- **Level 3 (Tool call accuracy):** Does the tool call payload exactly match the user's last confirmed intent? Metric: field-level accuracy across all tool calls (0% tolerance for financial amounts). Failure: any tool call field doesn't match confirmed intent. Action: trace back to which earlier level introduced the discrepancy using the session state log.
+
+---
+
+**Capstone System Design Question:**
+Design a continuous multimodal evaluation system for a document AI platform that processes legal contracts, financial reports, and medical records across three region types (tables, figures, paragraphs). The system processes 5,000 documents per day. Design the evaluation pipeline that runs on every model deployment, the ground-truth collection strategy, the alerting design, and the A/B testing framework for comparing VLM versions.
+
+**Answer outline:**
+
+**Evaluation pipeline on every deployment:**
+- L0: Run a fixed evaluation set of 200 pre-annotated document regions (50 per type × 4 types) through the new VLM/OCR model. Compare to cached ground truth. Runtime: ~5 minutes.
+- L1: Run 300 pre-defined retrieval queries through the new pipeline. Compute recall@3 vs annotated correct chunks. Runtime: ~2 minutes.
+- L2+L3: Run 100 end-to-end test cases (oracle retrieval at L2, real retrieval at L3). Runtime: ~10 minutes with batch VLM calls.
+- Total pre-deployment evaluation time: ~20 minutes. Must complete before deployment proceeds.
+- Gate: if any metric regresses > 3% vs baseline, deployment is blocked; alert triggers human review.
+
+**Ground-truth collection strategy:**
+- Initial annotation: 200 annotated regions per document type (legal, financial, medical) × 3 domain experts per region = 600 expert-hours for initial setup.
+- Ongoing collection: sample 10 random documents per day → route to annotation queue. Each annotated document adds ~5 new evaluation cases. After 6 months, evaluation set grows to ~10,000 cases — large enough to detect fine-grained regressions.
+- Active sampling: prioritize documents where the current model's confidence is low (high uncertainty in VLM judge scores < 3.0) — these are the hardest cases and most valuable for evaluation coverage.
+- Versioning: evaluation set V1.0 at deployment D1, V1.1 at D2 if new annotations were added. Always run the same version for historical comparison; run new version to expand coverage.
+
+**Alerting design:**
+- Per-level, per-domain, per-region-type alerts: 12 metrics total (4 levels × 3 domain types). Alert if any metric regresses > 3% from 30-day rolling baseline.
+- Critical gate: L3 field accuracy on financial tables < 95% → P1 alert (deployment blocked). L3 on medical records any regression → P1 (patient safety). L3 on legal tables regression > 5% → P2 (investigation required but deployment can proceed with monitoring).
+- Alert routing: P1 → page on-call engineer immediately; P2 → create ticket, monitor for 24 hours.
+
+**A/B testing for VLM versions:**
+- Shadow mode: new VLM generates summaries in parallel with production VLM for 1% of production traffic. Store both outputs. Human reviewers rate blind comparisons (which is better, A or B?) on a 20-case daily sample.
+- Canary rollout: if shadow mode shows ≥ 5% improvement across all region types for 3 consecutive days, promote to 10% production traffic. Monitor L3 field accuracy in production for regressions.
+- Full rollout: after 7 days at 10% canary with no regressions, roll out to 100%.
+- Rollback trigger: L3 accuracy drops > 2% at any traffic level → immediate rollback to previous VLM version.
+
+---
+
+### 10. Production Reality Check
+
+**If this fails in production, what's the first thing we inspect?**
+
+**Run per-level, per-region-type evaluation on the failing query category — do not start with end-to-end debugging.**
+
+The most common production failure pattern in multimodal systems: a category of questions starts returning wrong answers. Engineers immediately look at the LLM prompt (Level 2) because that is the most visible and modifiable component. Prompt tweaks occasionally help. More often, the failure is at Level 0 (the VLM summary is wrong for a new document layout) or Level 1 (a new document type has region embeddings that don't cluster well with query embeddings).
+
+The fastest diagnostic: pick 10 representative failing queries. For each, manually inspect the retrieved chunks — are they the correct chunks? If not, the problem is Level 1. If yes, check the chunk text — does it contain the correct information? If the chunk is a figure summary that says "a bar chart with quarterly data" (generic) but the query needs specific numbers, the problem is Level 0. Only if both L0 and L1 look correct should you examine the LLM prompt and reasoning at Level 2.
+
+This takes 20–30 minutes of manual inspection and will identify the correct failure layer in 90%+ of cases. The alternative — blindly adjusting prompts and re-running evaluations — takes days and often does nothing because the problem isn't in the reasoning layer at all.
+
+---
+
+### 11. Curiosity Bridge
+
+You have now completed Module 17 — Multimodal, Voice, and Realtime GenAI. You can design systems that reason over images, audio, and video; build voice pipelines with correct turn-taking, session state, and safety layers; parse documents with layout semantics preserved through tables, charts, and figures; ground retrieval at the right granularity for each query type; understand UIs from screenshots; and evaluate multimodal systems at every level of the pipeline.
+
+The natural next frontier is **making these systems better** — not just by prompting, but by optimizing the underlying models to perform your specific tasks more precisely. That is Module 18: DSPy, Fine-Tuning, Distillation, and Optimization — where the question shifts from "how do I build a system that works?" to "how do I make a system that works *optimally* for my specific data, domain, and task distribution?"
+
+The connection is direct: the evaluation harness you built in this subtopic is the prerequisite for fine-tuning. You cannot fine-tune without labeled examples. You cannot create labeled examples without an evaluation protocol that tells you which outputs are correct and which are wrong. Every level-4 failure case you identified in this module is a potential fine-tuning example for Module 18.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit check — you are done when you can:**
+Explain the four-level evaluation hierarchy and what failure each level isolates, describe three multimodal-specific hallucination types, explain why VLM-as-judge must use a different model family, diagnose the root cause of a 17% gap between Level-2 and Level-3 accuracy step by step, and design a per-region-type evaluation breakdown that prevents aggregate score masking.
+
+---
+
+**Carry-Forward Review (Module 17 Checkpoint — all four subtopics of 17.3):**
+
+> The module checkpoint from the canon asks: "Discuss visual grounding as a retrieval and evaluation problem." Synthesize your answers across 17.3.a (layout-aware retrieval), 17.3.b (page vs block grounding), 17.3.c (UI grounding), and 17.3.d (evaluation).
+
+**Answer:** Visual grounding is the problem of connecting a natural language reference to its precise location and content in a visual artifact. As a **retrieval problem** (17.3.a, 17.3.b): the challenge is that visual documents communicate meaning spatially — a table cell's value is inseparable from its row and column headers, a chart's data exists in pixel space rather than text tokens. Layout-aware chunking, VLM-generated summaries, ColPali page embeddings, and two-stage hybrid retrieval are all strategies for building retrieval systems that respect these spatial semantics rather than destroying them with naive text extraction. The right retrieval granularity (page vs block) depends on whether the query requires spatial co-location of adjacent elements or precise single-element lookup.
+
+As a **UI action problem** (17.3.c): grounding means mapping "click the Submit button" to pixel coordinates — requiring both semantic understanding (which element is Submit?) and spatial localization (where are its bounding box coordinates?). Set-of-Marks decouples these two problems. The failure mode is that grounding errors in GUI agents cause wrong actions, not just wrong answers — making outcome verification mandatory.
+
+As an **evaluation problem** (17.3.d): visual grounding accuracy is measured by IoU (how well does the predicted bounding box overlap the ground truth?), but more broadly, the evaluation challenge is that visual content has no clean ground truth string — VLM summaries can be partially correct, charts can be described at varying levels of precision, and aggregate accuracy metrics hide per-modality regressions. The four-level evaluation harness, per-region-type breakdown, and VLM-as-judge are the tools that make multimodal quality visible, attributable, and actionable.
+
+---
+
+---
+
+## ✅ Module 17 Checkpoint
+
+> Three synthesis questions spanning all three topics. Write full answers before reading the reference answers below.
+
+---
+
+### Checkpoint Q1: Explain the difference between OCR pipelines and multimodal reasoning systems.
+
+---
+
+**Reference Answer:**
+
+**OCR pipelines** are **extraction systems**: they convert a visual artifact (a scanned page, a printed form, a PDF image) into a structured text representation. The pipeline ingests pixels, applies computer vision models trained to identify character boundaries and text regions, and outputs a transcript — a sequence of characters (and optionally bounding boxes). The pipeline does not reason. It translates visual signal to text using pattern matching: learned character templates, font models, layout detection heuristics. The output is deterministic given the same input: the same scanned page fed to the same OCR engine produces the same character sequence every time.
+
+**The limitations of OCR pipelines are structural:**
+- **No semantic understanding.** OCR outputs "Q3 Revenue 1,241" as a text string. It does not know that "Q3 Revenue" is a column header that applies to all cells in that column, that "1,241" means 1,241 million dollars, or that this row is adjacent to "Q2 Revenue 1,187" in a way that implies a trend. A downstream NLP model has to reconstruct these relationships from the flat text.
+- **Layout destruction.** Complex tables, multi-column layouts, and figures are extracted as linearized text — the spatial relationships that make them meaningful are discarded. A two-dimensional table with 10 rows and 4 columns becomes 40 tokens in reading order, with no structural encoding of which value belongs to which row and column intersection.
+- **Image content is invisible.** Charts, diagrams, photographs, and figures contain no text OCR can extract. OCR pipelines either skip them entirely or caption them with file metadata. The actual information in a bar chart (the data values, trend direction, axis labels, scale) is inaccessible to an OCR pipeline.
+- **Handwriting and degraded scans.** Traditional OCR degrades significantly on handwritten text, low-resolution scans, stamps, watermarks, and mixed-language documents. These are treated as fixed error sources.
+
+**Multimodal reasoning systems** are **understanding systems**: they take the raw visual artifact as a direct input and reason over it as a whole. A VLM (GPT-4o, Claude 3.5, Gemini 1.5 Pro) tokenizes the image itself — not a transcript derived from it — and applies attention over both visual tokens and text tokens simultaneously. The model can see layout, spatial relationships, color, position, scale, and the semantic meaning of visual elements in context.
+
+**What this enables that OCR cannot do:**
+
+| Capability | OCR pipeline | VLM multimodal reasoning |
+|---|---|---|
+| Read a bar chart value | ❌ (no chart content extracted) | ✅ (reads bar heights, compares, quantifies) |
+| Understand table structure | Partial (may misalign columns) | ✅ (sees headers + cells as visual grid) |
+| Reason across adjacent elements | ❌ (layout destroyed) | ✅ (can cross-reference table cell with footnote below it) |
+| Handle handwriting | Degrades severely | Generally robust |
+| Understand a diagram / org chart | ❌ (no text in diagram) | ✅ (describes relationships, labels, flows) |
+| Detect cross-modal inconsistency | ❌ (can't read chart) | ✅ (can compare table value to adjacent chart) |
+| Generate extraction prompt-conditioned | ❌ (always extracts all text) | ✅ (answer only the question asked from the image) |
+
+**The engineering tradeoffs — OCR is not obsolete:**
+
+OCR pipelines have decisive advantages where they apply: they are **deterministic** (no temperature, no hallucination), **fast** (millisecond-range per page for cloud OCR), **cheap** ($0.001–0.003/page vs $0.005–0.03/page for a VLM), and **auditable** (you can trace exactly which pixel produced which character). For high-volume text-dominant documents (invoices, standard forms, contracts with known layouts), OCR pipelines are the right choice — use a parser purpose-built for the document type (Textract for AWS forms, Document AI for Google structured docs).
+
+The engineering decision:
+- **OCR-first pipeline:** Fastest and cheapest. Use when documents are text-dominant with predictable layouts. Add a VLM layer only for elements OCR can't handle (figures, complex tables, handwriting).
+- **VLM-first pipeline:** Highest comprehension quality. Required when document understanding demands semantic reasoning across visual regions, or when document layouts are unpredictable (annual reports, research papers, medical imaging reports). Higher cost and latency per page; partially mitigated by batching and caching page summaries.
+- **Hybrid pipeline (production standard):** OCR handles known structured regions (form fields, standardized tables); VLM handles unstructured regions (charts, diagrams, complex multi-column layouts, handwritten annotations). Route by region type, not by document. This is how enterprise document AI at scale (AWS, Google, Microsoft) actually works in production.
+
+**The conceptual boundary:**
+OCR asks *"what text is on this page?"*
+Multimodal reasoning asks *"what does this page mean?"*
+The difference matters everywhere a correct answer requires understanding spatial relationships, visual data representations, or cross-element reasoning — which is most real-world business documents that contain more than plain paragraphs.
+
+---
+
+### Checkpoint Q2: Reason about realtime voice systems using latency and turn-taking constraints.
+
+---
+
+**Reference Answer:**
+
+**The latency problem in voice systems is fundamentally different from the latency problem in text chatbots.** A text chatbot user reads at 200–300 WPM; a 2-second first-token latency is acceptable because reading the response takes several seconds anyway. A voice system must speak its response aloud — and the human ear is a real-time sensor. A 2-second silence after a user finishes speaking is perceived as an unresponsive, broken system. The perceptual threshold is different: humans tolerate 300–800ms of inter-turn silence in conversation (the natural "thinking pause"); above 1,000ms the interaction starts feeling unnatural; above 1,500ms it becomes a usability failure in most consumer contexts.
+
+**The three-stage pipeline and its latency contributions:**
+
+```
+User speaks → [STT] → [LLM agent] → [TTS] → User hears
+
+STT (speech-to-text):      50–200ms  (streaming partial transcripts reduce perceived latency)
+LLM time-to-first-token:   200–800ms (depends on model size, load, context length)
+TTS time-to-first-audio:   100–300ms (streaming TTS sends first audio chunk before full synthesis)
+Network round-trips:       50–150ms  (per stage, depends on geography)
+
+Total pipeline budget:     ~400ms–1,450ms end-to-end
+Target for natural voice: < 800ms total
+```
+
+**The design choice that changes everything: streaming vs batch at each stage.**
+
+A naive batch pipeline: STT runs to completion → full transcript sent to LLM → LLM generates full response → full text sent to TTS → full audio played. End-to-end latency: 500ms (STT) + 1,200ms (LLM full response at 300 tokens) + 400ms (TTS full synthesis) = **2,100ms**. Clearly unacceptable.
+
+A streaming pipeline: STT sends partial transcripts in real time → LLM begins generating as soon as a complete "thought unit" (sentence-ending silence detected) is available → TTS receives LLM tokens as they stream and begins synthesizing as soon as the first sentence token arrives. End-to-end latency to first audio byte: 150ms (STT first segment) + 250ms (LLM time-to-first-token) + 120ms (TTS first audio chunk) = **~520ms**. Within the natural conversation window.
+
+**The turn-taking problem: who has the floor?**
+
+Human conversation is full-duplex: both participants can be speaking or listening at any time. The system must manage three states continuously:
+
+| State | What is true | Required system action |
+|---|---|---|
+| **User speaking** | Microphone active; user is still talking | STT transcribing; agent waiting; do not start TTS |
+| **Transition pause** | User has stopped speaking; pause duration ambiguous | Is this a turn-yielding pause, or a mid-sentence breath? Endpoint detection decision |
+| **Agent speaking** | TTS audio playing | Simultaneous monitoring of microphone for interruption signal |
+
+**The two failure modes are asymmetric:**
+
+- **False endpoint (clipping):** The VAD (Voice Activity Detection) detects a mid-sentence pause as turn end. The system starts speaking before the user finishes. The user experiences being constantly interrupted. This is the more damaging failure — it makes the system feel aggressive and broken.
+- **Missed endpoint (latency):** The VAD doesn't detect turn end quickly enough. The system waits too long before responding. The user experiences uncomfortable silence. This is frustrating but recoverable — users understand "thinking pauses."
+
+The calibration of VAD endpoint detection therefore leans toward **tolerating longer pauses** (reducing false endpoints at the cost of slightly longer response latency). Typical production tuning: 400–600ms of silence after voice activity → classify as turn end. This is longer than the silence threshold a human conversation partner uses, but necessary to avoid clipping users who pause mid-thought.
+
+**Interruption handling: the hardest turn-taking problem.**
+
+When the agent is speaking (TTS is playing) and the user starts talking, the system must:
+1. **Detect the interruption immediately** (< 50ms) — the audio pipeline is already capturing microphone input in parallel with TTS playback, listening for voice energy above threshold.
+2. **Stop the TTS gracefully** — mid-word stop sounds harsh; ideally stop at the nearest word boundary.
+3. **Discard the session state** associated with the interrupted generation — the LLM response that was being streamed is now invalid; the user has changed direction.
+4. **Reset to listening state** — STT resumes, fresh context begins with the user's new utterance. The interrupted agent turn should be noted in session history as "interrupted" so the LLM understands the conversation didn't complete as planned.
+
+**The latency and quality tradeoffs on the LLM stage:**
+
+| Model choice | Time-to-first-token | Voice quality impact | When to use |
+|---|---|---|---|
+| GPT-4o realtime API | ~200–300ms | Highest (native audio model) | Consumer voice products, medical intake, banking — where quality > cost |
+| GPT-4o turbo (text, streamed) | ~300–500ms | High (text→TTS) | When full audio model cost is prohibitive; most production systems |
+| Claude Haiku / GPT-4o-mini | ~100–200ms | Moderate (smaller model reasoning) | Latency-critical disambiguation turns; tool call routing |
+| Local/edge model | ~50–150ms | Low (small model quality) | Kiosk/offline; edge devices where cloud round-trip is unavailable |
+
+**Context length and voice: the compounding latency problem.**
+
+Each turn in a voice session appends to the LLM context. At turn 1: 500 tokens context → TTFT 200ms. At turn 20: 4,000 tokens context → TTFT 350ms. At turn 50 (long voice session): 12,000 tokens → TTFT 600ms. The pipeline latency degrades as the session progresses. Production mitigation: summarize older turns into a compact session state (slot values, confirmed intents, current task state) and replace raw turn history with the summary after every 10–15 turns. The LLM receives: `{summary of prior context} + {last 3–5 turns raw}` rather than the full session history.
+
+**The latency-quality frontier:**
+
+There is a fundamental tension: smaller, faster models respond in 100–200ms but make more errors (wrong slot extraction, hallucinated tool parameters, premature confirmation). Larger, more accurate models take 400–600ms but rarely make errors. In voice banking and medical systems, a wrong tool call is catastrophically worse than a 400ms pause — quality wins. In customer service IVR (Interactive Voice Response) for simple routing tasks ("Press 1 for billing"), speed and accuracy on simple intents is the goal — a small model works.
+
+The engineering answer: **use a tiered model strategy**. A fast, small model handles simple classification (intent detection, routing) in 100–150ms. A larger model handles complex reasoning, slot filling from ambiguous utterances, and confirmation generation in 400–600ms. Route between tiers based on predicted turn complexity.
+
+---
+
+### Checkpoint Q3: Discuss visual grounding as a retrieval and evaluation problem.
+
+*(Full synthesis answer is in the Carry-Forward Review at the end of Subtopic 17.3.d above. See the section "Carry-Forward Review (Module 17 Checkpoint — all four subtopics of 17.3)" for the complete answer. Summary below for quick review.)*
+
+**Visual grounding as a retrieval problem (17.3.a, 17.3.b):**
+Documents communicate meaning spatially. OCR destroys layout semantics; layout-aware chunking, VLM summaries, and ColPali page embeddings preserve them. The retrieval granularity decision (page vs block) is driven by query type: spatial co-location queries need page-level retrieval; precise single-value lookups need block-level retrieval. Two-stage hybrid retrieval (page recall → block re-rank) handles both.
+
+**Visual grounding as a UI action problem (17.3.c):**
+GUI agents must map natural language commands to pixel-level bounding boxes. Set-of-Marks (SoM) decouples element detection from element selection. Grounding failures cause wrong actions — not just wrong answers — making outcome verification mandatory.
+
+**Visual grounding as an evaluation problem (17.3.d):**
+IoU measures localization precision; VLM-as-judge (cross-family) measures description factual accuracy; the four-level harness (L0: modality conversion, L1: retrieval, L2: oracle reasoning, L3: task outcome) provides per-level failure attribution; per-region-type breakdown prevents aggregate scores from masking modality-specific regressions.
+
+---
+
+### Module 17 Checkpoint: Self-Assessment
+
+| Question | Can you answer without notes? | Confidence (1–5) |
+|---|---|---|
+| Q1: OCR vs multimodal reasoning — core distinction, limitations, tradeoffs | | |
+| Q1: When to use OCR-first, VLM-first, or hybrid pipeline | | |
+| Q2: Three-stage voice pipeline with latency budget per stage | | |
+| Q2: False endpoint vs missed endpoint tradeoff — which is worse and why | | |
+| Q2: Why voice latency degrades over a long session, and how to mitigate it | | |
+| Q3: Visual grounding as retrieval — layout-aware chunking, ColPali, granularity decision | | |
+| Q3: Visual grounding as evaluation — IoU, four-level harness, per-region-type breakdown | | |
+| Cross-cutting: How would you design a system that uses all three: OCR, voice, and visual RAG? | | |
+
+**Score yourself:** 5/5 across all rows = Module 17 mastered. Any row below 3 = revisit that subtopic before moving to Module 18.
+
+---
+
+**Module 17 is complete. Next: Module 18 — DSPy, Fine-Tuning, Distillation, and Optimization.**
