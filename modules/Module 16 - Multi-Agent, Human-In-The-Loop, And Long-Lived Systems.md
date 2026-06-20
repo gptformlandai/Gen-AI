@@ -16,8 +16,8 @@
 | 16.1.d | Why many multi-agent systems should stay single-agent | ✅ Done |
 | **Topic 16.2** | **Human-in-the-loop and approvals (12h)** | |
 | 16.2.a | Approval checkpoints and reversible actions | ✅ Done |
-| 16.2.b | Confidence thresholds and escalation logic | |
-| 16.2.c | UX implications of human review | |
+| 16.2.b | Confidence thresholds and escalation logic | ✅ Done |
+| 16.2.c | UX implications of human review | ✅ Done |
 | 16.2.d | Measuring intervention quality and operational cost | |
 | **Topic 16.3** | **Memory and long-horizon execution (12h)** | |
 | 16.3.a | Episodic, semantic, and procedural memory concepts | |
@@ -31,6 +31,8 @@
 - 16.1.c — Debate, critique, and verifier patterns: generator-critic-verifier separation, debate vs critique vs verification, judge models, rubric-based evaluation, grounded verification, deterministic checks, adversarial review, adjudication, failure modes such as critique theater, correlated model errors, weak verifiers, over-rejection, verification cost, hands-on claim verifier lab
 - 16.1.d — Why many multi-agent systems should stay single-agent: coordination tax, single-agent baselines, workflow-first design, agent role collapse, tool routing vs agent routing, evaluation gates for adding agents, complexity budget, reliability/cost/latency tradeoffs, anti-patterns, decision rubric, hands-on agent-ablation lab
 - 16.2.a — Approval checkpoints and reversible actions: human-in-the-loop mental model, approval checkpoints, reversible vs irreversible actions, action risk tiering, pre-commit review, confirmation payloads, pause/resume state, audit trails, timeout handling, rollback/compensation design, hands-on approval-gated tool lab
+- 16.2.b — Confidence thresholds and escalation logic: confidence vs calibrated confidence, risk-weighted thresholds, escalation ladders, false positive/false negative tradeoffs, abstention, clarification, human review routing, threshold tuning from eval data, drift monitoring, hands-on threshold simulator lab
+- 16.2.c — UX implications of human review: reviewer cognition, decision payload design, progressive disclosure, evidence panels, action previews, approve/edit/reject controls, reason codes, reviewer workload, review fatigue, interruption design, feedback capture, auditability, hands-on review-queue UX simulator lab
 
 ---
 
@@ -3110,6 +3112,1149 @@ You are done with this subtopic when you can, without notes:
 
 ---
 
+## Subtopic 16.2.b: Confidence Thresholds and Escalation Logic
+
+### ✅ Add to Knowledge Base
+
+### Reading Path + Level Tags
+
+- **Beginner:** Read sections 1–2 and Active Recall.
+- **Intermediate:** Add sections 3–5 and the Hands-On Lab Build step.
+- **Pro:** Complete the full Hands-On Lab (Build → Break → Measure → Explain) plus the capstone practice question.
+
+---
+
+### 0. Pre-Question Hook [Beginner]
+
+**Pause:** An agent says it is 82% confident that a customer's refund should be approved. Should it auto-approve, ask the customer one more question, escalate to a support lead, or reject? Would your answer change if the refund is $5 vs $5,000?
+
+The confidence number alone is not the decision. The decision is confidence *combined with risk, reversibility, business cost, and user impact*.
+
+---
+
+### 1. The Intuition (Plain English) [Beginner]
+
+**Confidence thresholding** is the practice of choosing action paths based on how reliable the system believes its answer, classification, or proposed action is. But in production GenAI systems, confidence is never just a model score. It is a decision policy.
+
+The useful mental model:
+
+```text
+confidence + risk + reversibility + evidence quality + business cost -> action path
+```
+
+That action path might be:
+
+- answer automatically
+- ask a clarifying question
+- retrieve more evidence
+- run a verifier
+- require human approval
+- escalate to a specialist
+- refuse or stop safely
+
+A **confidence score** is only helpful if it is calibrated and tied to outcomes. If an agent says "confidence: 0.9" but is wrong 30% of the time at that score, the score is decoration. Production systems need **calibrated confidence**: when the system says 90% confidence across many cases, roughly 90% of those cases should be correct.
+
+Real-world analogy: airport security screening. Not every bag receives the same inspection. Most bags pass through normal screening. Suspicious scans get secondary screening. High-risk cases involve security staff. The decision is not based on one signal alone; it combines scanner confidence, item type, passenger context, rules, and risk tolerance.
+
+**Where the analogy breaks down:** Security systems often have highly engineered sensors and policy rules. LLM confidence is softer. Model logprobs, self-reported confidence, judge scores, retrieval similarity, verifier labels, and tool signals are all imperfect. That is why confidence should be treated as an input to a policy, not as truth.
+
+**Key terms (first use):**
+
+- **Confidence threshold** — a cutoff score used to decide whether the system proceeds automatically, asks for more information, verifies, or escalates.
+- **Calibrated confidence** — confidence that matches empirical correctness over many cases; e.g., predictions scored 0.8 are correct about 80% of the time.
+- **Escalation logic** — rules that route a case to clarification, verifier, human review, specialist team, or safe stop based on confidence and risk.
+- **Abstention** — the system choosing not to answer or act because confidence/evidence is insufficient.
+- **Clarification path** — asking the user a targeted question to reduce ambiguity before answering or acting.
+- **Risk-weighted threshold** — a threshold that becomes stricter as action risk, irreversibility, or user harm increases.
+- **False positive** — the system incorrectly accepts, answers, approves, or acts when it should not have.
+- **False negative** — the system incorrectly blocks, rejects, escalates, or refuses when it could have handled the case safely.
+- **Triage band** — a confidence range mapped to a specific action path, such as auto-handle, clarify, verify, or escalate.
+- **Calibration curve** — a plot/table comparing predicted confidence buckets to observed correctness.
+- **Expected cost** — the weighted cost of possible outcomes, used to choose thresholds based on business/user harm rather than vibes.
+- **Threshold drift** — when the relationship between confidence and correctness changes over time due to model updates, data drift, policy changes, or user behavior.
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+#### Confidence + Risk Escalation Ladder
+
+```mermaid
+flowchart TD
+    A[Agent proposes answer/action] --> S[Collect signals\nconfidence + evidence + risk + reversibility]
+    S --> R{Risk tier?}
+
+    R -->|low risk| L{Confidence >= 0.70?}
+    R -->|medium risk| M{Confidence >= 0.85?}
+    R -->|high risk| H{Confidence >= 0.95\nand verifier passes?}
+
+    L -- yes --> AUTO[Auto-answer / auto-action]
+    L -- no --> CLARIFY[Ask clarifying question]
+
+    M -- yes --> VERIFY[Run verifier or policy check]
+    M -- no --> CLARIFY
+    VERIFY --> V{Verifier passes?}
+    V -- yes --> AUTO
+    V -- no --> ESC[Human review]
+
+    H -- yes --> APPROVAL[Human approval checkpoint]
+    H -- no --> ESC
+
+    APPROVAL --> EXEC[Execute approved action]
+    ESC --> QUEUE[Escalation queue]
+```
+
+#### Calibration Loop
+
+```mermaid
+flowchart LR
+    P[Predictions with scores] --> B[Bucket by confidence\n0.5-0.6, 0.6-0.7, etc.]
+    B --> A[Measure actual correctness\nper bucket]
+    A --> C[Calibration curve]
+    C --> T[Adjust thresholds\nby risk tier]
+    T --> PROD[Deploy policy]
+    PROD --> MON[Monitor drift]
+    MON --> B
+```
+
+**What these diagrams teach:**
+- Thresholds are not universal. A low-risk FAQ can auto-answer at a lower confidence than a financial transfer or clinical submission.
+- Escalation is a ladder, not a cliff. The system can clarify, retrieve more evidence, verify, approve, or escalate.
+- Thresholds must be tuned from real outcome data and monitored for drift.
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+---
+
+#### Scenario A: Customer Support Triage
+
+**Product/use case context:**
+A support assistant classifies incoming tickets as `faq`, `billing`, `technical`, `security`, or `unknown`. Low-risk FAQ answers can be automated. Security/account-compromise cases need fast escalation.
+
+**How thresholds apply:**
+- `faq` with confidence >= 0.75 and strong retrieval evidence: answer automatically.
+- `billing` with confidence >= 0.85: draft response and maybe propose action, but approval depends on refund amount.
+- `security` with confidence >= 0.60: escalate immediately because false negatives are dangerous. You do not wait for 0.95 confidence before treating possible account compromise seriously.
+- `unknown` or confidence < 0.60: ask one clarifying question or route to human intake.
+
+**Constraints and how they affect design:**
+
+- **Latency:** Security cases should not sit in a clarification loop. Escalate early when harm is high.
+- **Cost:** Escalating every ambiguous ticket is expensive. Clarification questions reduce unnecessary human review for low/medium risk cases.
+- **Reliability:** Confidence should combine classifier score, retrieval evidence match, and presence of high-risk keywords/signals. A self-reported LLM confidence alone is weak.
+- **Failure modes:** If the security threshold is too high, the system misses compromised accounts. If too low, security teams drown in false alarms.
+
+**What good looks like in production:**
+- Thresholds differ by category and risk.
+- False negative rate for security is prioritized over false positive rate.
+- Clarification questions are targeted, not generic: "Do you still have access to the account?" rather than "Can you provide more details?"
+
+---
+
+#### Scenario B: RAG Benefits Assistant
+
+**Product/use case context:**
+A benefits assistant answers healthcare coverage questions. The system retrieves plan passages, generates an answer, verifies claims, and decides whether to answer, ask for more information, or escalate to a benefits specialist.
+
+**How thresholds apply:**
+- If retrieval score is high, all high-impact claims are verified as `supported`, and no eligibility ambiguity exists: answer.
+- If retrieval is medium and one key claim is `not_found`: retrieve more evidence or ask a clarifying question.
+- If any claim is `contradicted`: block answer and escalate or revise.
+- If the question involves exceptions, appeals, denial timelines, or out-of-network coverage: raise threshold and require stronger evidence.
+
+**Constraints and how they affect design:**
+
+- **Reliability:** The confidence score should not come from generation alone. Use a composite score: retrieval confidence, claim verifier labels, policy recency, and question risk category.
+- **Privacy:** Escalation payloads may contain PHI. Only include minimum necessary information and source references.
+- **Failure modes:** A true answer may be marked low-confidence because retrieval missed a passage. This is not necessarily a model failure; it may be a retrieval coverage failure.
+
+**What good looks like in production:**
+- The system distinguishes `unsupported by current evidence` from `false`.
+- Thresholds are stricter for high-impact benefits decisions than for simple plan navigation.
+- Escalated cases include the evidence gaps so the human reviewer can resolve them quickly.
+
+---
+
+#### Scenario C: Sales Discount Approval
+
+**Product/use case context:**
+An AI sales assistant recommends discounts. Small discounts are routine; large discounts affect revenue and require manager approval.
+
+**How thresholds apply:**
+- Discount <= 5%, high confidence in customer eligibility, and within sales policy: auto-draft proposal.
+- Discount 5-15%: require sales rep confirmation.
+- Discount > 15% or outside policy: escalate to manager approval.
+- Any low-confidence eligibility signal: ask for missing deal context before recommending.
+
+**Constraints and how they affect design:**
+
+- **Cost:** False positives are expensive: approving discounts when not justified reduces revenue.
+- **User experience:** False negatives are also costly: blocking reasonable discounts slows deals.
+- **Reliability:** Confidence should include CRM data freshness, policy match, deal stage, customer segment, and margin constraints.
+- **Failure modes:** If CRM data is stale, a high-confidence recommendation may still be wrong. Threshold logic should include data freshness as a hard gate.
+
+**What good looks like in production:**
+- Thresholds are tied to financial impact.
+- Manager approvals include estimated revenue impact and policy exception reason.
+- Policy exceptions are tracked and fed back into sales governance.
+
+---
+
+### 4. System View (Think Like a Systems Engineer) [Intermediate]
+
+**Inputs → Transformations → Outputs:**
+
+```text
+[Candidate answer/action]
+    → Extract signals:
+        - model confidence / classifier score
+        - retrieval similarity and evidence coverage
+        - verifier labels
+        - action risk tier
+        - reversibility
+        - data freshness
+        - user/account/context risk
+    → Compute decision score or apply policy table
+    → Route to action path:
+        - auto-answer/execute
+        - ask clarification
+        - retrieve more evidence
+        - run verifier
+        - require approval
+        - escalate to human/specialist
+        - abstain/refuse
+    → Log decision inputs and outcome
+    → Use outcomes to recalibrate thresholds
+```
+
+**Observability — what we log, trace, and measure:**
+
+| Signal | What it tells you |
+|--------|-------------------|
+| Confidence bucket accuracy | Whether confidence is calibrated |
+| Auto-resolution rate | How much work the system handles without humans |
+| Escalation rate by risk tier | Whether thresholds overload humans or miss risk |
+| Clarification success rate | Whether questions actually resolve ambiguity |
+| False positive rate | Unsafe auto-accept/auto-action rate |
+| False negative rate | Excessive blocking/escalation of safe cases |
+| Human override rate | How often humans disagree with system routing |
+| Time-to-resolution by path | Latency cost of clarify/verify/escalate routes |
+| Threshold drift over time | Whether deployed thresholds remain valid |
+
+**Failure points — where thresholds break:**
+
+| Failure | Symptom | How it surfaces |
+|---------|---------|-----------------|
+| Self-reported confidence trusted blindly | Agent says 0.95 but is often wrong | High false positives in confident bucket |
+| One global threshold for all tasks | Simple FAQs over-escalate; high-risk cases under-escalate | Bad UX and safety incidents at the same time |
+| Ignoring reversibility | Irreversible actions auto-execute too easily | Financial/security/compliance incidents |
+| Clarification loops too long | User gets repeated questions | Drop-off, latency, frustration |
+| Escalation queue overloaded | Humans cannot meet SLA | Timeout rate and backlog spike |
+| Thresholds never recalibrated | Performance decays after model/data/policy changes | Drift: same score no longer means same correctness |
+| Missing outcome labels | No way to tune thresholds | Policy stays arbitrary |
+
+---
+
+### 5. System Design Flavor [Intermediate]
+
+**Key components and interfaces:**
+
+```text
+Threshold + escalation system:
+  - Signal extractor: confidence, retrieval score, verifier labels, freshness, risk tier
+  - Risk policy table: thresholds by category/action/risk/reversibility
+  - Decision router: auto, clarify, verify, approve, escalate, abstain
+  - Clarification generator: targeted question templates by missing signal
+  - Escalation queue: human/specialist routing with priority and SLA
+  - Outcome logger: human decision, final correctness, downstream incident markers
+  - Calibration job: periodically recomputes threshold quality from labeled outcomes
+```
+
+**Key tradeoffs:**
+
+1. **High threshold vs low threshold: safety vs automation value**
+   - *High threshold* reduces false positives but increases false negatives and human workload. Use it when incorrect automation is harmful.
+   - *Low threshold* increases automation and speed but risks more wrong answers/actions. Use it for low-risk reversible tasks.
+   - *When to choose:* set stricter thresholds for money, security, healthcare, legal, deletion, production, or customer-visible commitments.
+
+2. **Clarification vs escalation: user effort vs human workload**
+   - *Clarification* is cheap and keeps the user in flow, but too many questions feel incompetent.
+   - *Escalation* preserves quality for ambiguous/high-risk cases, but uses scarce human attention.
+   - *When to choose:* clarify when one missing piece of information can unlock the answer; escalate when the ambiguity requires judgment, authority, or sensitive context.
+
+3. **Static thresholds vs adaptive thresholds: simplicity vs accuracy over time**
+   - *Static thresholds* are simple and auditable. They work for stable domains and clear risk tiers.
+   - *Adaptive thresholds* update based on recent outcomes, traffic mix, model changes, and reviewer capacity. They are more powerful but require careful monitoring to avoid hidden behavior changes.
+   - *When to choose:* start static; add adaptive tuning only after you have labeled outcomes and stable monitoring.
+
+**Scaling consideration (10x traffic/data):**
+
+At 10x traffic, the escalation queue becomes the bottleneck. Threshold policy must account for reviewer capacity. A threshold that is safe at 100 cases/day may collapse at 10,000 cases/day if it escalates 30% of cases.
+
+The scalable pattern:
+
+1. Use high-confidence auto-resolution for low-risk cases.
+2. Use targeted clarification before human escalation for medium-risk ambiguity.
+3. Reserve humans for high-risk, high-uncertainty, or high-impact cases.
+4. Use reviewer outcomes to improve prompts, retrieval, validators, and thresholds.
+5. Monitor queue SLA as a first-class production metric.
+
+---
+
+### 6. Common Mistakes + Debugging [Intermediate]
+
+#### Mistake 1: Treating model confidence as calibrated probability
+
+**Symptom:** The system auto-answers whenever the model says confidence >= 0.85, but user complaints show many wrong confident answers.
+
+**Likely cause:** The confidence is self-reported or uncalibrated. The model's number does not match empirical correctness.
+
+**First debugging step:** Build a calibration table from labeled examples. Bucket predictions by confidence (0.5-0.6, 0.6-0.7, etc.) and compute actual correctness per bucket. If 0.9-confidence cases are only 70% correct, lower trust in that signal and add verifier/evidence requirements.
+
+---
+
+#### Mistake 2: One threshold for every category
+
+**Symptom:** The same 0.8 threshold handles password reset FAQs, refund approvals, account compromise, and clinical benefits answers.
+
+**Likely cause:** Threshold policy ignores risk and reversibility. A single threshold is easy to implement but unsafe.
+
+**First debugging step:** Split eval results by category and risk tier. Compute false positive and false negative cost for each. Set category-specific thresholds and escalation paths.
+
+---
+
+#### Mistake 3: Escalation without feedback loops
+
+**Symptom:** Cases escalate to humans, but the system never improves. The same avoidable cases keep appearing in the queue.
+
+**Likely cause:** Human decisions are not captured as structured labels. Escalation is treated as an endpoint, not a learning signal.
+
+**First debugging step:** Add outcome capture to the escalation workflow: final decision, reason code, missing information, corrected category, corrected action, and whether the original confidence was too high/low. Feed those labels into threshold calibration and prompt/tool improvements.
+
+---
+
+### 7. Hands-On Lab [Pro]
+
+> **Goal:** Build a threshold router that decides whether to auto-handle, clarify, verify, or escalate. Then break it with bad calibration and measure false positives/false negatives.
+
+---
+
+#### Build: Risk-Weighted Escalation Router
+
+```python
+from dataclasses import dataclass
+from typing import Literal
+
+
+Risk = Literal["low", "medium", "high"]
+Decision = Literal["auto", "clarify", "verify", "approve", "escalate"]
+
+
+@dataclass
+class Case:
+    case_id: str
+    category: str
+    confidence: float
+    risk: Risk
+    reversible: bool
+    evidence_score: float
+    data_fresh: bool
+
+
+def route_case(case: Case) -> Decision:
+    # Hard gates first: these are not soft confidence decisions.
+    if not case.data_fresh:
+        return "clarify"
+
+    if case.risk == "high":
+        if case.confidence >= 0.95 and case.evidence_score >= 0.90:
+            return "approve"  # still needs human approval before action
+        return "escalate"
+
+    if case.risk == "medium":
+        if case.confidence >= 0.90 and case.evidence_score >= 0.80:
+            return "verify"
+        if case.confidence >= 0.70:
+            return "clarify"
+        return "escalate"
+
+    # low risk
+    if case.confidence >= 0.75 and case.evidence_score >= 0.65:
+        return "auto"
+    return "clarify"
+
+
+cases = [
+    Case("faq_1", "faq", 0.78, "low", True, 0.70, True),
+    Case("refund_1", "billing", 0.82, "medium", False, 0.88, True),
+    Case("security_1", "account_compromise", 0.62, "high", False, 0.50, True),
+    Case("benefits_1", "coverage_exception", 0.96, "high", False, 0.92, True),
+    Case("sales_1", "discount", 0.91, "medium", True, 0.40, False),
+]
+
+for case in cases:
+    print(case.case_id, route_case(case))
+```
+
+**Expected output:**
+```text
+faq_1 auto
+refund_1 clarify
+security_1 escalate
+benefits_1 approve
+sales_1 clarify
+```
+
+---
+
+#### Break: Force the Relevant Failure Modes
+
+**Break 1 — One global threshold:**
+Replace `route_case()` with:
+
+```python
+def route_case(case: Case) -> Decision:
+    return "auto" if case.confidence >= 0.80 else "escalate"
+```
+
+Now a high-risk case can auto-handle if confidence is high, even if evidence is weak or action is irreversible. This demonstrates why risk-weighted thresholds matter.
+
+**Break 2 — Ignore evidence quality:**
+Remove `evidence_score` checks. The system now trusts confidence even when retrieval/evidence is poor. This creates groundedness failures in RAG and policy systems.
+
+**Break 3 — No clarification path:**
+Route all medium-confidence cases to escalation. Human workload spikes even for cases where one user question could resolve ambiguity.
+
+---
+
+#### Measure: Concrete Signals
+
+Use this labeled eval harness:
+
+```python
+@dataclass
+class LabeledCase(Case):
+    safe_to_auto: bool
+
+
+def evaluate(cases: list[LabeledCase]) -> dict:
+    false_positive = 0  # auto/approve when not safe
+    false_negative = 0  # escalated/blocked when safe
+    escalations = 0
+
+    for case in cases:
+        decision = route_case(case)
+        automated = decision in {"auto", "approve", "verify"}
+        escalated = decision == "escalate"
+
+        if automated and not case.safe_to_auto:
+            false_positive += 1
+        if escalated and case.safe_to_auto:
+            false_negative += 1
+        if escalated:
+            escalations += 1
+
+    return {
+        "false_positive_rate": false_positive / len(cases),
+        "false_negative_rate": false_negative / len(cases),
+        "escalation_rate": escalations / len(cases),
+    }
+```
+
+| Measurement | How to capture | What to watch for |
+|-------------|----------------|-------------------|
+| False positive rate | Auto/approve when label says unsafe | Highest priority for high-risk domains |
+| False negative rate | Escalate/block when label says safe | Automation value loss and UX friction |
+| Escalation rate | Human-routed cases / total | Capacity and cost pressure |
+| Clarification resolution rate | Clarified cases that later auto-resolve | Whether clarification is worth it |
+| Calibration error | predicted bucket accuracy vs observed | Whether confidence score is trustworthy |
+| Queue SLA breach rate | escalations missing review target | Human review capacity problem |
+
+---
+
+#### Explain: Why It Breaks and What Prevents It
+
+Threshold systems break when they treat confidence as universal. A score of 0.8 does not mean the same thing across categories, evidence quality, risk tiers, or models. The fix is to design thresholds around expected harm: false positives are catastrophic in some domains and minor in others; false negatives are acceptable in some workflows and business-killing in others.
+
+The durable design is a policy table, not a magic number. Each action/category should define: minimum confidence, required evidence, verifier requirement, escalation path, and timeout behavior.
+
+---
+
+### 8. Active Recall (Spaced Repetition) [Beginner-Intermediate]
+
+**Q1 (Beginner):** Why is model confidence alone not enough to decide whether to act?
+
+> **Answer:** Confidence may be uncalibrated and does not include risk, reversibility, evidence quality, data freshness, or business impact. A medium-confidence low-risk FAQ and a medium-confidence account-compromise case require different paths.
+
+---
+
+**Q2 (Intermediate):** What is the difference between a false positive and a false negative in escalation logic?
+
+> **Answer:** A false positive means the system acts/answers/approves when it should not have. A false negative means it blocks/escalates/refuses when it could have handled the case safely. Which is worse depends on the domain and action risk.
+
+---
+
+**Q3 (Intermediate):** When should the system ask a clarifying question instead of escalating to a human?
+
+> **Answer:** When the ambiguity is caused by one or a few missing user-provided facts and the action is not immediately high-risk. If the ambiguity requires authority, expert judgment, sensitive context, or high-impact decision-making, escalate instead.
+
+---
+
+**Q4 (Pro):** Why might a security workflow escalate at lower confidence than an FAQ workflow?
+
+> **Answer:** Because false negatives are more harmful in security. Missing account compromise can cause serious harm, so the system should escalate possible security cases even at lower confidence. FAQs can tolerate more clarification or low-risk auto-answering.
+
+---
+
+**Q5 (Pro):** What is threshold drift and how do you detect it?
+
+> **Answer:** Threshold drift occurs when a score no longer predicts correctness the same way it used to, often due to model updates, traffic changes, retrieval changes, or policy changes. Detect it by monitoring calibration curves, confidence bucket accuracy, false positive/negative rates, and human override rates over time.
+
+---
+
+### 9. Practice [Intermediate-Pro]
+
+**Mini-exercise:**
+
+Design threshold bands for a RAG assistant that answers HR policy questions.
+
+Cases include: vacation balance, parental leave eligibility, termination policy, expense reimbursement, and harassment reporting.
+
+For each category, decide whether low/medium/high confidence should auto-answer, clarify, verify, or escalate.
+
+> **Suggested answer outline:**
+> - Vacation balance: low risk if read-only; high confidence auto-answer with source; medium confidence clarify/retrieve more; low confidence route to HR system lookup.
+> - Parental leave eligibility: medium/high impact; require strong retrieval and verifier pass; medium confidence clarify; low confidence escalate.
+> - Termination policy: high legal/employee impact; answer only with strong source support and careful caveats; ambiguous cases escalate.
+> - Expense reimbursement: medium risk; high confidence answer; medium clarify; policy exceptions escalate.
+> - Harassment reporting: high sensitivity; route quickly to safe, policy-backed response and escalation resources. Do not bury user in clarification questions.
+
+---
+
+**Capstone system design question:**
+
+Design confidence threshold and escalation logic for an AI claims assistant in insurance. It can answer claim status, request missing documents, recommend approval/denial, and draft customer communications. Include thresholds, risk tiers, false positive/negative tradeoffs, escalation paths, and monitoring.
+
+> **Suggested answer outline:**
+> - **Risk tiers:** claim status read-only = low; missing document request = medium; approval/denial recommendation = high; customer-facing denial communication = high.
+> - **Thresholds:** low-risk status answer can auto-handle at moderate confidence if source is fresh; document requests need policy match and claim context; approval/denial requires high confidence, verifier pass, and human adjuster approval.
+> - **False positive cost:** wrongly denying/approving claims is high financial/legal/customer-trust harm. Thresholds should minimize false positives for denial/approval.
+> - **False negative cost:** escalating too many straightforward status questions increases operational load but is less harmful than wrong claim decisions.
+> - **Escalation paths:** clarify missing claimant details; retrieve more policy/claim evidence; route high-impact decisions to licensed adjuster; escalate fraud signals to special investigation unit.
+> - **Monitoring:** calibration by claim type, human override rate, appeal rate after AI-assisted decisions, escalation SLA, false approve/deny audits, drift by policy version.
+
+---
+
+### 10. Production Reality Check [Mandatory]
+
+> **If this fails in production, what's the first thing we inspect?**
+
+Inspect the **threshold decision trace** for the failed case.
+
+Ask these in order:
+1. **What signals were used?** Confidence, evidence score, verifier result, risk tier, reversibility, freshness, and category should all be visible.
+2. **Which threshold/policy rule fired?** If no explicit rule is logged, the routing is not auditable.
+3. **Was the score calibrated for this category?** Check confidence bucket accuracy for similar cases.
+4. **Was the failure a false positive or false negative?** This determines whether to raise or lower thresholds, improve evidence, or change escalation path.
+
+The most common production mistake is changing thresholds based on one incident. Do not do that blindly. First classify the incident type, inspect nearby examples, estimate false positive/negative tradeoffs, then adjust the policy with a measured eval set.
+
+---
+
+### 11. Curiosity Bridge [Mandatory]
+
+Thresholds decide when the system should ask, verify, approve, or escalate. But once a human is involved, another problem appears: the experience itself. A technically correct escalation can still fail if the reviewer gets poor context, too many alerts, unclear actions, or no way to correct the workflow.
+
+That leads directly to **Subtopic 16.2.c: UX Implications of Human Review** — designing HITL surfaces that make humans effective instead of turning them into tired rubber stamps.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit Check:**
+You are done with this subtopic when you can, without notes:
+1. Explain why one global confidence threshold is unsafe.
+2. Design a risk-weighted escalation ladder with at least four paths.
+3. Debug a threshold failure by identifying false positive vs false negative and the policy rule that fired.
+
+---
+
+**Carry-Forward Review (interleaved question from 16.2.a):**
+
+> *From 16.2.a:* How do approval checkpoints and confidence thresholds relate?
+
+> **Answer:** Confidence thresholds decide *when* a case reaches an approval checkpoint; approval checkpoints define *what happens* once the workflow pauses. A high-risk action may require approval even at high confidence because confidence does not remove accountability or irreversibility.
+
+---
+
+## Subtopic 16.2.c: UX Implications of Human Review
+
+### ✅ Add to Knowledge Base
+
+### Reading Path + Level Tags
+
+- **Beginner:** Read sections 1–2 and Active Recall.
+- **Intermediate:** Add sections 3–5 and the Hands-On Lab Build step.
+- **Pro:** Complete the full Hands-On Lab (Build → Break → Measure → Explain) plus the capstone practice question.
+
+---
+
+### 0. Pre-Question Hook [Beginner]
+
+**Pause:** A reviewer receives an approval request that says: "AI recommends issuing a refund. Approve?" Another request says: "Refund $247.18 for invoice INV-4421 because duplicate annual charge detected; policy section B.3 supports refund; customer has 0 prior refunds; confidence 0.91; no fraud flags; executing will call `issue_refund(invoice_id=INV-4421, amount=247.18)`." Which one creates safer human judgment?
+
+Human review quality is not just about having a human. It is about designing the surface that makes the human effective.
+
+---
+
+### 1. The Intuition (Plain English) [Beginner]
+
+Human-in-the-loop systems fail when they treat humans as a checkbox. A human reviewer is not a magic safety layer. Reviewers need context, clear choices, evidence, consequences, time pressure signals, and a way to correct the workflow without fighting the interface.
+
+The mental model:
+
+```text
+Good review UX = right context + right action controls + right accountability + low cognitive waste
+```
+
+If the interface shows too little, reviewers rubber-stamp. If it shows too much, reviewers drown. If it hides the exact tool call, reviewers approve vague intent instead of concrete execution. If it lacks reason codes, their decisions cannot improve the system later.
+
+Real-world analogy: a surgical timeout checklist. Before an operation, the team confirms patient, procedure, site, allergies, imaging, equipment, and risks. The checklist is short, but it surfaces the exact facts needed to prevent serious harm. It does not dump the entire medical record on the team, and it does not ask, "Does this look okay?"
+
+**Where the analogy breaks down:** In many agent systems, reviewers are asynchronous and may not share the agent's context. They may be approving work hours later, from a queue, while handling many unrelated cases. The UX must reconstruct the task state clearly enough for safe review.
+
+**Key terms (first use):**
+
+- **Review UX** — the design of the human review experience: what information is shown, what decisions are available, how risk is displayed, and how feedback is captured.
+- **Reviewer cognition** — the mental work required for a human to understand the case, assess risk, compare evidence, and choose an action.
+- **Progressive disclosure** — showing the most important review information first while allowing deeper details to expand when needed.
+- **Decision payload** — the reviewer-facing bundle of proposed action, evidence, risk, confidence, consequences, and controls.
+- **Action preview** — the exact message, tool call, database change, command, diff, or transaction that will execute if approved.
+- **Evidence panel** — a compact view of sources, tool outputs, verifier labels, and supporting/contradicting facts used by the agent.
+- **Reason code** — a structured label explaining why the reviewer approved, edited, rejected, escalated, or requested more information.
+- **Rubber-stamping** — reviewers approving requests without meaningful inspection, often due to fatigue, poor context, or too many low-value approvals.
+- **Reviewer workload** — the volume, complexity, urgency, and time cost of review tasks assigned to humans.
+- **Decision latency** — time from review request creation to reviewer decision.
+- **Override control** — a UI control that lets the reviewer edit, reject, escalate, or request more evidence rather than only approve/deny.
+- **Context reconstruction** — the work a reviewer must do to understand the case from the approval screen without reading raw traces or asking the agent to explain itself again.
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+#### Human Review Surface Anatomy
+
+```mermaid
+flowchart TD
+    R[Review request] --> H[Header\ncase type + risk + SLA]
+    R --> P[Proposed action\nexact preview/tool args]
+    R --> E[Evidence panel\nsources + verifier labels]
+    R --> C[Context summary\nuser/account/workflow state]
+    R --> W[Warnings\npolicy exceptions + stale data]
+    R --> A[Action controls]
+
+    A --> AP[Approve]
+    A --> ED[Edit payload]
+    A --> RJ[Reject]
+    A --> MR[Request more info]
+    A --> ES[Escalate]
+
+    AP --> RC[Reason code + audit]
+    ED --> RC
+    RJ --> RC
+    MR --> RC
+    ES --> RC
+```
+
+#### Review Queue Flow
+
+```mermaid
+flowchart LR
+    Q[Incoming review items] --> T[Queue triage\nrisk + SLA + expertise]
+    T --> L1[Low-risk batch review]
+    T --> L2[Medium-risk reviewer]
+    T --> L3[High-risk specialist]
+
+    L1 --> D[Decision + reason code]
+    L2 --> D
+    L3 --> D
+
+    D --> FB[Feedback store]
+    FB --> CAL[Threshold tuning]
+    FB --> PROMPT[Prompt/tool improvements]
+    FB --> POLICY[Policy updates]
+```
+
+**What these diagrams teach:**
+- Human review is a workflow surface, not a modal dialog.
+- The reviewer needs the exact executable action and the evidence behind it.
+- Review decisions should produce structured feedback, not just a yes/no result.
+- Queues should route by risk, SLA, and expertise, not arrival order alone.
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+---
+
+#### Scenario A: Refund Approval Queue
+
+**Product/use case context:**
+A support team reviews AI-proposed refunds. The agent provides refund amount, invoice ID, reason, customer history, and policy match. The reviewer must quickly decide whether to approve, edit amount, reject, or escalate to fraud review.
+
+**UX design implications:**
+- Show the exact refund tool call, not only a summary.
+- Show invoice timeline: original charge, duplicate charge, prior refunds, current account status.
+- Show policy basis and any exception warnings.
+- Provide quick edit controls for amount and reason.
+- Require a reason code for edits/rejections: `wrong_invoice`, `amount_too_high`, `policy_not_supported`, `fraud_risk`, `needs_customer_info`.
+
+**Constraints and how they affect design:**
+
+- **Latency:** Reviewers need to process many cases quickly. Put amount, customer, invoice, risk, and recommended action above the fold.
+- **Reliability:** The UI must prevent approving if required fields are missing. A disabled approve button with a clear missing-field reason is safer than a hidden validation error.
+- **Operational learning:** Edit/reject reason codes reveal whether the agent is misreading invoices, misapplying policy, or over-refunding.
+- **Failure modes:** If the UI only has approve/reject, reviewers reject cases that needed a small edit, increasing rework.
+
+**What good looks like in production:**
+- Reviewers can make common decisions in one screen without opening raw logs.
+- High-risk or unusual cases expose deeper evidence via expandable panels.
+- Every edit/reject feeds a structured improvement loop.
+
+---
+
+#### Scenario B: Clinical Letter Review
+
+**Product/use case context:**
+A clinician reviews an AI-drafted prior authorization letter before submission. The letter must accurately represent patient records and payer criteria.
+
+**UX design implications:**
+- Show the draft letter side-by-side with claim support labels.
+- Highlight unsupported or ambiguous claims in-line.
+- Let the clinician click from a claim to the exact source snippet in the patient record or payer policy.
+- Separate clinical facts from generated persuasive wording.
+- Require explicit acknowledgement before sending if any unresolved ambiguity remains.
+
+**Constraints and how they affect design:**
+
+- **Privacy:** Do not expose more PHI than needed in the review screen. Use minimum necessary snippets and role-based access.
+- **Reliability:** Clinicians should not have to hunt through a full chart to verify each claim. The system should pre-link evidence.
+- **Reviewer cognition:** Highlighting every sentence creates noise. Highlight only high-impact claims, missing criteria, contradictions, and unsupported facts.
+- **Failure modes:** A polished draft can create automation bias. The UI must make evidence quality visible, not just writing quality.
+
+**What good looks like in production:**
+- Clinician edits are preserved and attributed.
+- The submitted letter exactly matches the approved version.
+- Unsupported claims cannot be sent without explicit override reason.
+
+---
+
+#### Scenario C: Production Change Approval
+
+**Product/use case context:**
+An incident assistant proposes a production rollback. The on-call engineer reviews under time pressure.
+
+**UX design implications:**
+- Show current version, target version, exact command, environment, affected services, blast radius, and rollback/roll-forward plan.
+- Show confidence/evidence: error spike timeline, deploy correlation, health checks, and known risks.
+- Provide approve, reject, edit target version, run dry-run, or escalate to service owner.
+- Expire approval automatically if a new deployment happens or the environment changes.
+
+**Constraints and how they affect design:**
+
+- **Latency:** Review must be fast; incident screens should be dense and operational, not verbose prose.
+- **Reliability:** Approving a summary is unsafe. Engineers need command preview and environment validation.
+- **Safety:** Certain warnings should block approval until acknowledged: database migration detected, target version vulnerable, or no rollback artifact.
+- **Failure modes:** If the UI buries environment info, staging commands may be approved for production or vice versa.
+
+**What good looks like in production:**
+- Approval screen can be understood in under 30 seconds by the on-call engineer.
+- Critical warnings are visually and structurally hard to miss.
+- All approvals expire on state changes.
+
+---
+
+### 4. System View (Think Like a Systems Engineer) [Intermediate]
+
+**Inputs -> Transformations -> Outputs:**
+
+```text
+[Escalated case / approval request]
+    -> Build decision payload:
+        - proposed action preview
+        - risk tier and escalation reason
+        - evidence summary and source links
+        - verifier results and warnings
+        - current workflow state and SLA
+    -> Route to reviewer by expertise, role, queue priority, and SLA
+    -> Reviewer decides: approve, edit, reject, request info, escalate
+    -> Capture reason code and optional free-text note
+    -> Resume workflow with immutable decision record
+    -> Feed decision data into evaluation, threshold tuning, and product improvements
+```
+
+**Observability — what we log, trace, and measure:**
+
+| Signal | What it tells you |
+|--------|-------------------|
+| Decision latency p50/p95 | Whether review UX/queue design is slowing workflows |
+| Edit/reject reason codes | What the agent/system gets wrong most often |
+| Reviewer agreement rate | Whether review criteria are clear and consistent |
+| Override rate by reviewer | Outlier reviewers or unclear policy areas |
+| Payload completeness rate | Whether reviews include required action/evidence/risk fields |
+| Evidence expansion rate | How often reviewers need to open deeper evidence panels |
+| Rubber-stamp rate | Suspiciously fast approvals with low evidence interaction |
+| Queue age by risk tier | Whether high-risk items wait too long |
+| Post-review incident rate | Whether approved decisions still cause harm |
+
+**Failure points — where review UX breaks:**
+
+| Failure | Symptom | How it surfaces |
+|---------|---------|-----------------|
+| Vague action preview | Reviewer approves wrong action | Approved payload differs from reviewer expectation |
+| Evidence overload | Reviewer skips evidence | Long screen, low evidence interaction, high rubber-stamp rate |
+| Evidence underload | Reviewer cannot verify recommendation | High request-more-info rate |
+| No edit path | Reviewer rejects mostly-correct proposals | High rejection/rework rate |
+| No reason codes | Feedback cannot improve model/policy | Human review data is unusable for calibration |
+| Poor queue routing | Wrong reviewer receives specialized case | Escalation loops and SLA misses |
+| Alert fatigue | Reviewers approve too quickly | Fast approvals correlate with incidents |
+
+---
+
+### 5. System Design Flavor [Intermediate]
+
+**Key components and interfaces:**
+
+```text
+Human review UX system:
+  - Review item schema: case_id, action_preview, risk_tier, reason_code, SLA, evidence_refs
+  - Payload builder: converts traces/tool results into reviewer-facing context
+  - Review queue router: assigns items by risk, expertise, role, urgency, and workload
+  - Review UI: evidence panel, action preview, warnings, controls, edit/reject/escalate paths
+  - Decision capture: structured reason codes + optional notes + approved payload
+  - Audit writer: immutable record of what was shown and what was decided
+  - Feedback pipeline: turns human decisions into eval labels and system improvements
+```
+
+**Key tradeoffs:**
+
+1. **Concise payload vs complete context: speed vs correctness**
+   - *Concise payloads* reduce review time but can hide important risk.
+   - *Complete context* improves correctness but creates cognitive overload.
+   - *When to choose:* use progressive disclosure. Show the decision-critical summary first, then expandable evidence and raw traces for complex cases.
+
+2. **Approve/reject only vs editable decisions: simplicity vs workflow efficiency**
+   - *Approve/reject* is simple and safer for high-risk irreversible actions.
+   - *Editable decisions* reduce rework when proposals are mostly correct, such as refund amount edits or email wording changes.
+   - *When to choose:* allow edits for drafts and structured payloads with validation; restrict edits for dangerous commands unless edit paths are strongly validated.
+
+3. **Human attention vs automation throughput: safety vs fatigue**
+   - More review can improve safety up to a point, then fatigue reduces judgment quality.
+   - Fewer reviews improve throughput but may let risky cases through.
+   - *When to choose:* tune thresholds and UX together. If humans are rubber-stamping, reduce low-value reviews or improve payload clarity before adding more approvals.
+
+**Scaling consideration (10x traffic/data):**
+
+At 10x review volume, queue design becomes as important as model quality:
+
+1. Batch low-risk similar cases for efficient review.
+2. Route high-risk items to specialists immediately.
+3. Use reason-code analytics to eliminate avoidable escalations.
+4. Monitor reviewer load and decision quality together.
+5. Promote repeatedly approved low-risk patterns into automation.
+
+The system should optimize for **decision quality per minute of human attention**, not simply number of approvals completed.
+
+---
+
+### 6. Common Mistakes + Debugging [Intermediate]
+
+#### Mistake 1: Designing approval as a generic modal
+
+**Symptom:** Every review screen looks the same: a short AI summary and approve/reject buttons. Reviewers complain they need to open logs, ask other teams, or guess.
+
+**Likely cause:** The UI was designed around workflow state, not reviewer cognition. Different action types need different decision payloads.
+
+**First debugging step:** Shadow 5-10 real reviews and list what reviewers had to look up outside the UI. Add those missing fields to the payload or evidence panel.
+
+---
+
+#### Mistake 2: No structured feedback capture
+
+**Symptom:** Humans reject or edit cases, but the system does not improve. Teams know reviewers are busy but cannot identify recurring causes.
+
+**Likely cause:** Decisions are stored as free text or binary approve/reject only. No reason codes or corrected payload fields are captured.
+
+**First debugging step:** Add required reason codes for reject/edit/escalate and optional notes. Then build a weekly report: top reason codes by action type and model/tool version.
+
+---
+
+#### Mistake 3: Ignoring reviewer workload and fatigue
+
+**Symptom:** Approval quality is good early in the day but degrades later. Reviewers approve almost everything. Incidents correlate with queue spikes.
+
+**Likely cause:** Review policy sends too many low-value cases to humans, causing fatigue and shallow review.
+
+**First debugging step:** Plot decision latency, approval rate, edit rate, and incident rate by queue age and reviewer load. If quality drops under load, reduce low-risk approvals, add batching, or improve routing.
+
+---
+
+### 7. Hands-On Lab [Pro]
+
+> **Goal:** Build a minimal review queue simulator that routes review items by risk, displays structured payloads, captures reviewer decisions with reason codes, and measures review quality signals.
+
+---
+
+#### Build: Review Queue Payload and Decision Capture
+
+```python
+from dataclasses import dataclass, field
+from typing import Literal
+from uuid import uuid4
+import time
+
+
+Risk = Literal["low", "medium", "high"]
+Decision = Literal["approve", "edit", "reject", "request_info", "escalate"]
+
+
+@dataclass
+class ReviewItem:
+    case_id: str
+    action_type: str
+    risk: Risk
+    proposed_action: dict
+    evidence_refs: list[str]
+    warnings: list[str]
+    escalation_reason: str
+    created_at: float = field(default_factory=time.time)
+    review_id: str = field(default_factory=lambda: str(uuid4()))
+
+
+@dataclass
+class ReviewDecision:
+    review_id: str
+    reviewer_id: str
+    decision: Decision
+    reason_code: str
+    approved_payload: dict | None
+    decided_at: float = field(default_factory=time.time)
+
+
+REVIEW_QUEUE: list[ReviewItem] = []
+DECISIONS: list[ReviewDecision] = []
+
+
+def enqueue_review(item: ReviewItem) -> None:
+    REVIEW_QUEUE.append(item)
+    REVIEW_QUEUE.sort(key=lambda x: ({"high": 0, "medium": 1, "low": 2}[x.risk], x.created_at))
+
+
+def build_reviewer_payload(item: ReviewItem) -> dict:
+    return {
+        "header": f"{item.risk.upper()} risk {item.action_type}",
+        "proposed_action": item.proposed_action,
+        "evidence_refs": item.evidence_refs,
+        "warnings": item.warnings,
+        "why_escalated": item.escalation_reason,
+        "allowed_decisions": ["approve", "edit", "reject", "request_info", "escalate"],
+    }
+
+
+def record_decision(
+    item: ReviewItem,
+    reviewer_id: str,
+    decision: Decision,
+    reason_code: str,
+    approved_payload: dict | None = None,
+) -> ReviewDecision:
+    if decision in {"reject", "edit", "escalate"} and not reason_code:
+        raise ValueError("reason_code is required for reject/edit/escalate")
+
+    if decision == "approve" and approved_payload is None:
+        approved_payload = item.proposed_action
+
+    result = ReviewDecision(
+        review_id=item.review_id,
+        reviewer_id=reviewer_id,
+        decision=decision,
+        reason_code=reason_code,
+        approved_payload=approved_payload,
+    )
+    DECISIONS.append(result)
+    return result
+
+
+refund = ReviewItem(
+    case_id="case_001",
+    action_type="issue_refund",
+    risk="medium",
+    proposed_action={"invoice_id": "INV-4421", "amount_usd": 247.18, "reason": "duplicate charge"},
+    evidence_refs=["invoice_lookup", "policy_B3", "customer_message"],
+    warnings=[],
+    escalation_reason="amount_threshold_exceeded",
+)
+
+enqueue_review(refund)
+payload = build_reviewer_payload(REVIEW_QUEUE[0])
+print(payload)
+
+decision = record_decision(
+    refund,
+    reviewer_id="support_lead_7",
+    decision="edit",
+    reason_code="amount_adjusted_to_policy_limit",
+    approved_payload={"invoice_id": "INV-4421", "amount_usd": 200.00, "reason": "policy limit"},
+)
+print(decision)
+```
+
+---
+
+#### Break: Force the Relevant Failure Modes
+
+**Break 1 — Remove the action preview:**
+Delete `proposed_action` from `build_reviewer_payload()`. Reviewers now approve without seeing the executable payload. This recreates the classic "approved vague summary" failure.
+
+**Break 2 — Remove reason-code requirements:**
+Allow reject/edit/escalate without `reason_code`. The system still functions, but you lose the feedback signal needed to improve prompts, tools, thresholds, and policies.
+
+**Break 3 — FIFO queue only:**
+Remove the risk-based sort in `enqueue_review()`. High-risk items can wait behind low-risk items, increasing SLA and harm risk.
+
+---
+
+#### Measure: Concrete Signals
+
+| Measurement | How to capture | What to watch for |
+|-------------|----------------|-------------------|
+| Decision latency | `decided_at - created_at` | Long p95 means queue or payload friction |
+| Payload completeness | Required fields present / total reviews | Missing action/evidence/risk fields are safety defects |
+| Edit/reject reason distribution | Count reason codes | Top causes should feed system improvements |
+| Evidence interaction rate | Clicks/expands on evidence panels | Very low rate may indicate rubber-stamping or overconfidence |
+| Rubber-stamp proxy | Approvals under N seconds with no evidence interaction | High rate means review quality risk |
+| Queue age by risk | Oldest item age per risk tier | High-risk stale items are urgent design failures |
+| Reviewer disagreement | Same case sampled by multiple reviewers | High disagreement means policy/UX ambiguity |
+
+---
+
+#### Explain: Why It Breaks and What Prevents It
+
+Human review is only as good as the information architecture around it. A reviewer who cannot see the exact action, evidence, and consequences is not a safety layer; they are a blind approver. A reviewer who sees everything at once may ignore most of it. A reviewer who cannot give structured feedback cannot help the system improve.
+
+The prevention is to design review as a decision product: clear payload, progressive evidence, explicit controls, reason codes, queue routing, and auditability.
+
+---
+
+### 8. Active Recall (Spaced Repetition) [Beginner–Intermediate]
+
+**Q1 (Beginner):** Why is human review not automatically a safety guarantee?
+
+> **Answer:** Because reviewers can only judge what the interface shows them. If the review UX hides the exact action, lacks evidence, overloads the reviewer, or causes fatigue, humans may rubber-stamp or make inconsistent decisions.
+
+---
+
+**Q2 (Intermediate):** What is progressive disclosure and why does it matter in review UX?
+
+> **Answer:** Progressive disclosure shows the most important decision information first while allowing deeper details to expand. It reduces cognitive load without hiding evidence needed for complex cases.
+
+---
+
+**Q3 (Intermediate):** Why are reason codes important?
+
+> **Answer:** Reason codes convert human decisions into structured feedback. They show why reviewers edited, rejected, escalated, or approved, which helps improve prompts, tools, retrieval, thresholds, policies, and training data.
+
+---
+
+**Q4 (Pro):** What is rubber-stamping and how can you detect it?
+
+> **Answer:** Rubber-stamping is approving without meaningful review. Detect it with proxies: very fast approvals, no evidence-panel interaction, high approval rate under heavy queue load, or incidents clustered after short review times.
+
+---
+
+**Q5 (Pro):** Why should high-risk review queues not use FIFO ordering alone?
+
+> **Answer:** FIFO can let urgent high-risk items wait behind low-risk tasks. Review queues should prioritize by risk, SLA, impact, and required expertise, not only arrival time.
+
+---
+
+### 9. Practice [Intermediate–Pro]
+
+**Mini-exercise:**
+
+Design a review screen for an AI assistant that wants to send a customer-facing billing email.
+
+1. What must appear above the fold?
+2. What evidence should be expandable?
+3. What action controls should exist?
+4. What reason codes should be captured?
+
+> **Suggested answer outline:**
+> - Above fold: recipient, subject, exact email body, risk tier, reason for escalation, invoice ID, promised refund/credit if any, policy warning.
+> - Expandable evidence: invoice timeline, prior support messages, policy section, verifier labels, customer account flags.
+> - Controls: approve/send, edit email, request more info, reject, escalate to billing lead.
+> - Reason codes: `wrong_invoice`, `unsupported_policy_claim`, `tone_issue`, `refund_amount_changed`, `needs_customer_info`, `legal_or_compliance_risk`.
+
+---
+
+**Capstone system design question:**
+
+Design the human review UX for an AI healthcare prior authorization assistant. It drafts a letter, verifies claims, and routes uncertain cases to clinicians. Include layout, evidence display, controls, reason codes, audit requirements, and fatigue prevention.
+
+> **Suggested answer outline:**
+> - **Layout:** side-by-side letter draft and evidence/claim panel; header with patient, procedure, payer, risk, SLA, and escalation reason.
+> - **Evidence display:** inline highlighting for unsupported/ambiguous/contradicted claims; click-through to patient record snippet and payer policy clause; hide irrelevant PHI by default.
+> - **Controls:** approve, edit letter, reject, request missing documentation, escalate to specialist, send back to agent for revision.
+> - **Reason codes:** `unsupported_clinical_claim`, `missing_payer_criterion`, `wrong_policy`, `needs_clinician_judgment`, `patient_record_conflict`, `wording_revision`.
+> - **Audit:** exact draft shown, exact approved letter, reviewer, edits, evidence version, verifier labels, timestamp, submission result.
+> - **Fatigue prevention:** prioritize high-risk cases, batch low-risk drafts, highlight only decision-critical claims, track rubber-stamp proxies and reviewer load.
+
+---
+
+### 10. Production Reality Check [Mandatory]
+
+> **If this fails in production, what's the first thing we inspect?**
+
+Inspect the **review event record** for the failed case: what the reviewer saw, what they clicked/opened, what decision they made, and what reason code was captured.
+
+Ask these in order:
+1. **Did the reviewer see the exact action preview?** If no, they approved intent, not execution.
+2. **Was the supporting/contradicting evidence visible and usable?** If no, the human could not verify the agent's recommendation.
+3. **Was the decision path expressive enough?** If only approve/reject existed, reviewers may have been forced into the wrong action.
+4. **Was there a structured reason code?** If no, the incident cannot improve the system except through anecdote.
+
+The first debugging move is not to blame the reviewer. Replay the review screen as it appeared at decision time. If the UI made the wrong decision easy or the right decision hard, fix the review product.
+
+---
+
+### 11. Curiosity Bridge [Mandatory]
+
+Good review UX makes individual decisions safer. But a production HITL system must also answer a broader question: is human review worth what it costs? How often do humans change outcomes, how much latency do they add, and which review types should be automated, improved, or removed?
+
+That leads directly to **Subtopic 16.2.d: Measuring Intervention Quality and Operational Cost** — where human review becomes a measured operating system, not a vague safety blanket.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit Check:**
+You are done with this subtopic when you can, without notes:
+1. Design a reviewer payload with action preview, evidence, risk, controls, and reason codes.
+2. Explain how review UX can cause rubber-stamping.
+3. Name the first event record to inspect when a human-approved action fails.
+
+---
+
+**Carry-Forward Review (interleaved question from 16.2.b):**
+
+> *From 16.2.b:* Why is escalation logic incomplete without good review UX?
+
+> **Answer:** Escalation logic can route the right cases to humans, but review UX determines whether humans can make good decisions. If the payload lacks evidence, hides the exact action, overloads the reviewer, or fails to capture reason codes, the escalation path may be technically correct but operationally weak.
+
+---
+
 ## Module Glossary
 
 | Term | Definition |
@@ -3175,3 +4320,27 @@ You are done with this subtopic when you can, without notes:
 | **Approval policy** | Rules defining which actions require approval based on risk, reversibility, confidence, user role, amount, data type, or environment. |
 | **Audit trail** | Immutable record of proposal, context, approver, decision, timestamp, executed action, and outcome. |
 | **Review fatigue** | Degradation in human judgment when too many low-value approval requests are sent to reviewers. |
+| **Confidence threshold** | A cutoff score used to decide whether the system proceeds automatically, asks for more information, verifies, or escalates. |
+| **Calibrated confidence** | Confidence that matches empirical correctness over many cases; predictions scored 0.8 are correct about 80% of the time. |
+| **Escalation logic** | Rules that route a case to clarification, verifier, human review, specialist team, or safe stop based on confidence and risk. |
+| **Abstention** | The system choosing not to answer or act because confidence or evidence is insufficient. |
+| **Clarification path** | Asking the user a targeted question to reduce ambiguity before answering or acting. |
+| **Risk-weighted threshold** | A threshold that becomes stricter as action risk, irreversibility, or user harm increases. |
+| **False positive** | The system incorrectly accepts, answers, approves, or acts when it should not have. |
+| **False negative** | The system incorrectly blocks, rejects, escalates, or refuses when it could have handled the case safely. |
+| **Triage band** | A confidence range mapped to a specific action path, such as auto-handle, clarify, verify, or escalate. |
+| **Calibration curve** | A plot or table comparing predicted confidence buckets to observed correctness. |
+| **Expected cost** | The weighted cost of possible outcomes, used to choose thresholds based on business or user harm. |
+| **Threshold drift** | When the relationship between confidence and correctness changes over time due to model updates, data drift, policy changes, or user behavior. |
+| **Review UX** | The design of the human review experience: information shown, decisions available, risk display, and feedback capture. |
+| **Reviewer cognition** | The mental work required for a human to understand the case, assess risk, compare evidence, and choose an action. |
+| **Progressive disclosure** | Showing the most important review information first while allowing deeper details to expand when needed. |
+| **Decision payload** | The reviewer-facing bundle of proposed action, evidence, risk, confidence, consequences, and controls. |
+| **Action preview** | The exact message, tool call, database change, command, diff, or transaction that will execute if approved. |
+| **Evidence panel** | A compact view of sources, tool outputs, verifier labels, and supporting/contradicting facts used by the agent. |
+| **Reason code** | A structured label explaining why the reviewer approved, edited, rejected, escalated, or requested more information. |
+| **Rubber-stamping** | Reviewers approving requests without meaningful inspection, often due to fatigue, poor context, or too many low-value approvals. |
+| **Reviewer workload** | The volume, complexity, urgency, and time cost of review tasks assigned to humans. |
+| **Decision latency** | Time from review request creation to reviewer decision. |
+| **Override control** | A UI control that lets the reviewer edit, reject, escalate, or request more evidence rather than only approve/deny. |
+| **Context reconstruction** | The work a reviewer must do to understand the case from the approval screen without reading raw traces or asking the agent to explain itself again. |
