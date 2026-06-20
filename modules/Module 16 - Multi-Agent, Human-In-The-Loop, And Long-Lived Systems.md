@@ -18,12 +18,12 @@
 | 16.2.a | Approval checkpoints and reversible actions | ✅ Done |
 | 16.2.b | Confidence thresholds and escalation logic | ✅ Done |
 | 16.2.c | UX implications of human review | ✅ Done |
-| 16.2.d | Measuring intervention quality and operational cost | |
+| 16.2.d | Measuring intervention quality and operational cost | ✅ Done |
 | **Topic 16.3** | **Memory and long-horizon execution (12h)** | |
-| 16.3.a | Episodic, semantic, and procedural memory concepts | |
-| 16.3.b | Session memory, summary memory, and retrieval memory | |
-| 16.3.c | Memory freshness, drift, and forgetting strategies | |
-| 16.3.d | Long-running task decomposition and checkpoint strategy | |
+| 16.3.a | Episodic, semantic, and procedural memory concepts | ✅ Done |
+| 16.3.b | Session memory, summary memory, and retrieval memory | ✅ Done |
+| 16.3.c | Memory freshness, drift, and forgetting strategies | ✅ Done |
+| 16.3.d | Long-running task decomposition and checkpoint strategy | ✅ Done |
 
 **Covered so far:**
 - 16.1.a — Manager-worker and router-specialist patterns: coordination topologies, manager vs router mental model, fan-out/fan-in mechanics, task decomposition, routing classification, result aggregation, real-world scenarios, tradeoffs, failure modes, debugging checklist
@@ -33,6 +33,11 @@
 - 16.2.a — Approval checkpoints and reversible actions: human-in-the-loop mental model, approval checkpoints, reversible vs irreversible actions, action risk tiering, pre-commit review, confirmation payloads, pause/resume state, audit trails, timeout handling, rollback/compensation design, hands-on approval-gated tool lab
 - 16.2.b — Confidence thresholds and escalation logic: confidence vs calibrated confidence, risk-weighted thresholds, escalation ladders, false positive/false negative tradeoffs, abstention, clarification, human review routing, threshold tuning from eval data, drift monitoring, hands-on threshold simulator lab
 - 16.2.c — UX implications of human review: reviewer cognition, decision payload design, progressive disclosure, evidence panels, action previews, approve/edit/reject controls, reason codes, reviewer workload, review fatigue, interruption design, feedback capture, auditability, hands-on review-queue UX simulator lab
+- 16.2.d — Measuring intervention quality and operational cost: intervention value, reviewer lift, cost per intervention, avoidable escalation, decision latency, SLA breach rate, override quality, human agreement, queue economics, automation graduation, operational dashboards, hands-on HITL metrics lab
+- 16.3.a — Episodic, semantic, and procedural memory concepts: memory as a designed system, working vs durable memory, episodic events, semantic facts, procedural skills, memory scope, provenance, salience, consolidation, retrieval, memory pollution, lifecycle controls, hands-on memory-classification and store lab
+- 16.3.b — Session memory, summary memory, and retrieval memory: short-lived session state, rolling summaries, retrieval-backed memory, memory store selection, context budgeting, summary drift, retrieval precision, hybrid memory architecture, write/read paths, observability, hands-on hybrid memory pipeline lab
+- 16.3.c — Memory freshness, drift, and forgetting strategies: freshness windows, TTLs, decay, validation, conflict resolution, source versioning, policy drift, preference drift, summary drift, forgetting rules, retention, deletion, tombstones, revalidation jobs, memory quality dashboards, hands-on freshness and forgetting simulator lab
+- 16.3.d — Long-running task decomposition and checkpoint strategy: durable execution, workflow state machines, step boundaries, checkpoint state, progress ledgers, resumability, idempotency keys, retry policies, leases, heartbeats, timeouts, cancellation, compensation, dead-letter handling, crash recovery, hands-on resumable workflow lab
 
 ---
 
@@ -4255,6 +4260,3113 @@ You are done with this subtopic when you can, without notes:
 
 ---
 
+## Subtopic 16.2.d: Measuring Intervention Quality and Operational Cost
+
+### ✅ Add to Knowledge Base
+
+### Reading Path + Level Tags
+
+- **Beginner:** Read sections 1–2 and Active Recall.
+- **Intermediate:** Add sections 3–5 and the Hands-On Lab Build step.
+- **Pro:** Complete the full Hands-On Lab (Build → Break → Measure → Explain) plus the capstone practice question.
+
+---
+
+### 0. Pre-Question Hook [Beginner]
+
+**Pause:** Your HITL system escalates 1,000 cases per week. Humans approve 920, edit 50, reject 20, and escalate 10. Is that good or bad? Should you add more reviewers, improve the model, change thresholds, or automate more cases?
+
+You cannot answer from volume alone. You need to measure whether human intervention changes outcomes enough to justify its cost.
+
+---
+
+### 1. The Intuition (Plain English) [Beginner]
+
+Human review is not free safety. It is an operational system with cost, latency, throughput limits, quality variance, and learning value. A good HITL system measures whether human intervention is doing useful work.
+
+The mental model:
+
+```text
+Human review value = harm prevented + quality improved + learning signal captured - cost - latency - reviewer fatigue
+```
+
+If humans approve 99% of a review type without edits and incidents are rare, that review type may be a candidate for automation. If humans edit 40% of a review type, the agent is close but not good enough; use edits as training/eval data. If humans reject 30% of a review type, the upstream agent, retrieval, threshold, or policy is likely wrong. If escalations time out, the system is not safer; it is stuck.
+
+Real-world analogy: a hospital triage desk. Triage is valuable if it sends urgent patients to care faster and avoids unnecessary specialist load. It is harmful if every patient waits in triage for hours, or if triage decisions are not tracked. The question is not "Do humans participate?" The question is "Does the intervention improve outcomes faster than it consumes capacity?"
+
+**Where the analogy breaks down:** Healthcare triage often has mature protocols and human professional standards. GenAI HITL systems are newer, and many teams do not yet instrument intervention quality. You have to design the measurement loop yourself.
+
+**Key terms (first use):**
+
+- **Intervention quality** — how much a human review improves safety, correctness, usefulness, or compliance compared with the automated proposal.
+- **Reviewer lift** — the measurable improvement caused by human review, such as fewer incidents, better answer quality, corrected payloads, or lower downstream reversals.
+- **Cost per intervention** — total operational cost of a human review, including reviewer time, tooling, delay, context switching, and follow-up work.
+- **Avoidable escalation** — a case routed to human review even though it could have been safely automated, clarified, or verified without human involvement.
+- **Necessary escalation** — a case where human judgment, authority, policy exception handling, or risk accountability was genuinely needed.
+- **SLA breach rate** — percentage of review items that miss the expected decision time window.
+- **Override quality** — whether human edits/rejections improve outcomes, not merely whether they differ from the agent.
+- **Automation graduation** — moving a repeatedly approved low-risk review type from human approval to automated handling with audit and monitoring.
+- **Human agreement rate** — how consistently different reviewers make the same decision on similar or identical cases.
+- **Queue economics** — the relationship between incoming review volume, reviewer capacity, decision latency, cost, and quality.
+- **Intervention ROI** — value gained from human review divided by review cost, often estimated by harm prevented, quality gain, or operational savings.
+- **Shadow review** — human review performed without affecting production decisions, used to measure what humans would have changed.
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+#### HITL Measurement Loop
+
+```mermaid
+flowchart TD
+    A[Agent proposal] --> R[Routing policy]
+    R -->|auto| AUTO[Automated outcome]
+    R -->|review| H[Human intervention]
+
+    H --> D[Decision\napprove / edit / reject / escalate]
+    D --> O[Final outcome]
+
+    AUTO --> M[Outcome measurement]
+    O --> M
+
+    M --> Q[Quality metrics\nincidents, correctness, user outcome]
+    M --> C[Cost metrics\nreview time, SLA, staffing]
+    M --> L[Learning signals\nreason codes, edits, overrides]
+
+    Q --> P[Policy tuning]
+    C --> P
+    L --> P
+
+    P --> R
+```
+
+#### Review Type Decision Matrix
+
+```mermaid
+flowchart LR
+    A[Review type] --> B{High human edit/reject rate?}
+    B -- yes --> C[Improve upstream model/tool/policy]
+    B -- no --> D{High approval rate + low incident rate?}
+    D -- yes --> E[Consider automation graduation]
+    D -- no --> F{High SLA breach or cost?}
+    F -- yes --> G[Retune thresholds / add capacity / simplify UX]
+    F -- no --> H[Keep review + monitor]
+```
+
+**What these diagrams teach:**
+- HITL must be measured as a feedback loop, not a terminal queue.
+- Review decisions should improve thresholds, prompts, retrieval, policy, and automation strategy.
+- High approval rate is not automatically good. It may mean humans are unnecessary or rubber-stamping.
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+---
+
+#### Scenario A: Refund Review Operations
+
+**Product/use case context:**
+A support organization reviews AI-proposed refunds. The company wants to reduce fraud and policy errors without creating a slow, expensive review queue.
+
+**What to measure:**
+- Approval rate by refund amount band.
+- Edit rate by amount, reason code, and policy section.
+- Rejection rate and rejection reasons.
+- Duplicate refund prevention rate.
+- Average review time and SLA breach rate.
+- Post-approval compensation rate: how often approved refunds later need correction.
+- Cost per reviewed refund vs refund amount.
+
+**How the metrics drive design:**
+- If refunds under $10 are approved 99.5% of the time with no incidents, graduate them to auto-approval with audit.
+- If $50-$250 refunds are edited 35% of the time, improve the agent's amount calculation or policy retrieval.
+- If high-value refunds have low volume but high incident risk, keep human approval even if approval rate is high.
+
+**Constraints and how they affect design:**
+
+- **Cost:** A $7 refund reviewed by a human for 4 minutes may cost more than the refund. Low-value reversible actions need automation thresholds.
+- **Reliability:** A 1% error rate on high-value refunds may be financially significant. Keep stricter review there.
+- **Failure modes:** Reviewers may approve quickly because the UI is easy, not because the proposal is correct. Track evidence interaction and post-approval incidents.
+
+**What good looks like in production:**
+- Refund review policy changes monthly based on measured outcomes.
+- Low-risk patterns graduate to automation.
+- High-risk patterns stay reviewed with strong payloads and specialist routing.
+
+---
+
+#### Scenario B: Benefits Specialist Escalations
+
+**Product/use case context:**
+A RAG benefits assistant escalates ambiguous coverage answers to human specialists. The goal is to protect users from wrong answers while keeping specialists focused on cases that need judgment.
+
+**What to measure:**
+- Escalation rate by question category.
+- Human answer changed vs agent draft.
+- Reason codes: missing evidence, policy exception, unsupported claim, eligibility ambiguity.
+- Specialist time per case.
+- User time-to-resolution.
+- Appeal/recontact rate after human-reviewed answers.
+- Auto-answer audit error rate for non-escalated cases.
+
+**How the metrics drive design:**
+- If many escalations are due to `missing_evidence`, improve retrieval before adding more reviewers.
+- If specialists rarely change simple plan-navigation answers, lower threshold for automation in that segment.
+- If specialists often correct exception handling, keep those escalated and build better exception detectors.
+
+**Constraints and how they affect design:**
+
+- **Latency:** Benefits users may need timely answers. Human review latency can harm UX even when safety improves.
+- **Privacy:** Escalation analytics must avoid leaking PHI into generic dashboards.
+- **Reliability:** Sampling auto-answered cases is necessary. Otherwise you only learn about escalated cases and miss silent automation errors.
+
+**What good looks like in production:**
+- Human interventions are categorized into retrieval gap, policy ambiguity, model error, and true human judgment.
+- The team distinguishes avoidable escalation from necessary escalation.
+- Auto-answer quality is audited separately.
+
+---
+
+#### Scenario C: Production Change Approvals
+
+**Product/use case context:**
+An incident assistant proposes rollbacks, traffic shifts, or service restarts. Engineers approve or reject under time pressure. The organization wants faster incident response without unsafe automation.
+
+**What to measure:**
+- Approval time by action type and incident severity.
+- Edit rate for commands or target versions.
+- Rejection reasons: wrong service, unsafe target, insufficient evidence, no rollback plan.
+- Incident outcome after approval: recovery time, rollback success, secondary incidents.
+- Stale approval expiry rate.
+- Reviewer load during incident spikes.
+
+**How the metrics drive design:**
+- If engineers frequently edit rollback target versions, improve deploy-history retrieval and command generation.
+- If many approvals expire due to environment changes, shorten approval TTL or revalidate more aggressively.
+- If low-risk restarts are always approved and never cause issues, consider pre-approved automation for specific services.
+
+**Constraints and how they affect design:**
+
+- **Latency:** During incidents, review latency directly affects recovery time. Measure intervention quality against MTTR, not only approval correctness.
+- **Reliability:** A fast wrong approval can make incidents worse. Track secondary incident rate after approved actions.
+- **Operational capacity:** Incident surges can overload reviewers. Queue economics must account for burst traffic.
+
+**What good looks like in production:**
+- Approval policies differ by environment, service criticality, incident severity, and reversibility.
+- Human review improves incident outcomes rather than merely adding procedural delay.
+- Post-incident review includes the approval trace.
+
+---
+
+### 4. System View (Think Like a Systems Engineer) [Intermediate]
+
+**Inputs -> Transformations -> Outputs:**
+
+```text
+[Review request / intervention event]
+    -> Capture pre-review proposal:
+        - agent output/action
+        - confidence and evidence
+        - risk tier and reason code
+        - expected automated path
+    -> Human intervention:
+        - approve, edit, reject, request info, escalate
+        - time spent and decision latency
+        - reason code and approved payload
+    -> Capture post-review outcome:
+        - execution result
+        - user/business outcome
+        - incident/reversal/recontact labels
+    -> Compute intervention metrics:
+        - reviewer lift
+        - cost per intervention
+        - avoidable vs necessary escalation
+        - SLA health
+        - policy improvement opportunities
+    -> Feed back into thresholds, UX, prompts, tools, and automation graduation
+```
+
+**Observability — what we log, trace, and measure:**
+
+| Signal | What it tells you |
+|--------|-------------------|
+| Approval/edit/reject/escalate distribution | Whether humans materially change proposals |
+| Reviewer lift | Whether review improves downstream outcome vs automation |
+| Cost per intervention | Whether review is economically justified for that action class |
+| Decision latency p50/p95 | Human review speed and user workflow delay |
+| SLA breach rate | Queue health and staffing/capacity risk |
+| Avoidable escalation rate | Cases humans approved unchanged and could likely be automated |
+| Necessary escalation rate | Cases requiring judgment, authority, or specialist intervention |
+| Post-intervention incident rate | Whether reviewed actions still cause harm |
+| Human agreement rate | Whether reviewers apply policy consistently |
+| Automation graduation candidates | Review types safe to move to auto with audit |
+
+**Failure points — where measurement breaks:**
+
+| Failure | Symptom | How it surfaces |
+|---------|---------|-----------------|
+| Measuring volume only | Team knows how many reviews happened, not whether they helped | Dashboards show counts but no quality/cost decisions |
+| No counterfactual | Cannot tell if human review improved outcome | No baseline or shadow-review comparison |
+| No reason codes | Human decisions cannot improve upstream system | Edits/rejections are opaque |
+| Ignoring auto-handled cases | Only escalated cases are measured | Silent automation errors go undetected |
+| Review cost omitted | Human review appears free | Automation policy overuses people |
+| Latency ignored | Review is correct but too slow | SLA misses, user drop-off, operational delay |
+| Agreement not measured | Review quality varies by person | Same case gets different decisions |
+
+---
+
+### 5. System Design Flavor [Intermediate]
+
+**Key components and interfaces:**
+
+```text
+HITL measurement system:
+  - Intervention event schema: proposal, route reason, reviewer decision, timing, payload diff
+  - Outcome label store: correctness, incident, recontact, reversal, user satisfaction, business result
+  - Cost model: reviewer time, wage/loaded cost, tool cost, delay cost, rework cost
+  - Quality dashboard: lift, false accept reduction, edit/reject rates, post-review incidents
+  - Queue dashboard: volume, SLA, backlog, p95 decision latency, reviewer load
+  - Sampling/audit system: reviews auto-handled cases and human-reviewed cases
+  - Policy tuning loop: threshold updates, automation graduation, UX/prompt/tool improvements
+```
+
+**Key tradeoffs:**
+
+1. **Safety review vs operational throughput: risk reduction vs delay**
+   - More review may reduce harmful automation, but it adds delay and can create queues.
+   - Less review improves speed but may increase false accepts.
+   - *When to choose:* keep human review where reviewer lift is high or harm is high. Automate where approval is near-universal, incidents are low, and action is reversible.
+
+2. **Human judgment vs human consistency: expertise vs variability**
+   - Humans are valuable for ambiguous, high-context decisions.
+   - Humans can also disagree, fatigue, or apply policy inconsistently.
+   - *When to choose:* use humans for judgment-heavy cases; use deterministic policy and validators for objective checks. Measure human agreement where consistency matters.
+
+3. **Full audit vs lightweight metrics: depth vs cost**
+   - Full audit gives deep insight but is expensive.
+   - Lightweight telemetry scales but can miss subtle quality issues.
+   - *When to choose:* fully audit high-risk segments; sample low-risk auto-handled cases; use aggregate telemetry for broad monitoring.
+
+**Scaling consideration (10x traffic/data):**
+
+At 10x volume, HITL becomes a queueing system. If incoming reviews exceed reviewer capacity, decision latency grows nonlinearly. You need:
+
+1. Risk-tiered queues.
+2. Capacity planning: reviews/hour/reviewer and expected arrival rate.
+3. Automation graduation for low-risk high-approval segments.
+4. Sampling instead of full review for mature low-risk flows.
+5. Alerting on backlog age, not just total queue length.
+
+If you do not measure cost and capacity, human review becomes the bottleneck that quietly caps the whole product.
+
+---
+
+### 6. Common Mistakes + Debugging [Intermediate]
+
+#### Mistake 1: Counting reviews but not measuring lift
+
+**Symptom:** Dashboard proudly says "12,000 human reviews completed," but no one knows whether those reviews prevented harm or improved quality.
+
+**Likely cause:** The system logs review volume but not before/after differences or downstream outcomes.
+
+**First debugging step:** Add a payload diff and outcome label: what did the human change compared with the agent proposal, and did the final outcome improve? Start with edit/reject rate, post-review incident rate, and a sampled comparison of agent proposal vs human final.
+
+---
+
+#### Mistake 2: Treating all escalations as necessary
+
+**Symptom:** Review queue grows every week. Humans approve most items unchanged. The team hires more reviewers instead of reducing avoidable review.
+
+**Likely cause:** Escalation policy is too broad, and no one measures avoidable escalation.
+
+**First debugging step:** Segment reviews by action type and approval-without-edit rate. For segments with high approval rate, low incident rate, and low risk, run a shadow automation experiment before changing policy.
+
+---
+
+#### Mistake 3: Optimizing reviewer speed alone
+
+**Symptom:** Decision latency improves, but incidents increase. Reviewers approve faster but miss important evidence.
+
+**Likely cause:** The team optimized throughput without measuring decision quality. Reviewers may be rubber-stamping.
+
+**First debugging step:** Compare review time with post-review incident/reversal rate and evidence interaction. If very fast approvals have worse outcomes, improve UX/policy and reduce low-value queue load rather than pushing reviewers to go faster.
+
+---
+
+### 7. Hands-On Lab [Pro]
+
+> **Goal:** Build a small HITL metrics calculator. You will measure approval/edit/reject rates, cost per intervention, avoidable escalation, reviewer lift, and automation graduation candidates. Then break the measurement by omitting counterfactuals.
+
+---
+
+#### Build: HITL Metrics Calculator
+
+```python
+from dataclasses import dataclass
+from typing import Literal
+
+
+Decision = Literal["approved", "edited", "rejected", "escalated"]
+Outcome = Literal["good", "bad"]
+
+
+@dataclass
+class Intervention:
+    case_id: str
+    action_type: str
+    risk: str
+    agent_would_auto: bool
+    human_decision: Decision
+    human_changed_payload: bool
+    review_seconds: int
+    reviewer_cost_per_hour: float
+    final_outcome: Outcome
+    agent_counterfactual_outcome: Outcome | None  # from shadow eval or audit
+
+
+def intervention_cost(item: Intervention) -> float:
+    return (item.review_seconds / 3600) * item.reviewer_cost_per_hour
+
+
+def compute_metrics(items: list[Intervention]) -> dict:
+    total = len(items)
+    approvals = sum(1 for item in items if item.human_decision == "approved")
+    edits = sum(1 for item in items if item.human_decision == "edited")
+    rejections = sum(1 for item in items if item.human_decision == "rejected")
+    escalations = sum(1 for item in items if item.human_decision == "escalated")
+    total_cost = sum(intervention_cost(item) for item in items)
+
+    avoidable = [
+        item for item in items
+        if item.human_decision == "approved"
+        and not item.human_changed_payload
+        and item.final_outcome == "good"
+        and item.risk == "low"
+    ]
+
+    lift_cases = [
+        item for item in items
+        if item.agent_counterfactual_outcome == "bad" and item.final_outcome == "good"
+    ]
+
+    return {
+        "approval_rate": approvals / total,
+        "edit_rate": edits / total,
+        "rejection_rate": rejections / total,
+        "escalation_rate": escalations / total,
+        "avg_cost_per_intervention": total_cost / total,
+        "avoidable_escalation_rate": len(avoidable) / total,
+        "reviewer_lift_rate": len(lift_cases) / total,
+        "automation_graduation_candidates": sorted(set(item.action_type for item in avoidable)),
+    }
+
+
+data = [
+    Intervention("1", "low_refund", "low", True, "approved", False, 45, 45.0, "good", "good"),
+    Intervention("2", "low_refund", "low", True, "approved", False, 50, 45.0, "good", "good"),
+    Intervention("3", "high_refund", "high", False, "edited", True, 240, 60.0, "good", "bad"),
+    Intervention("4", "coverage_answer", "high", False, "rejected", True, 360, 80.0, "good", "bad"),
+    Intervention("5", "coverage_answer", "high", False, "approved", False, 180, 80.0, "good", "good"),
+]
+
+print(compute_metrics(data))
+```
+
+**Expected output (conceptually):**
+```text
+{
+  'approval_rate': 0.6,
+  'edit_rate': 0.2,
+  'rejection_rate': 0.2,
+  'escalation_rate': 0.0,
+  'avg_cost_per_intervention': ...,
+  'avoidable_escalation_rate': 0.4,
+  'reviewer_lift_rate': 0.4,
+  'automation_graduation_candidates': ['low_refund']
+}
+```
+
+---
+
+#### Break: Force the Relevant Failure Modes
+
+**Break 1 — Remove counterfactual outcomes:**
+Set `agent_counterfactual_outcome=None` for every item. Now reviewer lift cannot be measured. You know what humans did, but not whether they improved over automation.
+
+**Break 2 — Ignore review time/cost:**
+Remove `review_seconds` and `reviewer_cost_per_hour`. Now every intervention appears equally cheap, so low-value review types stay in the queue forever.
+
+**Break 3 — No action segmentation:**
+Aggregate all actions together. Low-risk refund reviews may look harmless inside global averages while high-risk coverage reviews show real lift. Without segmentation, you make the wrong automation decision.
+
+---
+
+#### Measure: Concrete Signals
+
+| Measurement | How to capture | What to watch for |
+|-------------|----------------|-------------------|
+| Reviewer lift rate | counterfactual bad -> final good | High means review is valuable |
+| Avoidable escalation rate | approved unchanged + low-risk + good outcome | High means automate or retune thresholds |
+| Cost per intervention | reviewer time * loaded hourly cost | Compare against value/harm prevented |
+| SLA breach rate | reviews past target decision time | Queue/capacity problem |
+| Edit/reject reason distribution | structured reason codes | Guides upstream fixes |
+| Post-review incident rate | incidents after human-approved actions | Measures review quality, not just speed |
+| Human agreement rate | duplicate review sampling | Low agreement means unclear policy/UX |
+| Automation graduation rate | review types moved safely to auto | Measures operational maturity |
+
+---
+
+#### Explain: Why It Breaks and What Prevents It
+
+HITL measurement breaks when it lacks a counterfactual. If a human approved a case and the outcome was good, did the human create value or would automation have done the same? You need shadow review, sampled audits, or agent-counterfactual labels to estimate lift.
+
+The second failure is global averaging. Human review value differs sharply by action type and risk tier. Averages hide where review is necessary and where it is waste.
+
+The durable design is segmented measurement: measure quality, cost, latency, and lift by action class, risk tier, reviewer group, policy version, and model version.
+
+---
+
+### 8. Active Recall (Spaced Repetition) [Beginner–Intermediate]
+
+**Q1 (Beginner):** Why is human review not free safety?
+
+> **Answer:** It adds operational cost, latency, queue limits, reviewer fatigue, and decision variance. It is valuable only when it improves outcomes enough to justify those costs.
+
+---
+
+**Q2 (Intermediate):** What is reviewer lift?
+
+> **Answer:** Reviewer lift is the measurable improvement caused by human review compared with what automation would have done, such as correcting bad proposals, preventing incidents, or improving downstream outcomes.
+
+---
+
+**Q3 (Intermediate):** What does a high approval-without-edit rate suggest?
+
+> **Answer:** It may suggest the review type is an automation graduation candidate, especially if risk is low and post-approval incidents are rare. It may also indicate rubber-stamping, so check review time and evidence interaction.
+
+---
+
+**Q4 (Pro):** Why do you need to measure auto-handled cases, not only escalated cases?
+
+> **Answer:** If you only measure escalated cases, you miss silent automation failures. Sampling auto-handled cases lets you estimate false accepts and compare human-reviewed vs automated paths.
+
+---
+
+**Q5 (Pro):** What is the danger of optimizing decision latency alone?
+
+> **Answer:** Reviewers may decide faster by inspecting less evidence, which can increase harmful approvals. Latency must be measured with quality metrics like post-review incidents, edit accuracy, and agreement.
+
+---
+
+### 9. Practice [Intermediate–Pro]
+
+**Mini-exercise:**
+
+You operate an AI review queue for customer-facing billing emails. In one week:
+
+- 2,000 emails were escalated.
+- 1,850 were approved unchanged.
+- 100 were edited.
+- 50 were rejected.
+- 5 approved emails later caused complaints.
+- Average review time was 90 seconds.
+
+What should you investigate before deciding to automate this review type?
+
+> **Suggested answer outline:**
+> - Segment by risk: routine reminder vs refund promise vs policy exception.
+> - Inspect whether the 1,850 unchanged approvals were low-risk and had evidence interaction.
+> - Calculate cost: 2,000 * 90 seconds of reviewer time.
+> - Audit a sample of approved unchanged emails to estimate false accepts.
+> - Analyze the 100 edits and 50 rejections by reason code.
+> - If low-risk routine emails are approved unchanged with low complaint rate, graduate that segment to auto-send with sampling. Keep refund/policy/legal promise emails reviewed.
+
+---
+
+**Capstone system design question:**
+
+Design an operational measurement system for a HITL prior authorization assistant. The system drafts letters, verifies claims, escalates uncertain cases to clinicians, and submits approved letters. Include metrics, dashboards, feedback loops, cost model, and automation graduation policy.
+
+> **Suggested answer outline:**
+> - **Metrics:** clinician edit rate, unsupported-claim rate, rejection/escalation reason codes, time-to-approval, approval SLA breach, payer denial rate, post-submission correction rate, clinician agreement rate, auto-draft audit score.
+> - **Dashboards:** queue health by payer/procedure/risk tier; quality by claim type; cost per reviewed letter; turnaround time; top evidence gaps; model/retrieval version drift.
+> - **Feedback loops:** clinician edits become eval cases; missing payer criteria improve retrieval/indexing; repeated wording edits update drafting prompt; unsupported claims update verifier tests.
+> - **Cost model:** clinician review minutes * loaded cost + delay cost from missed submission deadlines + rework cost from denials/corrections.
+> - **Automation graduation:** low-risk administrative letters may graduate to lighter review only after high agreement, low edit rate, low denial/correction rate, and successful shadow-mode audit. Clinical claims remain clinician-approved.
+
+---
+
+### 10. Production Reality Check [Mandatory]
+
+> **If this fails in production, what's the first thing we inspect?**
+
+Inspect the **intervention metrics dashboard segmented by action type and risk tier**.
+
+Ask these in order:
+1. **Did human review actually change the outcome?** Look at edit/reject rate, reviewer lift, and counterfactual audits.
+2. **What did the intervention cost?** Include reviewer time, latency, SLA breaches, rework, and queue impact.
+3. **Was the failure in reviewed cases or auto-handled cases?** Reviewed-case failures point to review UX/policy; auto-case failures point to threshold/policy gaps.
+4. **Is this review type a candidate for automation, improvement, or stronger escalation?** Use segmented data, not global averages.
+
+The first debugging move is to separate **quality failure** from **operations failure**. A review type can be accurate but too slow, cheap but useless, expensive but high-lift, or fast but unsafe. Each requires a different fix.
+
+---
+
+### 11. Curiosity Bridge [Mandatory]
+
+You now have the full HITL loop: approval checkpoints, thresholds, review UX, and operational measurement. The next module section shifts from human decisions to long-horizon continuity: how agents remember, resume, and operate across many turns or long-running tasks.
+
+That leads directly to **Topic 16.3: Memory and Long-Horizon Execution** — where we stop treating state as a single chat history and start designing memory as a durable system.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit Check:**
+You are done with this subtopic when you can, without notes:
+1. Define reviewer lift, avoidable escalation, and cost per intervention.
+2. Explain why high approval rate can mean either healthy automation readiness or rubber-stamping.
+3. Design a HITL dashboard that separates quality, cost, latency, and learning signals.
+
+---
+
+**Carry-Forward Review (interleaved question from 16.2.c):**
+
+> *From 16.2.c:* Why must reason codes be captured in human review UX?
+
+> **Answer:** Reason codes turn human decisions into structured measurement. Without them, you know that humans edited or rejected, but not why. With them, you can identify recurring model failures, retrieval gaps, policy ambiguity, bad thresholds, and automation graduation candidates.
+
+---
+
+## Topic 16.3: Memory and Long-Horizon Execution
+
+> **Topic time:** 12h
+> Focus: Designing agent systems that can remember useful facts, resume work across time, avoid stale or polluted state, and execute long-running tasks without depending on a single chat context window.
+
+---
+
+## Subtopic 16.3.a: Episodic, Semantic, and Procedural Memory Concepts
+
+### ✅ Add to Knowledge Base
+
+### Reading Path + Level Tags
+
+- **Beginner:** Read sections 1–2 and Active Recall.
+- **Intermediate:** Add sections 3–5 and the Hands-On Lab Build step.
+- **Pro:** Complete the full Hands-On Lab (Build -> Break -> Measure -> Explain) plus the capstone practice question.
+
+---
+
+### 0. Pre-Question Hook [Beginner]
+
+**Pause:** An agent helped a user debug a production issue last week. Today the user asks, "Can you continue from where we left off and use the same deployment policy?" What exactly should the agent remember: the old conversation, the incident facts, the user's preference, the debugging steps, the final decision, or the reusable procedure?
+
+If you answer "all of it," you will build a noisy memory system. If you answer "none of it," the agent cannot do long-horizon work. The engineering skill is knowing which kind of memory each piece of information belongs to.
+
+---
+
+### 1. The Intuition (Plain English) [Beginner]
+
+Agent memory is not just "put past chat into the prompt." Good memory is a designed storage and retrieval system. It decides what to capture, how to classify it, when to retrieve it, how much trust to place in it, and when to forget or update it.
+
+The core mental model:
+
+```text
+Working context = what the model can currently see
+Memory = selected durable information that can be retrieved later
+Long-horizon execution = using memory + checkpoints + tools across time
+```
+
+Think of a senior engineer working on a large project:
+
+- They remember **episodes**: "Last Friday, the deploy failed because the database migration was missing."
+- They remember **facts**: "This service uses blue-green deploys."
+- They remember **procedures**: "Before production deploy, run tests, check migration status, verify rollback plan, then request approval."
+
+These are different memory types. Mixing them creates confusion.
+
+Real-world analogy: a professional notebook system. A calendar captures what happened, a wiki stores durable facts, and a checklist captures repeatable procedures. A useful worker does not search the entire calendar for every task; they use the right memory source for the current decision.
+
+**Where the analogy breaks down:** Human memory naturally generalizes, forgets, and updates through experience. Agent memory must be explicitly written, scoped, retrieved, validated, and expired. Nothing is "obvious" unless the system design makes it so.
+
+**Key terms (first use):**
+
+- **Working memory** — the temporary context the model can currently attend to, usually the prompt, recent messages, tool outputs, and active state.
+- **Durable memory** — persisted information stored outside the immediate context window so it can be retrieved in future turns, sessions, or workflow runs.
+- **Episodic memory** — records of specific events or experiences, including what happened, when, who was involved, and what outcome occurred.
+- **Semantic memory** — durable facts, preferences, concepts, entities, and relationships that should remain true beyond one event.
+- **Procedural memory** — reusable know-how or steps for doing a task, such as workflows, playbooks, policies, and learned operating patterns.
+- **Long-horizon execution** — completing work over many turns, sessions, tool calls, pauses, approvals, failures, and resumptions.
+- **Memory scope** — the boundary that defines where a memory applies: user, organization, repo, project, task, session, or agent.
+- **Memory write** — the act of deciding that information is important enough to store.
+- **Memory retrieval** — selecting relevant memories for the current task and injecting or using them at the right time.
+- **Memory salience** — how important, reusable, recent, or decision-relevant a memory is.
+- **Memory provenance** — metadata about where a memory came from, when it was observed, and how trustworthy it is.
+- **Memory consolidation** — turning raw events into cleaner facts, summaries, preferences, or procedures.
+- **Memory pollution** — storing incorrect, irrelevant, private, stale, or overly broad information that later harms agent behavior.
+- **Memory lifecycle** — the rules for creating, updating, validating, expiring, archiving, or deleting memories.
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+#### Memory Types in an Agent System
+
+```mermaid
+flowchart TD
+    U[User request] --> C[Working memory\ncurrent prompt + state]
+    C --> D{Does this require past knowledge?}
+
+    D -- no --> A[Act with current context]
+    D -- yes --> R[Memory retrieval]
+
+    R --> E[Episodic memory\nspecific past events]
+    R --> S[Semantic memory\ndurable facts and preferences]
+    R --> P[Procedural memory\nreusable workflows]
+
+    E --> X[Reason + act]
+    S --> X
+    P --> X
+
+    X --> O[Outcome]
+    O --> W{Worth remembering?}
+
+    W -- event --> E2[Write episode]
+    W -- fact --> S2[Update semantic fact]
+    W -- procedure --> P2[Refine procedure]
+    W -- no --> N[Do not persist]
+```
+
+#### Memory Classification Decision Flow
+
+```mermaid
+flowchart LR
+    I[Candidate information] --> Q1{Is it about a specific event?}
+    Q1 -- yes --> EP[Episodic memory]
+    Q1 -- no --> Q2{Is it a durable fact or preference?}
+    Q2 -- yes --> SE[Semantic memory]
+    Q2 -- no --> Q3{Is it a repeatable method?}
+    Q3 -- yes --> PR[Procedural memory]
+    Q3 -- no --> SKIP[Do not store]
+
+    EP --> M[Add scope + provenance + timestamp]
+    SE --> M
+    PR --> M
+```
+
+**What these diagrams teach:**
+- Working memory is not the same as durable memory.
+- Memory retrieval should be selective and task-driven.
+- Memory writes should classify information before storing it.
+- Long-horizon execution depends on memory plus state, not memory alone.
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+---
+
+#### Scenario A: Coding Assistant Across a Repository
+
+**Product/use case context:**
+A coding assistant helps a developer over weeks. It needs to remember repo conventions, past debugging decisions, user preferences, and safe build/test commands.
+
+**How memory types show up:**
+- Episodic: "On June 18, tests failed because the mocked API returned `None` for `customer_id`."
+- Semantic: "This repo uses `pytest` and keeps integration tests under `tests/integration`."
+- Procedural: "Before editing workflow nodes, run the skeleton contract tests and inspect state schema changes."
+
+**Constraints and how they affect design:**
+- **Latency:** Retrieving every past conversation would make each answer slow and noisy. Retrieve by repo, file path, task type, and recent relevance.
+- **Reliability:** A stale memory about test commands can waste time or cause wrong verification. Store provenance and update when commands change.
+- **Security/privacy:** User preferences and repo facts may have different scopes. A user-level preference should not leak private repo details into another workspace.
+- **Failure modes:** The agent may overfit to an old bug and suggest the same fix everywhere. Episodic memory must not be treated as universal truth.
+
+**What good looks like in production:**
+- Repo conventions are stored as semantic memory with repo scope.
+- Past incidents remain episodic and timestamped.
+- Verified workflows become procedural memory only after they repeat or are explicitly confirmed.
+
+---
+
+#### Scenario B: Customer Support Agent With Long-Lived Accounts
+
+**Product/use case context:**
+An AI support assistant helps enterprise customers over months. It needs to know account-specific preferences, prior incidents, contractual policies, and reusable troubleshooting playbooks.
+
+**How memory types show up:**
+- Episodic: "Customer Acme had a billing dispute on March 2; finance approved a one-time credit."
+- Semantic: "Acme's billing contact is the finance operations team, not the engineering admin."
+- Procedural: "For enterprise credits above $5,000, route to finance approval before confirming to customer."
+
+**Constraints and how they affect design:**
+- **Cost:** Pulling entire account history into every interaction is expensive. Summarize and retrieve only relevant account facts and recent episodes.
+- **Reliability:** A one-time exception must not become a permanent policy. Keep episodic exceptions separate from semantic facts.
+- **Privacy:** Account memory must be tenant-isolated. Memories for one customer cannot influence another customer's responses.
+- **Failure modes:** The agent may remember a past exception as a standing entitlement. This creates financial and trust risk.
+
+**What good looks like in production:**
+- Account facts have clear ownership and source systems.
+- Exceptions are time-bounded episodes.
+- Procedures encode approval rules and escalation paths.
+
+---
+
+#### Scenario C: Clinical Prior Authorization Workflow
+
+**Product/use case context:**
+A clinical assistant drafts prior authorization letters over multiple days. It waits for missing documents, clinician review, payer responses, and resubmission windows.
+
+**How memory types show up:**
+- Episodic: "On this case, the payer rejected the first letter because MRI evidence was missing."
+- Semantic: "This payer requires conservative therapy documentation for this procedure."
+- Procedural: "Before submission, verify diagnosis code, payer criteria, supporting notes, clinician approval, and appeal deadline."
+
+**Constraints and how they affect design:**
+- **Latency:** Long-running tasks may pause for hours or days. The system must resume from durable state, not from a chat transcript.
+- **Reliability:** Medical criteria change. Semantic memory must carry source, version, and freshness metadata.
+- **Security/privacy:** Clinical memories may contain PHI and need strict access controls, audit trails, and deletion policies.
+- **Failure modes:** The system may use outdated payer policy or remember patient-specific facts too broadly.
+
+**What good looks like in production:**
+- Case history is episodic and case-scoped.
+- Payer policy is semantic and source-versioned.
+- Submission checklist is procedural and validated at each run.
+
+---
+
+### 4. System View (Think Like a Systems Engineer) [Intermediate]
+
+**Inputs -> Transformations -> Outputs:**
+
+```text
+[Current task / conversation / workflow event]
+    -> Extract candidate memory signals:
+        - event happened
+        - durable fact discovered
+        - user preference stated
+        - reusable procedure learned
+        - prior state must be resumed
+    -> Classify memory type:
+        - episodic, semantic, procedural, or do-not-store
+    -> Attach metadata:
+        - scope, source, timestamp, confidence, owner, sensitivity, TTL
+    -> Store selectively:
+        - event log, profile/fact store, playbook/procedure store
+    -> Retrieve when needed:
+        - query by task intent, entity, scope, recency, salience, permissions
+    -> Use in reasoning/action:
+        - constrain answer, resume workflow, select procedure, personalize response
+    -> Observe outcome:
+        - memory helped, hurt, was stale, was missing, or was irrelevant
+    -> Update lifecycle:
+        - consolidate, correct, expire, delete, or promote
+```
+
+**Observability — what we log, trace, and measure:**
+
+| Signal | What it tells you |
+|--------|-------------------|
+| Memory write rate by type | Whether the system is over-storing or under-storing |
+| Retrieval hit rate | Whether stored memories are being found when needed |
+| Retrieval precision | Whether retrieved memories are actually useful to the current task |
+| Memory freshness | Whether retrieved memories are outdated |
+| Memory source/provenance coverage | Whether memories can be trusted and audited |
+| Scope violation count | Whether memories are leaking across users, tenants, repos, or tasks |
+| Memory correction rate | Whether stored facts often need updates |
+| Memory-caused error rate | Whether retrieved memories contributed to wrong outputs/actions |
+| Consolidation success rate | Whether raw episodes are being converted into durable facts/procedures when appropriate |
+
+**Failure points — where memory breaks:**
+
+| Failure | Symptom | How it shows up |
+|---------|---------|-----------------|
+| Overwriting event with fact | One-time exception becomes permanent rule | Agent treats "approved once" as "always allowed" |
+| No provenance | Cannot tell if memory is trusted | Agent cites unknown or obsolete facts |
+| Wrong scope | Memory leaks across contexts | User/repo/customer A affects user/repo/customer B |
+| Retrieval overload | Too many memories injected | Model ignores current task or follows stale context |
+| No lifecycle rules | Memory grows forever | Cost rises, relevance drops, stale facts persist |
+| No working/durable split | Everything is shoved into prompt | Context becomes noisy and expensive |
+| No consolidation | Events pile up without lessons | Agent repeats raw history but does not improve behavior |
+
+---
+
+### 5. System Design Flavor [Intermediate]
+
+**Key components and interfaces:**
+
+```text
+Memory-aware agent architecture:
+  - Working state: current prompt, active plan, tool results, transient variables
+  - Memory classifier: decides episodic vs semantic vs procedural vs skip
+  - Memory store(s): event log, fact/preference store, procedure/playbook store
+  - Metadata layer: scope, timestamp, source, sensitivity, confidence, TTL
+  - Retrieval layer: semantic search, filters, ranking, permission checks
+  - Consolidation job: turns repeated episodes into facts/procedures
+  - Validation layer: checks stale/conflicting memories before use
+  - Observability layer: traces writes, reads, influence, and memory-caused errors
+```
+
+**Important tradeoffs:**
+
+1. **Remember more vs remember better: coverage vs pollution**
+   - More memory increases the chance that useful context exists later.
+   - More memory also increases stale, irrelevant, or harmful retrieval.
+   - *When to choose:* store aggressively only for low-risk, well-scoped event logs. Be selective for semantic facts and procedures because they directly influence future actions.
+
+2. **Raw episodes vs consolidated facts: detail vs usability**
+   - Raw episodes preserve exact history and auditability.
+   - Consolidated facts are easier for agents to use but can erase nuance.
+   - *When to choose:* keep raw episodes for audit and debugging; promote to semantic/procedural memory only when stable, verified, and reusable.
+
+3. **Personalization vs privacy: usefulness vs boundary control**
+   - User memory can make the system feel capable and continuous.
+   - Poorly scoped memory can leak sensitive information or over-personalize decisions.
+   - *When to choose:* use explicit scope, consent, sensitivity tags, and deletion controls for durable user/customer memory.
+
+**Scaling consideration (10x traffic/data):**
+
+At 10x usage, memory becomes a data platform problem. You need indexing, retention policies, deduplication, access control, background consolidation, freshness checks, and evaluation. Retrieval quality becomes as important as storage volume. A system with millions of memories but poor ranking behaves worse than a system with fewer, cleaner memories.
+
+---
+
+### 6. Common Mistakes + Debugging [Intermediate]
+
+#### Mistake 1: Treating chat history as memory
+
+**Symptom:** The agent includes long transcripts, misses the important decision, and becomes expensive or inconsistent.
+
+**Likely cause:** No separation between working memory, episodic memory, semantic memory, and procedural memory.
+
+**First debugging step:** Pick five retrieved memories and classify them. If they are raw chat snippets pretending to be durable facts, add a memory extraction/consolidation step.
+
+---
+
+#### Mistake 2: Promoting one-time events into permanent facts
+
+**Symptom:** The agent says, "The user always wants X," because the user did X once during a specific task.
+
+**Likely cause:** Episodic information was stored as semantic memory without scope, confidence, or repetition.
+
+**First debugging step:** Inspect the memory's provenance and scope. If it came from one event, downgrade it to an episode or require confirmation before using it as a preference/fact.
+
+---
+
+#### Mistake 3: Retrieving memories without permission and freshness checks
+
+**Symptom:** The agent uses stale policy, cross-tenant facts, or old project conventions.
+
+**Likely cause:** Retrieval ranks by similarity only, without scope, timestamp, source, or access control filters.
+
+**First debugging step:** Add retrieval filters before ranking: user/org/repo/task scope, sensitivity permission, freshness/TTL, and source trust.
+
+---
+
+### 7. Hands-On Lab [Pro]
+
+> **Goal:** Build a tiny memory classifier and retrieval store. You will classify candidate information into episodic, semantic, procedural, or skip; store it with metadata; retrieve scoped memories; then break the system by removing scope and provenance.
+
+---
+
+#### Build: A Minimal Memory Store
+
+```python
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Literal
+
+
+MemoryType = Literal["episodic", "semantic", "procedural"]
+
+
+@dataclass
+class Memory:
+    memory_type: MemoryType
+    text: str
+    scope: str
+    source: str
+    created_at: datetime
+    salience: int  # 1-5
+    ttl_days: int | None = None
+
+    def is_fresh(self, now: datetime) -> bool:
+        if self.ttl_days is None:
+            return True
+        return now <= self.created_at + timedelta(days=self.ttl_days)
+
+
+def classify(candidate: str) -> MemoryType | None:
+    lowered = candidate.lower()
+
+    event_markers = ["yesterday", "last week", "on june", "incident", "failed because"]
+    procedure_markers = ["before", "always run", "steps", "checklist", "workflow"]
+    semantic_markers = ["uses", "prefers", "requires", "is", "has"]
+
+    if any(marker in lowered for marker in event_markers):
+        return "episodic"
+    if any(marker in lowered for marker in procedure_markers):
+        return "procedural"
+    if any(marker in lowered for marker in semantic_markers):
+        return "semantic"
+    return None
+
+
+class MemoryStore:
+    def __init__(self) -> None:
+        self.memories: list[Memory] = []
+
+    def write(self, candidate: str, scope: str, source: str, salience: int) -> None:
+        memory_type = classify(candidate)
+        if memory_type is None:
+            return
+
+        ttl_days = 30 if memory_type == "episodic" else None
+        self.memories.append(
+            Memory(
+                memory_type=memory_type,
+                text=candidate,
+                scope=scope,
+                source=source,
+                created_at=datetime.now(),
+                salience=salience,
+                ttl_days=ttl_days,
+            )
+        )
+
+    def retrieve(self, query: str, scope: str, now: datetime) -> list[Memory]:
+        query_terms = set(query.lower().split())
+        candidates = [
+            memory for memory in self.memories
+            if memory.scope == scope and memory.is_fresh(now)
+        ]
+
+        scored = []
+        for memory in candidates:
+            overlap = len(query_terms.intersection(memory.text.lower().split()))
+            score = overlap + memory.salience
+            scored.append((score, memory))
+
+        return [memory for score, memory in sorted(scored, reverse=True, key=lambda item: item[0])[:3]]
+
+
+store = MemoryStore()
+store.write(
+    "Last week the deploy failed because the migration was missing.",
+    scope="repo:payments-api",
+    source="debug-session-2026-06-13",
+    salience=4,
+)
+store.write(
+    "The payments-api repo uses pytest for contract tests.",
+    scope="repo:payments-api",
+    source="verified-readme",
+    salience=5,
+)
+store.write(
+    "Before production deploy, run tests, verify migration status, and confirm rollback plan.",
+    scope="repo:payments-api",
+    source="team-playbook",
+    salience=5,
+)
+store.write(
+    "The support-site repo uses npm test.",
+    scope="repo:support-site",
+    source="package-json",
+    salience=5,
+)
+
+for memory in store.retrieve("How should I prepare a payments-api deploy?", "repo:payments-api", datetime.now()):
+    print(memory.memory_type, "|", memory.text, "|", memory.source)
+```
+
+**Expected output (conceptually):**
+
+```text
+procedural | Before production deploy, run tests, verify migration status, and confirm rollback plan. | team-playbook
+semantic | The payments-api repo uses pytest for contract tests. | verified-readme
+episodic | Last week the deploy failed because the migration was missing. | debug-session-2026-06-13
+```
+
+---
+
+#### Break: Force the Relevant Failure Modes
+
+**Break 1 — Remove scope filtering:**
+Change retrieval so it does not check `memory.scope == scope`. Now the support-site `npm test` fact can pollute a payments-api deploy task.
+
+**Break 2 — Remove provenance:**
+Delete `source`. Now you cannot tell whether "uses pytest" came from a verified file, a guess, or an old conversation.
+
+**Break 3 — Treat every sentence as semantic memory:**
+Change `classify()` so everything returns `"semantic"`. Now one-time deploy incidents become permanent facts.
+
+---
+
+#### Measure: Concrete Signals
+
+| Measurement | How to capture | What to watch for |
+|-------------|----------------|-------------------|
+| Classification accuracy | Labeled examples of episodic/semantic/procedural/skip | Misclassified episodes becoming permanent facts |
+| Retrieval precision@k | Human rating of top retrieved memories | Irrelevant memories in prompt |
+| Scope violation rate | Retrieved memory scope vs current scope | Cross-user/repo/customer leakage |
+| Stale memory usage | Retrieved memories past TTL or source version | Outdated policy or command use |
+| Memory influence trace | Which memories affected final answer/action | Hard-to-debug hidden context |
+| Correction rate | Memories later edited/deleted | Poor write quality or drift |
+
+---
+
+#### Explain: Why It Breaks and What Prevents It
+
+Memory systems break when retrieval is based only on text similarity. Similarity can find related memories, but it cannot know whether they are allowed, fresh, true, or scoped correctly. Production retrieval must filter first, then rank.
+
+The second failure is writing too eagerly. If every event becomes a durable fact, the agent accumulates superstition. Good systems store raw episodes for audit, promote stable facts carefully, and encode repeatable methods as procedural memory only when validated.
+
+The durable design is a memory pipeline: classify -> scope -> attach provenance -> store -> retrieve with filters -> trace influence -> update lifecycle.
+
+---
+
+### 8. Active Recall (Spaced Repetition) [Beginner–Intermediate]
+
+**Q1 (Beginner):** What is the difference between working memory and durable memory?
+
+> **Answer:** Working memory is the temporary context the model can currently see. Durable memory is persisted outside the prompt so it can be retrieved later.
+
+---
+
+**Q2 (Beginner):** What are the three main memory types in this subtopic?
+
+> **Answer:** Episodic memory stores specific events, semantic memory stores durable facts/preferences/concepts, and procedural memory stores reusable steps or workflows.
+
+---
+
+**Q3 (Intermediate):** Why should a one-time exception usually remain episodic?
+
+> **Answer:** Because it describes what happened in a specific context, not a general rule. Promoting it to semantic memory can make the agent treat an exception as permanent policy.
+
+---
+
+**Q4 (Intermediate):** What metadata should a production memory usually carry?
+
+> **Answer:** Scope, source/provenance, timestamp, confidence, sensitivity, owner, and possibly TTL or version.
+
+---
+
+**Q5 (Pro):** Why is retrieval precision often more important than memory volume?
+
+> **Answer:** The model acts on what is retrieved, not what is stored. A large memory store with poor retrieval can inject stale, irrelevant, or unsafe context and harm decisions.
+
+---
+
+### 9. Practice [Intermediate–Pro]
+
+**Mini-exercise:**
+
+Classify each candidate memory:
+
+1. "Yesterday, the user's export failed because the CSV exceeded 50 MB."
+2. "This customer prefers monthly invoices sent to finance-ops@example.com."
+3. "Before submitting a refund above $500, verify order history and request manager approval."
+4. "The user sounded frustrated in the last message."
+
+> **Suggested answer outline:**
+> 1. Episodic: specific event and cause.
+> 2. Semantic: durable customer preference, but it needs tenant scope and source.
+> 3. Procedural: repeatable approval workflow.
+> 4. Usually do not store durably. It may belong in working memory for the current conversation, but storing emotion as a long-lived fact is risky and often unhelpful.
+
+---
+
+**Capstone system design question:**
+
+Design memory for an enterprise coding assistant that supports many users across many private repositories. It should remember repo conventions, user preferences, past debugging lessons, and verified workflows without leaking data across repos or users.
+
+> **Suggested answer outline:**
+> - **Stores:** repo-scoped semantic memory for conventions; user-scoped preference memory; episodic event log for debugging sessions; procedural memory for verified workflows/playbooks.
+> - **Metadata:** repo/user/org scope, source file/session, timestamp, confidence, sensitivity, TTL, last validated version.
+> - **Retrieval:** permission filters first, then repo/task intent filters, then ranking by relevance/salience/freshness.
+> - **Consolidation:** repeated episodes such as recurring test failures can become procedural troubleshooting steps after verification.
+> - **Safety:** never retrieve another repo's private facts; expire memories when files/configs change; trace which memories influenced code edits.
+> - **Evaluation:** retrieval precision@k, scope violation rate, stale memory usage, memory-caused error rate, and user correction rate.
+
+---
+
+### 10. Production Reality Check [Mandatory]
+
+> **If this fails in production, what's the first thing we inspect?**
+
+Inspect the **memory trace for the failed decision**.
+
+Specifically ask:
+1. Which memories were retrieved?
+2. What type were they: episodic, semantic, or procedural?
+3. What scope and provenance did each memory have?
+4. Were any memories stale, cross-scoped, low-confidence, or over-generalized?
+5. Did the agent treat an episode as a fact or a fact as a procedure?
+
+The first debugging move is to separate a **retrieval problem** from a **write problem**. If the right memory existed but was not retrieved, fix ranking/filters. If the wrong memory existed, fix write classification, scope, lifecycle, or validation. If no memory existed, fix extraction and consolidation.
+
+---
+
+### 11. Curiosity Bridge [Mandatory]
+
+Memory types give us the vocabulary. The next design problem is implementation: should memory live in session state, summaries, vector retrieval, a profile store, a database, or all of them together?
+
+That leads directly to **Subtopic 16.3.b: Session Memory, Summary Memory, and Retrieval Memory** — where we turn the memory taxonomy into concrete storage and retrieval architectures.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit Check:**
+You are done with this subtopic when you can, without notes:
+1. Classify a memory candidate as episodic, semantic, procedural, working memory, or do-not-store.
+2. Explain why raw chat history is not a memory system.
+3. Design the minimum metadata needed to make a memory safe to retrieve later.
+
+---
+
+**Carry-Forward Review (interleaved question from 16.2.d):**
+
+> *From 16.2.d:* Why should HITL systems measure reviewer lift instead of only review volume?
+
+> **Answer:** Review volume says humans were involved; reviewer lift says human involvement improved outcomes. Without lift, a review queue can look productive while only adding cost, delay, and rubber-stamping.
+
+---
+
+## Subtopic 16.3.b: Session Memory, Summary Memory, and Retrieval Memory
+
+### ✅ Add to Knowledge Base
+
+### Reading Path + Level Tags
+
+- **Beginner:** Read sections 1-2 and Active Recall.
+- **Intermediate:** Add sections 3-5 and the Hands-On Lab Build step.
+- **Pro:** Complete the full Hands-On Lab (Build -> Break -> Measure -> Explain) plus the capstone practice question.
+
+---
+
+### 0. Pre-Question Hook [Beginner]
+
+**Pause:** A user has a 90-minute conversation with an agent. The agent must remember the current task, compress older details, and also pull in durable knowledge from previous sessions. Which memory should handle each job: session memory, summary memory, or retrieval memory?
+
+The wrong answer is usually "put everything in a vector database" or "keep appending the full transcript." Long-horizon systems need different memory mechanisms for different time scales.
+
+---
+
+### 1. The Intuition (Plain English) [Beginner]
+
+In 16.3.a, we classified what memory means: episodic, semantic, and procedural. Now we decide where memory lives while an agent runs.
+
+The simplest mental model:
+
+```text
+Session memory = what is happening right now
+Summary memory = compressed history of what mattered so far
+Retrieval memory = searchable durable knowledge outside the current session
+```
+
+Each solves a different context-window problem:
+
+- Session memory keeps the current task coherent: active plan, tool results, user constraints, open questions, pending approvals.
+- Summary memory keeps long conversations manageable by compressing older turns into a smaller state.
+- Retrieval memory finds relevant durable knowledge from outside the immediate conversation, such as docs, past cases, user preferences, repo conventions, or workflow playbooks.
+
+Real-world analogy: imagine a surgeon during a long operation. The operating room whiteboard is session memory: current vitals, next step, active risks. The handoff note is summary memory: compressed state for another clinician. The hospital record system is retrieval memory: searchable patient history, prior procedures, allergies, and policies. All three are useful, but they are not interchangeable.
+
+**Where the analogy breaks down:** Human teams can ask clarifying questions and infer missing context from experience. Agent memory must be explicitly written, retrieved, ranked, and inserted into the model's context with tight token and permission controls.
+
+**Key terms (first use):**
+
+- **Session memory** — short-lived state tied to the current conversation, workflow run, or task execution.
+- **Summary memory** — compressed representation of prior interaction or task history, written to preserve important state while reducing token load.
+- **Retrieval memory** — external searchable memory queried at runtime, often backed by embeddings, keyword search, metadata filters, or databases.
+- **Rolling summary** — a summary that is repeatedly updated as a conversation or workflow grows.
+- **Context budget** — the limited number of tokens or structured fields available for the model's current reasoning step.
+- **Memory injection** — adding selected memory into the model prompt, tool context, workflow state, or system instructions.
+- **Memory ranking** — ordering candidate memories by relevance, recency, salience, trust, and scope.
+- **Hybrid memory architecture** — a design that combines session state, summaries, retrieval, and durable stores instead of relying on one memory mechanism.
+- **Summary drift** — distortion that occurs when repeated summaries gradually omit, alter, or over-generalize important details.
+- **Lost-in-the-middle effect** — the model paying less attention to information buried in the middle of a long context.
+- **Memory hydration** — loading selected durable state into an active session before reasoning or execution.
+- **Memory eviction** — removing or excluding less useful context from the active prompt or session state to stay within budget.
+- **Retrieval precision** — the fraction of retrieved memories that are actually useful for the current task.
+- **Retrieval recall** — the fraction of relevant available memories that retrieval successfully finds.
+- **Memory read path** — the runtime process for selecting and using memories.
+- **Memory write path** — the process for deciding what to store, summarize, update, or discard after an interaction.
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+#### Hybrid Memory Architecture
+
+```mermaid
+flowchart TD
+    U[User turn or workflow event] --> S[Session memory\nactive task state]
+    S --> B[Context budgeter]
+
+    B --> SM[Summary memory\ncompressed prior turns]
+    B --> RM[Retrieval memory\nsearchable durable knowledge]
+    B --> CT[Current tool outputs\nand recent messages]
+
+    SM --> P[Prompt / model call]
+    RM --> P
+    CT --> P
+    S --> P
+
+    P --> A[Agent action or answer]
+    A --> O[Observed outcome]
+
+    O --> W{Write path}
+    W -->|transient| S2[Update session state]
+    W -->|conversation grew| SM2[Update rolling summary]
+    W -->|durable value| RM2[Write retrieval memory]
+    W -->|not useful| N[Do not store]
+```
+
+#### Which Memory Should Handle This?
+
+```mermaid
+flowchart LR
+    I[Information] --> Q1{Needed only during this run?}
+    Q1 -- yes --> SES[Session memory]
+    Q1 -- no --> Q2{Is it old conversation state that must fit in context?}
+    Q2 -- yes --> SUM[Summary memory]
+    Q2 -- no --> Q3{Should it be searchable later?}
+    Q3 -- yes --> RET[Retrieval memory]
+    Q3 -- no --> SKIP[Skip durable storage]
+
+    SES --> M[Attach scope + TTL]
+    SUM --> M
+    RET --> M
+```
+
+**What these diagrams teach:**
+- Memory is both a read path and a write path.
+- Session, summary, and retrieval memory are complementary, not competing.
+- Context budgeting decides what actually reaches the model.
+- Durable retrieval should be selective; not every session detail deserves long-term storage.
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+---
+
+#### Scenario A: Coding Agent in a Long Debugging Session
+
+**Product/use case context:**
+A coding agent helps debug a failing CI pipeline. The session lasts many turns: reading logs, opening files, editing tests, running commands, and tracking hypotheses.
+
+**How memory types work:**
+- Session memory stores active hypotheses, changed files, command outputs, failing test names, and todo state.
+- Summary memory compresses earlier investigation: "Initial failure was unrelated to auth; current root cause is schema mismatch in `WorkflowState`."
+- Retrieval memory pulls repo conventions, previous bug lessons, known test commands, and local build instructions.
+
+**Constraints and how they affect design:**
+- **Latency:** Reading too much past transcript slows every turn. Keep recent tool outputs in session memory and compress older reasoning into summary memory.
+- **Reliability:** If the summary omits an important failed hypothesis, the agent may retry dead ends. Include decisions, rejected hypotheses, and evidence.
+- **Cost:** Re-injecting complete logs is expensive. Store artifacts separately and summarize only the actionable signal.
+- **Failure modes:** Retrieval may return stale repo instructions or unrelated conventions from another project. Scope by repo and validate commands before relying on memory.
+
+**What good looks like in production:**
+- The active run has durable session state.
+- Summaries preserve current root cause, rejected paths, and next step.
+- Retrieval memory is filtered by repo, branch, and task type.
+
+---
+
+#### Scenario B: Enterprise Support Assistant Across Sessions
+
+**Product/use case context:**
+A support agent helps the same customer over months. Individual sessions may be short, but the account relationship is long-lived.
+
+**How memory types work:**
+- Session memory stores the active ticket, current user request, temporary evidence, and pending follow-up.
+- Summary memory stores a compact ticket summary for handoff: symptoms, decisions, customer commitments, open risks.
+- Retrieval memory stores account facts, product docs, historical tickets, known workarounds, and policy playbooks.
+
+**Constraints and how they affect design:**
+- **Privacy:** Session memory can include sensitive ticket details. Retrieval memory must enforce tenant isolation and permissions.
+- **Reliability:** Summaries must distinguish customer-reported claims from verified facts. Otherwise the agent may repeat unverified claims as truth.
+- **Latency:** Support needs fast answers. Retrieve top scoped memories and cite source types rather than loading large ticket histories.
+- **Failure modes:** If summary memory overwrites nuance, the next support rep or agent may misunderstand what was promised.
+
+**What good looks like in production:**
+- Ticket-level state is session-scoped.
+- Account-level facts live in retrieval memory with source metadata.
+- Summary memory is reviewable and includes unresolved questions.
+
+---
+
+#### Scenario C: Long-Running Prior Authorization Agent
+
+**Product/use case context:**
+A prior authorization assistant drafts a request, waits for clinician review, receives missing documents, updates the package, submits to payer, and later handles denial or approval.
+
+**How memory types work:**
+- Session memory stores the current case checklist, missing documents, draft status, approval checkpoint, and payer deadline.
+- Summary memory stores a compressed case narrative for clinicians and future resumes.
+- Retrieval memory pulls payer policy, clinical criteria, past denial patterns, procedure-specific checklist steps, and organization templates.
+
+**Constraints and how they affect design:**
+- **Latency:** The workflow may pause for days. Resume must hydrate state from durable session/checkpoint storage.
+- **Security:** PHI must be scoped to the case and access-controlled. Retrieval cannot mix patient memories.
+- **Reliability:** Payer criteria can change. Retrieval memory must carry policy version and freshness metadata.
+- **Failure modes:** A summary may accidentally omit a missing evidence requirement, causing repeated denial.
+
+**What good looks like in production:**
+- Session memory is durable enough to survive pauses and restarts.
+- Summary memory is clinician-readable and source-aware.
+- Retrieval memory is filtered by payer, procedure, plan, effective date, and permission.
+
+---
+
+### 4. System View (Think Like a Systems Engineer) [Intermediate]
+
+**Inputs -> Transformations -> Outputs:**
+
+```text
+[Conversation turn / workflow event]
+    -> Update session memory:
+        - active task state
+        - recent tool results
+        - pending decisions
+        - constraints and approvals
+    -> Decide whether summary needs refresh:
+        - context window pressure
+        - major decision made
+        - handoff/resume boundary
+    -> Query retrieval memory:
+        - task intent
+        - entities and scope
+        - permissions
+        - freshness and source filters
+    -> Rank and budget context:
+        - recent state
+        - summary
+        - retrieved facts/procedures/events
+        - current user request
+    -> Model/tool execution:
+        - answer, plan, edit, tool call, or approval request
+    -> Write path:
+        - keep transient state in session
+        - update rolling summary if useful
+        - persist durable memory only if reusable and scoped
+```
+
+**Observability — what we log, trace, and measure:**
+
+| Signal | What it tells you |
+|--------|-------------------|
+| Session state size | Whether active state is growing beyond manageable limits |
+| Summary update frequency | Whether summaries are stale or being rewritten too often |
+| Summary faithfulness score | Whether the summary preserves source facts and decisions accurately |
+| Retrieval precision@k | Whether retrieved memories are useful for the current task |
+| Retrieval recall@k | Whether the system finds known relevant memories |
+| Context budget allocation | How many tokens go to recent turns, summary, retrieval, tools, and instructions |
+| Memory influence trace | Which memory affected a final answer/action |
+| Scope filter rejection count | How often retrieval candidates are blocked for permissions/scope |
+| Stale-memory usage rate | Whether old memories are still influencing behavior |
+
+**Failure points — where these memory types break:**
+
+| Failure | Symptom | How it shows up |
+|---------|---------|-----------------|
+| Session memory overload | Agent tracks too many transient details | Confused plans, repeated work, token bloat |
+| Summary drift | Summary changes facts over time | Wrong decisions after many summarization cycles |
+| Retrieval noise | Irrelevant memories are injected | Agent follows old or unrelated context |
+| Retrieval miss | Relevant durable memory exists but is not retrieved | Agent asks repeated questions or violates known constraints |
+| Wrong write target | Temporary detail becomes durable memory | Future sessions get polluted |
+| No budget policy | Important context is pushed out | Model ignores key constraints or evidence |
+| No influence trace | Hard to debug bad outputs | Team cannot tell which memory caused the behavior |
+
+---
+
+### 5. System Design Flavor [Intermediate]
+
+**Key components and interfaces:**
+
+```text
+Hybrid memory runtime:
+  - Session store:
+      active run state, recent turns, tool outputs, pending approvals, checkpoint data
+  - Summary service:
+      rolling summaries, handoff summaries, source-linked summaries, compression policy
+  - Retrieval store:
+      vector index, keyword index, document DB, profile store, event log, procedure store
+  - Memory router:
+      decides which store to read/write based on task, scope, and memory type
+  - Context budgeter:
+      chooses what fits into prompt or tool state for the current step
+  - Guardrails:
+      permission filters, freshness checks, source trust, PII/PHI handling
+  - Observability:
+      memory read/write traces, retrieved IDs, summary versions, memory influence labels
+```
+
+**Important tradeoffs:**
+
+1. **Session memory vs summary memory: exactness vs compression**
+   - Session memory can keep exact recent state, but it grows quickly.
+   - Summary memory compresses old context, but compression can lose nuance.
+   - *When to choose:* keep exact details for active decisions and tool outputs; summarize older context after decisions, handoffs, or context pressure.
+
+2. **Summary memory vs retrieval memory: continuity vs searchability**
+   - Summary memory is good for narrative continuity inside one task or case.
+   - Retrieval memory is better for finding specific facts across many sessions/documents.
+   - *When to choose:* use summaries for "what has happened so far in this run"; use retrieval for "what relevant knowledge exists outside this run."
+
+3. **Vector retrieval vs structured retrieval: flexibility vs precision**
+   - Vector retrieval finds semantically similar memories even when wording differs.
+   - Structured retrieval gives stronger filtering by user, repo, tenant, date, risk, source, and entity.
+   - *When to choose:* combine them. Filter by structured metadata first, then rank semantically. For regulated workflows, never rely on embedding similarity alone.
+
+**Scaling consideration (10x traffic/data):**
+
+At 10x scale, memory cost shifts from storage to retrieval quality and governance. You need partitioned indexes, metadata filters, summary versioning, async summarization jobs, deduplication, retention rules, and eval sets for retrieval and summary quality. Without this, the system becomes slower and less trustworthy as memory grows.
+
+---
+
+### 6. Common Mistakes + Debugging [Intermediate]
+
+#### Mistake 1: Using retrieval memory as a dumping ground
+
+**Symptom:** Vector search returns old chat fragments, irrelevant facts, and duplicate memories. The model sounds confident but follows the wrong context.
+
+**Likely cause:** Every conversation turn was embedded and stored without classification, scope, salience, or lifecycle rules.
+
+**First debugging step:** Inspect the top 10 retrieved memories for a failed case. Label each as useful, stale, wrong-scope, duplicate, or irrelevant. Then add write filtering and metadata filters before retrieval ranking.
+
+---
+
+#### Mistake 2: Trusting rolling summaries without checking faithfulness
+
+**Symptom:** After a long conversation, the agent believes a requirement was approved even though the user only discussed it as an option.
+
+**Likely cause:** Repeated summarization compressed uncertainty into certainty.
+
+**First debugging step:** Compare the latest summary against source turns for decisions, constraints, and open questions. Add summary fields like `confirmed_decisions`, `open_questions`, `rejected_options`, and `source_turn_ids`.
+
+---
+
+#### Mistake 3: Injecting too much memory into the prompt
+
+**Symptom:** The right memory was retrieved, but the model ignores it or contradicts it.
+
+**Likely cause:** Context budget is overcrowded, and critical facts are buried among low-value memories or long summaries.
+
+**First debugging step:** Print the final assembled context. Check placement, length, duplication, and whether the critical fact is near the decision point. Use a context budget policy that reserves space for current request, active state, evidence, and top memories.
+
+---
+
+### 7. Hands-On Lab [Pro]
+
+> **Goal:** Build a small hybrid memory pipeline that updates session state, refreshes a rolling summary, retrieves scoped durable memories, and assembles a prompt context. Then break it by removing scoping and summary faithfulness.
+
+---
+
+#### Build: Hybrid Memory Pipeline
+
+```python
+from dataclasses import dataclass, field
+from typing import Literal
+
+
+MemoryKind = Literal["session", "summary", "retrieval"]
+
+
+@dataclass
+class DurableMemory:
+    text: str
+    scope: str
+    tags: set[str]
+    salience: int
+    source: str
+
+
+@dataclass
+class SessionState:
+    session_id: str
+    scope: str
+    recent_events: list[str] = field(default_factory=list)
+    active_constraints: list[str] = field(default_factory=list)
+    open_questions: list[str] = field(default_factory=list)
+    rolling_summary: str = ""
+
+
+class RetrievalStore:
+    def __init__(self, memories: list[DurableMemory]) -> None:
+        self.memories = memories
+
+    def search(self, query: str, scope: str, limit: int = 3) -> list[DurableMemory]:
+        query_terms = set(query.lower().split())
+        scoped = [memory for memory in self.memories if memory.scope == scope]
+
+        scored = []
+        for memory in scoped:
+            text_terms = set(memory.text.lower().split()).union(memory.tags)
+            overlap = len(query_terms.intersection(text_terms))
+            score = overlap + memory.salience
+            scored.append((score, memory))
+
+        return [memory for score, memory in sorted(scored, key=lambda item: item[0], reverse=True)[:limit]]
+
+
+def update_session(state: SessionState, event: str) -> None:
+    state.recent_events.append(event)
+    if "must" in event.lower() or "constraint" in event.lower():
+        state.active_constraints.append(event)
+    if "?" in event:
+        state.open_questions.append(event)
+
+
+def refresh_summary(state: SessionState) -> None:
+    important_events = state.recent_events[-4:]
+    state.rolling_summary = (
+        "Recent progress: " + " | ".join(important_events) + "\n"
+        "Confirmed constraints: " + "; ".join(state.active_constraints[-3:]) + "\n"
+        "Open questions: " + "; ".join(state.open_questions[-3:])
+    )
+
+
+def assemble_context(state: SessionState, retrieved: list[DurableMemory], token_budget_chars: int = 900) -> str:
+    sections = [
+        f"Scope: {state.scope}",
+        f"Session summary:\n{state.rolling_summary}",
+        "Retrieved memory:\n" + "\n".join(f"- {memory.text} ({memory.source})" for memory in retrieved),
+        "Recent events:\n" + "\n".join(f"- {event}" for event in state.recent_events[-3:]),
+    ]
+    context = "\n\n".join(sections)
+    return context[:token_budget_chars]
+
+
+store = RetrievalStore([
+    DurableMemory(
+        text="payments-api deploys require migration verification before production approval.",
+        scope="repo:payments-api",
+        tags={"deploy", "migration", "approval"},
+        salience=5,
+        source="team-playbook",
+    ),
+    DurableMemory(
+        text="support-site uses npm test for frontend checks.",
+        scope="repo:support-site",
+        tags={"test", "frontend"},
+        salience=5,
+        source="package-json",
+    ),
+])
+
+state = SessionState(session_id="s1", scope="repo:payments-api")
+update_session(state, "User wants help preparing a production deploy.")
+update_session(state, "Constraint: must verify rollback plan before approval.")
+update_session(state, "Agent checked latest migration file and found one pending migration.")
+refresh_summary(state)
+
+retrieved = store.search("production deploy migration approval", state.scope)
+print(assemble_context(state, retrieved))
+```
+
+**Expected output (conceptually):**
+
+```text
+Scope: repo:payments-api
+
+Session summary:
+Recent progress: User wants help preparing a production deploy. | Constraint: must verify rollback plan before approval. | Agent checked latest migration file and found one pending migration.
+Confirmed constraints: Constraint: must verify rollback plan before approval.
+Open questions:
+
+Retrieved memory:
+- payments-api deploys require migration verification before production approval. (team-playbook)
+
+Recent events:
+- User wants help preparing a production deploy.
+- Constraint: must verify rollback plan before approval.
+- Agent checked latest migration file and found one pending migration.
+```
+
+---
+
+#### Break: Force the Relevant Failure Modes
+
+**Break 1 — Remove scope filtering:**
+In `search()`, remove `if memory.scope == scope`. Now `support-site uses npm test` can enter a payments-api deployment context.
+
+**Break 2 — Over-compress the summary:**
+Replace `refresh_summary()` with a one-line vague summary like "Discussed deployment." Now the agent loses constraints, pending migration evidence, and open questions.
+
+**Break 3 — Make context budget too small:**
+Set `token_budget_chars=120`. The assembled context may cut off the retrieved policy or active constraint, showing how budget pressure can delete the very memory you retrieved.
+
+---
+
+#### Measure: Concrete Signals
+
+| Measurement | How to capture | What to watch for |
+|-------------|----------------|-------------------|
+| Summary faithfulness | Compare summary claims to source events | Decisions becoming more certain than source |
+| Retrieval precision@k | Rate top-k retrieved memories as useful/not useful | Irrelevant memory pollution |
+| Retrieval recall@k | Check whether known relevant memories appear | Missing policies or facts |
+| Scope violation rate | Retrieved scope vs session scope | Cross-project/user/tenant leakage |
+| Context budget usage | Token allocation per section | Critical state squeezed out |
+| Memory influence trace | Log memory IDs included in final context | Debuggable behavior |
+| Write target accuracy | Human labels for session/summary/retrieval/skip | Wrong memory durability |
+
+---
+
+#### Explain: Why It Breaks and What Prevents It
+
+Hybrid memory breaks when each store is treated as interchangeable. Session memory should preserve active state. Summary memory should compress the current run without inventing certainty. Retrieval memory should bring in scoped durable knowledge from outside the current run.
+
+The common production failure is not "no memory." It is the wrong memory at the wrong time: stale retrieval injected into a live task, a summary that lost a constraint, or transient session noise stored forever. The fix is to make memory routing explicit and observable.
+
+The reliable pattern is: update session state first, refresh summaries at boundaries, retrieve durable memory with metadata filters, assemble context with a budget, and trace exactly which memory influenced the decision.
+
+---
+
+### 8. Active Recall (Spaced Repetition) [Beginner–Intermediate]
+
+**Q1 (Beginner):** What is session memory for?
+
+> **Answer:** Session memory stores short-lived active state for the current conversation or workflow run: recent events, open questions, tool outputs, constraints, and pending actions.
+
+---
+
+**Q2 (Beginner):** What is summary memory for?
+
+> **Answer:** Summary memory compresses prior interaction or task history so the agent can preserve important state without carrying the entire transcript.
+
+---
+
+**Q3 (Intermediate):** What is retrieval memory for?
+
+> **Answer:** Retrieval memory searches external durable knowledge at runtime, such as user preferences, repo conventions, documents, past cases, policies, and procedures.
+
+---
+
+**Q4 (Intermediate):** Why should structured filters usually run before semantic ranking?
+
+> **Answer:** Filters enforce scope, permissions, tenant boundaries, freshness, and source trust. Semantic similarity alone can retrieve unsafe or wrong-context memory.
+
+---
+
+**Q5 (Pro):** Why is a rolling summary risky?
+
+> **Answer:** Repeated summarization can cause summary drift: uncertainty becomes certainty, constraints disappear, rejected options return, or facts subtly change. Source-linked summaries and faithfulness checks reduce this risk.
+
+---
+
+### 9. Practice [Intermediate–Pro]
+
+**Mini-exercise:**
+
+Choose the right memory mechanism for each item:
+
+1. "The user currently has a pending approval request for a $900 refund."
+2. "Earlier in this same session, the agent ruled out authentication as the root cause."
+3. "This repo uses `pytest -q` for fast unit checks."
+4. "The conversation has exceeded 60 turns, and older details need compression."
+5. "The user asked a one-off question about lunch options during the debugging session."
+
+> **Suggested answer outline:**
+> 1. Session memory: active pending action.
+> 2. Summary memory or session memory depending on recency; preserve as rejected hypothesis.
+> 3. Retrieval memory with repo scope and source provenance.
+> 4. Summary memory: compress older turns while preserving decisions/constraints/open questions.
+> 5. Do not store durably; likely ignore after the moment unless needed in immediate working context.
+
+---
+
+**Capstone system design question:**
+
+Design memory for a long-running enterprise research agent that works across days. It reads documents, asks humans for approvals, summarizes findings, retrieves prior research, and produces a final report. Include session memory, summary memory, retrieval memory, write/read paths, context budgeting, and observability.
+
+> **Suggested answer outline:**
+> - **Session memory:** active research question, source list, current hypotheses, open approvals, tool results, accepted/rejected claims.
+> - **Summary memory:** rolling research brief with confirmed findings, open gaps, rejected hypotheses, source IDs, and decision history.
+> - **Retrieval memory:** prior reports, domain glossary, organization policies, reusable report procedures, expert preferences, past reviewed findings.
+> - **Read path:** hydrate session checkpoint, refresh summary if stale, retrieve scoped prior knowledge, filter by permission/source/date, rank by relevance and salience, allocate context budget.
+> - **Write path:** update active state every step, summarize after major milestones, persist durable facts/procedures only after validation or human approval.
+> - **Observability:** memory IDs in prompt, summary version, retrieval precision labels, scope filter logs, stale memory usage, memory-caused correction rate.
+> - **Risk controls:** source-linked summaries, human review for durable claims, TTL for time-sensitive market or policy facts, tenant isolation.
+
+---
+
+### 10. Production Reality Check [Mandatory]
+
+> **If this fails in production, what's the first thing we inspect?**
+
+Inspect the **final assembled context and memory trace** for the failed step.
+
+Ask:
+1. What was in session memory?
+2. What did the rolling summary say, and which source turns support it?
+3. Which retrieval memories were injected, and what were their scopes/sources?
+4. Was critical information omitted because of context budget?
+5. Did the wrong memory store handle the information?
+
+The first debugging move is to locate the failure on the memory path: session update, summary refresh, retrieval query, ranking/filtering, context assembly, or write-back. Each failure leaves a different trace.
+
+---
+
+### 11. Curiosity Bridge [Mandatory]
+
+Session, summary, and retrieval memory can make agents feel continuous. But continuity is dangerous when memories get stale, policies change, users move on, or summaries quietly drift.
+
+That leads directly to **Subtopic 16.3.c: Memory Freshness, Drift, and Forgetting Strategies** — where we learn how memory ages, decays, conflicts, and must sometimes be deleted.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit Check:**
+You are done with this subtopic when you can, without notes:
+1. Explain when to use session memory, summary memory, and retrieval memory.
+2. Draw a read path and write path for a hybrid memory system.
+3. Debug whether a memory failure came from session state, summary drift, retrieval noise, or context budgeting.
+
+---
+
+**Carry-Forward Review (interleaved question from 16.3.a):**
+
+> *From 16.3.a:* Why should a one-time exception usually stay episodic instead of becoming semantic memory?
+
+> **Answer:** Because a one-time exception describes what happened in a specific context, not a durable rule. Promoting it to semantic memory can make the agent treat an exception as permanent policy.
+
+---
+
+## Subtopic 16.3.c: Memory Freshness, Drift, and Forgetting Strategies
+
+### ✅ Add to Knowledge Base
+
+### Reading Path + Level Tags
+
+- **Beginner:** Read sections 1-2 and Active Recall.
+- **Intermediate:** Add sections 3-5 and the Hands-On Lab Build step.
+- **Pro:** Complete the full Hands-On Lab (Build -> Break -> Measure -> Explain) plus the capstone practice question.
+
+---
+
+### 0. Pre-Question Hook [Beginner]
+
+**Pause:** An agent remembers that a customer prefers email updates, a repo uses `pytest`, and a payer policy requires a specific document. Six months later, the customer changed contacts, the repo moved to `uv run pytest`, and the payer policy changed. Which memories should still be trusted?
+
+Memory is only useful while it remains true, relevant, scoped, and allowed. Long-lived agents need memory aging rules, not just memory storage.
+
+---
+
+### 1. The Intuition (Plain English) [Beginner]
+
+Fresh memory helps an agent behave continuously. Stale memory makes it confidently wrong.
+
+The core mental model:
+
+```text
+Memory value = relevance + truth + permission + freshness - pollution risk
+```
+
+Most teams start by asking, "How do we make the agent remember more?" Mature teams ask, "How do we know this memory is still safe to use?" That question changes the architecture.
+
+Not all memories age the same way:
+
+- A user's preferred display style may last months.
+- A deployment command may change whenever the repo changes.
+- A clinical or legal policy may expire on a specific effective date.
+- A session summary may drift after every compression cycle.
+- A one-time exception may be useful for audit but unsafe as future guidance.
+
+Real-world analogy: a well-run company wiki. Some pages are evergreen principles, some are project notes, some are policy documents with effective dates, and some are deprecated pages that should not be used. A wiki without owners, dates, and archival rules becomes dangerous because old pages still look official.
+
+**Where the analogy breaks down:** Human readers often notice stale wiki pages through context clues. Agents may retrieve stale memory and treat it as authoritative unless freshness, provenance, and conflict logic are explicit.
+
+**Key terms (first use):**
+
+- **Memory freshness** — how current and still-valid a memory is for the present task.
+- **Memory drift** — gradual mismatch between stored memory and reality, caused by changing users, systems, policies, data, or summaries.
+- **Time-to-live (TTL)** — a configured duration after which a memory expires, requires revalidation, or is excluded from retrieval.
+- **Freshness window** — the acceptable age range for a memory in a specific domain or risk tier.
+- **Decay score** — a score that reduces a memory's retrieval priority as it ages or loses evidence of usefulness.
+- **Revalidation** — checking whether a memory is still true before using it or keeping it active.
+- **Memory conflict** — two or more memories disagree about the same fact, preference, policy, or procedure.
+- **Source versioning** — tracking the source version, document version, code commit, policy date, or schema version behind a memory.
+- **Preference drift** — a user's or organization's preferences changing over time.
+- **Policy drift** — rules, compliance requirements, payer policies, product policies, or operational procedures changing over time.
+- **Forgetting strategy** — a deliberate policy for expiring, archiving, demoting, deleting, or suppressing memories.
+- **Retention policy** — rules defining how long different memory types are kept and why.
+- **Tombstone** — a marker that records that a memory was deleted or superseded so it does not silently reappear.
+- **Memory quarantine** — temporarily excluding a suspect memory from use until it is reviewed or revalidated.
+- **Memory compaction** — reducing many low-level memories into fewer higher-quality summaries, facts, or procedures.
+- **Memory audit** — systematic review of stored and retrieved memories for correctness, scope, freshness, safety, and usefulness.
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+#### Freshness-Aware Memory Read Path
+
+```mermaid
+flowchart TD
+    Q[Current task query] --> C[Candidate retrieval]
+    C --> S[Scope and permission filter]
+    S --> F{Fresh enough?}
+
+    F -- yes --> V{Source still valid?}
+    F -- no --> R[Revalidate or exclude]
+
+    V -- yes --> K{Conflicts?}
+    V -- no --> R
+
+    K -- no --> U[Use memory]
+    K -- yes --> RES[Resolve conflict\nprefer newer, trusted, source-backed memory]
+
+    R --> QN[Quarantine / refresh / ask human]
+    RES --> U
+    U --> T[Trace memory influence]
+```
+
+#### Memory Lifecycle
+
+```mermaid
+flowchart LR
+    W[Write memory] --> M[Attach metadata\nscope, source, version, TTL]
+    M --> A[Active retrieval]
+    A --> D{Aging or drift signal?}
+    D -- no --> A
+    D -- yes --> RV[Revalidate]
+    RV --> K{Still valid?}
+    K -- yes --> UP[Update metadata / refresh TTL]
+    K -- no --> FG[Forget / archive / tombstone]
+    UP --> A
+    FG --> X[Excluded from future retrieval]
+```
+
+**What these diagrams teach:**
+- Retrieval should not stop at similarity ranking.
+- Freshness, source validity, and conflict resolution are part of the read path.
+- Forgetting is not failure; it is lifecycle hygiene.
+- Tombstones matter because deleted memories can be re-created from old summaries or sync jobs.
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+---
+
+#### Scenario A: Coding Assistant With Changing Repo Conventions
+
+**Product/use case context:**
+A coding assistant remembers build commands, style conventions, test locations, and debugging patterns for a repository. Over time, the repo changes: package managers change, test commands move, and old workaround memories become wrong.
+
+**Freshness risks:**
+- A memory says "run `pytest`" but the repo now requires `uv run pytest`.
+- A memory says a failing test is flaky, but the underlying bug was fixed.
+- A memory says a module owns a workflow, but ownership moved.
+
+**Constraints and how they affect design:**
+- **Latency:** Always re-reading every config file before answering is slow. Use freshness windows and source version checks.
+- **Reliability:** A stale command wastes time or gives false confidence. Verify commands against current files when risk is high.
+- **Cost:** Revalidating every memory on every turn is expensive. Revalidate on source changes, age thresholds, or conflict signals.
+- **Failure modes:** Old workaround memories can override current source truth. Current repo files should usually outrank memory.
+
+**What good looks like in production:**
+- Repo memories include source file path and commit/version.
+- Retrieval filters out memories older than relevant config changes.
+- When memory conflicts with current files, the agent trusts current files and updates memory.
+
+---
+
+#### Scenario B: Customer Preference Memory
+
+**Product/use case context:**
+A customer success assistant remembers customer contacts, tone preferences, escalation preferences, and reporting cadence. These preferences can drift as people change roles or account needs evolve.
+
+**Freshness risks:**
+- The agent emails an old contact.
+- It applies last year's communication preference to a new project.
+- It remembers an exception as a permanent entitlement.
+
+**Constraints and how they affect design:**
+- **Privacy:** Some preferences are personal and should expire or be editable by the user.
+- **Reliability:** Account preferences should carry source and confirmation date.
+- **Latency:** Asking for confirmation every time is annoying. Use confidence and recency to decide when to confirm.
+- **Failure modes:** Preference drift can harm trust because the agent feels personally wrong, not just factually wrong.
+
+**What good looks like in production:**
+- Preference memories have owner, scope, source, last confirmed date, and confidence.
+- High-impact preferences require confirmation after a freshness window.
+- Users can view, correct, and delete durable preferences.
+
+---
+
+#### Scenario C: Policy-Aware Healthcare or Benefits Assistant
+
+**Product/use case context:**
+An assistant retrieves payer policies, benefit rules, clinical criteria, or compliance procedures. These memories are high-risk because old policy can cause denial, incorrect guidance, or compliance exposure.
+
+**Freshness risks:**
+- A policy has an effective date and expiration date.
+- A summary of policy is accurate for one plan but not another.
+- New regulation supersedes old workflow guidance.
+
+**Constraints and how they affect design:**
+- **Reliability:** Source documents and effective dates must be checked before use.
+- **Security/privacy:** Case-specific patient facts should not become general memories.
+- **Latency:** Freshness checks may need database lookups or policy service calls; cache safe metadata but verify high-risk facts.
+- **Failure modes:** Summary drift can turn conditional policy into absolute policy.
+
+**What good looks like in production:**
+- Policy memories are source-linked and versioned.
+- Expired or superseded policies are tombstoned or excluded.
+- High-risk outputs cite current authoritative sources, not old memory.
+
+---
+
+### 4. System View (Think Like a Systems Engineer) [Intermediate]
+
+**Inputs -> Transformations -> Outputs:**
+
+```text
+[Memory candidate or retrieval request]
+    -> Attach lifecycle metadata:
+        - scope, source, owner, sensitivity
+        - created_at, last_seen, last_confirmed
+        - source_version, TTL, confidence, salience
+    -> On retrieval:
+        - filter by permission and scope
+        - filter or down-rank stale memories
+        - validate source version for high-risk domains
+        - detect conflicts among candidates
+    -> Decide action:
+        - use memory
+        - ask for confirmation
+        - revalidate from source
+        - quarantine memory
+        - forget/archive/tombstone memory
+    -> Observe outcome:
+        - memory helped, harmed, was corrected, or was ignored
+    -> Update lifecycle:
+        - refresh timestamp
+        - lower confidence
+        - merge duplicates
+        - delete or supersede
+```
+
+**Observability — what we log, trace, and measure:**
+
+| Signal | What it tells you |
+|--------|-------------------|
+| Stale retrieval rate | How often old memories reach the final context |
+| Revalidation success rate | Whether old memories are still true after checking |
+| Memory correction rate | How often users/tools correct stored memory |
+| Conflict rate | How often multiple memories disagree |
+| Tombstone resurrection count | Whether deleted/superseded memories reappear |
+| Age distribution by memory type | Whether the store is accumulating old low-value memories |
+| Source-version mismatch rate | Whether memories reference outdated docs, commits, or policies |
+| Forgetting precision | Whether forgotten memories were genuinely unsafe/low-value |
+| Forgetting regret | Whether removed memories were later needed |
+
+**Failure points — where freshness systems break:**
+
+| Failure | Symptom | How it shows up |
+|---------|---------|-----------------|
+| No TTL | Old facts remain retrievable forever | Stale policies, commands, contacts, preferences |
+| TTL too aggressive | Useful memory disappears too soon | Agent repeatedly asks known information |
+| Similarity-only retrieval | Old memory outranks current source | Agent follows stale but semantically relevant text |
+| No conflict logic | Contradictory memories both enter context | Model chooses arbitrarily |
+| No tombstones | Deleted memories come back | Sync/summarization re-creates old facts |
+| No source version | Cannot validate truth | Memory looks authoritative but has unknown basis |
+| No user correction path | Bad memory persists | Same mistake repeats across sessions |
+
+---
+
+### 5. System Design Flavor [Intermediate]
+
+**Key components and interfaces:**
+
+```text
+Freshness-aware memory platform:
+  - Metadata schema:
+      created_at, last_accessed, last_confirmed, TTL, source_version, confidence, sensitivity
+  - Freshness policy service:
+      memory-type rules, domain-specific TTLs, risk-tier checks
+  - Revalidation workers:
+      periodically verify source-backed memories or high-salience memories
+  - Conflict resolver:
+      prefers newer, higher-trust, source-backed, in-scope memories
+  - Forgetting engine:
+      expires, archives, tombstones, or quarantines memories
+  - User/admin controls:
+      inspect, correct, delete, pin, or confirm memory
+  - Observability dashboard:
+      stale retrievals, conflicts, corrections, tombstones, revalidation failures
+```
+
+**Important tradeoffs:**
+
+1. **Long retention vs stale risk: continuity vs correctness**
+   - Longer retention helps continuity and personalization.
+   - Longer retention increases stale or privacy-sensitive memory risk.
+   - *When to choose:* keep audit episodes longer when required; apply stricter freshness to facts that drive actions, policies, contacts, commands, and permissions.
+
+2. **Automatic forgetting vs user control: hygiene vs trust**
+   - Automatic forgetting keeps memory clean at scale.
+   - User-visible controls build trust and prevent accidental loss of important preferences.
+   - *When to choose:* automatically expire low-salience transient facts; require user/admin review for high-salience preferences, policies, or account facts.
+
+3. **Revalidate often vs keep latency low: safety vs speed**
+   - Frequent revalidation reduces stale use.
+   - It adds latency, cost, and dependency on source systems.
+   - *When to choose:* revalidate synchronously for high-risk actions; use background revalidation for low-risk personalization and low-impact memories.
+
+**Scaling consideration (10x traffic/data):**
+
+At 10x memory volume, freshness cannot be manually maintained. You need automated lifecycle policies, batch revalidation, deduplication, tombstones, retention tiers, and sampled memory audits. Otherwise retrieval quality decays as the store grows, and the agent appears to "remember" but increasingly remembers the wrong things.
+
+---
+
+### 6. Common Mistakes + Debugging [Intermediate]
+
+#### Mistake 1: Treating all memories as equally durable
+
+**Symptom:** The agent uses a months-old deployment command, old customer contact, or expired policy.
+
+**Likely cause:** The memory store has no TTL or freshness rules by memory type and risk tier.
+
+**First debugging step:** Inspect the memory metadata for `created_at`, `last_confirmed`, `source_version`, and TTL. If those fields are missing, add a freshness policy before expanding memory usage.
+
+---
+
+#### Mistake 2: Deleting without tombstones
+
+**Symptom:** A bad memory is removed, then later reappears from an old summary, cache, sync job, or embedding index.
+
+**Likely cause:** Deletion removed the row but did not record that the memory was superseded or forbidden.
+
+**First debugging step:** Add a tombstone record with memory ID, scope, deletion reason, timestamp, and superseding source. Make write jobs check tombstones before re-creating memory.
+
+---
+
+#### Mistake 3: Letting summaries drift without source links
+
+**Symptom:** A summary says a user approved a decision, but source turns only show they considered it.
+
+**Likely cause:** Rolling summaries are repeatedly rewritten without source references, uncertainty fields, or faithfulness checks.
+
+**First debugging step:** Compare the current summary against source turn IDs. Split summary into `confirmed`, `tentative`, `rejected`, and `open_questions`, then re-summarize from source when drift is detected.
+
+---
+
+### 7. Hands-On Lab [Pro]
+
+> **Goal:** Build a freshness-aware memory store. You will rank memories using relevance plus decay, block expired memories, detect conflicts, and forget safely using tombstones. Then break the system by removing TTL and tombstones.
+
+---
+
+#### Build: Freshness and Forgetting Simulator
+
+```python
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Literal
+
+
+MemoryStatus = Literal["active", "quarantined", "tombstoned"]
+
+
+@dataclass
+class MemoryRecord:
+    memory_id: str
+    text: str
+    key: str
+    scope: str
+    source: str
+    source_version: str
+    created_at: datetime
+    last_confirmed: datetime
+    confidence: float
+    salience: float
+    ttl_days: int | None
+    status: MemoryStatus = "active"
+
+    def is_expired(self, now: datetime) -> bool:
+        if self.ttl_days is None:
+            return False
+        return now > self.last_confirmed + timedelta(days=self.ttl_days)
+
+
+class FreshMemoryStore:
+    def __init__(self) -> None:
+        self.memories: dict[str, MemoryRecord] = {}
+        self.tombstones: set[str] = set()
+
+    def write(self, memory: MemoryRecord) -> None:
+        if memory.memory_id in self.tombstones:
+            return
+        self.memories[memory.memory_id] = memory
+
+    def forget(self, memory_id: str, reason: str) -> None:
+        if memory_id in self.memories:
+            self.memories[memory_id].status = "tombstoned"
+        self.tombstones.add(memory_id)
+        print(f"Tombstoned {memory_id}: {reason}")
+
+    def retrieve(self, query: str, scope: str, now: datetime) -> list[MemoryRecord]:
+        query_terms = set(query.lower().split())
+        candidates = []
+
+        for memory in self.memories.values():
+            if memory.status != "active":
+                continue
+            if memory.scope != scope:
+                continue
+            if memory.is_expired(now):
+                continue
+
+            overlap = len(query_terms.intersection(memory.text.lower().split()))
+            age_days = max((now - memory.last_confirmed).days, 0)
+            decay = min(age_days / 365, 0.8)
+            score = overlap + memory.salience + memory.confidence - decay
+            candidates.append((score, memory))
+
+        return [memory for score, memory in sorted(candidates, key=lambda item: item[0], reverse=True)]
+
+    def conflicts(self, scope: str) -> dict[str, list[MemoryRecord]]:
+        by_key: dict[str, list[MemoryRecord]] = {}
+        for memory in self.memories.values():
+            if memory.scope == scope and memory.status == "active":
+                by_key.setdefault(memory.key, []).append(memory)
+        return {key: records for key, records in by_key.items() if len(records) > 1}
+
+
+now = datetime(2026, 6, 20)
+store = FreshMemoryStore()
+
+store.write(MemoryRecord(
+    memory_id="m1",
+    text="payments-api uses pytest for tests.",
+    key="test_command",
+    scope="repo:payments-api",
+    source="old-readme",
+    source_version="commit-a",
+    created_at=now - timedelta(days=250),
+    last_confirmed=now - timedelta(days=220),
+    confidence=0.7,
+    salience=4.0,
+    ttl_days=180,
+))
+
+store.write(MemoryRecord(
+    memory_id="m2",
+    text="payments-api uses uv run pytest for tests.",
+    key="test_command",
+    scope="repo:payments-api",
+    source="pyproject.toml",
+    source_version="commit-z",
+    created_at=now - timedelta(days=3),
+    last_confirmed=now - timedelta(days=3),
+    confidence=0.95,
+    salience=5.0,
+    ttl_days=180,
+))
+
+print("Retrieved:")
+for memory in store.retrieve("how run tests payments-api", "repo:payments-api", now):
+    print(memory.memory_id, memory.text, memory.source_version)
+
+print("Conflicts:", {key: [m.memory_id for m in records] for key, records in store.conflicts("repo:payments-api").items()})
+store.forget("m1", "superseded by pyproject.toml commit-z")
+```
+
+**Expected output (conceptually):**
+
+```text
+Retrieved:
+m2 payments-api uses uv run pytest for tests. commit-z
+Conflicts: {'test_command': ['m1', 'm2']}
+Tombstoned m1: superseded by pyproject.toml commit-z
+```
+
+---
+
+#### Break: Force the Relevant Failure Modes
+
+**Break 1 — Ignore TTL:**
+Remove the `memory.is_expired(now)` check. The old `pytest` memory can compete with the newer `uv run pytest` memory.
+
+**Break 2 — Remove tombstones:**
+Change `forget()` so it only deletes from `self.memories`. Then re-run an old sync/import job that writes `m1`; the stale memory returns.
+
+**Break 3 — Ignore conflict keys:**
+Remove `key`. Now the system cannot tell that two memories are competing claims about the same fact.
+
+---
+
+#### Measure: Concrete Signals
+
+| Measurement | How to capture | What to watch for |
+|-------------|----------------|-------------------|
+| Stale retrieval rate | Retrieved memories older than freshness window | Old memories influencing decisions |
+| Conflict rate | Active memories sharing same key with disagreement | Contradictory context |
+| Revalidation pass rate | Memories checked and confirmed still true | Whether TTLs are too strict or loose |
+| Tombstone resurrection count | Deleted IDs or keys re-created | Broken forgetting pipeline |
+| Memory correction rate | User/tool corrections per memory type | Drift or bad write quality |
+| Forgetting regret | Forgotten memory later requested/needed | TTL too aggressive |
+| Source-version mismatch | Memory source version vs current source | Outdated docs/code/policy |
+
+---
+
+#### Explain: Why It Breaks and What Prevents It
+
+Freshness systems break when memories are treated as timeless text. Similarity search may still find an old memory because it is semantically relevant, even when it is operationally invalid. That is why freshness and source checks must happen before memory enters the final context.
+
+Forgetting also breaks when deletion is only physical deletion. Without tombstones, old ingestion pipelines, summaries, or backups can recreate the same bad memory. A production forgetting strategy needs deletion records, source sync checks, and tests that ensure forgotten memories stay forgotten.
+
+The durable pattern is lifecycle-aware memory: every memory has a scope, source, version, age, confidence, TTL, and status. Retrieval filters stale or unsafe memories, conflict resolution handles disagreement, and forgetting leaves an auditable trace.
+
+---
+
+### 8. Active Recall (Spaced Repetition) [Beginner–Intermediate]
+
+**Q1 (Beginner):** Why is stale memory dangerous?
+
+> **Answer:** Stale memory can be semantically relevant but no longer true. The agent may confidently use old commands, contacts, policies, or preferences.
+
+---
+
+**Q2 (Beginner):** What is a TTL?
+
+> **Answer:** A time-to-live is a configured duration after which a memory expires, requires revalidation, or is excluded from retrieval.
+
+---
+
+**Q3 (Intermediate):** Why are tombstones useful?
+
+> **Answer:** Tombstones record that a memory was deleted or superseded, preventing old sync jobs, summaries, or imports from silently recreating it.
+
+---
+
+**Q4 (Intermediate):** What is memory drift?
+
+> **Answer:** Memory drift is the mismatch that grows between stored memory and reality as users, systems, policies, code, or summaries change.
+
+---
+
+**Q5 (Pro):** Why should current authoritative sources usually outrank old memory?
+
+> **Answer:** Memory is a cached representation of reality. If current source files, policies, databases, or user confirmations disagree with old memory, the source of truth should win and memory should be updated or tombstoned.
+
+---
+
+### 9. Practice [Intermediate–Pro]
+
+**Mini-exercise:**
+
+Choose a freshness strategy for each memory:
+
+1. "User prefers concise answers."
+2. "Repo uses `npm test`."
+3. "Payer policy requires six weeks of conservative therapy."
+4. "Customer received a one-time $250 credit last March."
+5. "The active workflow is waiting for manager approval."
+
+> **Suggested answer outline:**
+> 1. Semantic preference with last-confirmed date; ask for confirmation after long inactivity or correction.
+> 2. Repo-scoped semantic memory with source version; revalidate when package/config files change.
+> 3. High-risk policy memory with effective date, source version, strict TTL, and source revalidation before use.
+> 4. Episodic memory retained for audit/account history; do not promote to permanent entitlement.
+> 5. Session/checkpoint state, not long-term preference; expire or resolve when approval completes or times out.
+
+---
+
+**Capstone system design question:**
+
+Design freshness, drift, and forgetting controls for a memory-enabled enterprise agent used across customer support, coding, and regulated policy workflows.
+
+> **Suggested answer outline:**
+> - **Metadata:** memory type, scope, source, source version, created_at, last_confirmed, TTL, confidence, sensitivity, owner, status.
+> - **Freshness rules:** short TTL for operational commands and policies; medium TTL for contacts/preferences; long retention for audit episodes; no durable storage for transient emotion/noise.
+> - **Read path:** permission/scope filter, freshness filter, source-version check, conflict resolution, ranking, context budget, influence trace.
+> - **Write path:** classify memory, attach lifecycle metadata, merge duplicates, avoid promoting exceptions, create tombstones for deletion/supersession.
+> - **Drift detection:** user corrections, source changes, policy updates, summary faithfulness checks, conflict spikes, stale retrieval metrics.
+> - **Forgetting controls:** TTL expiry, manual deletion, quarantine, tombstones, retention policy, audit logs, and background revalidation.
+> - **Evaluation:** stale retrieval rate, memory-caused error rate, revalidation pass rate, forgetting regret, scope violations, and tombstone resurrection count.
+
+---
+
+### 10. Production Reality Check [Mandatory]
+
+> **If this fails in production, what's the first thing we inspect?**
+
+Inspect the **memory lifecycle trace** for the memory that influenced the failed action.
+
+Ask:
+1. When was this memory created and last confirmed?
+2. What source/version did it come from?
+3. Was it within its freshness window?
+4. Did it conflict with a newer or more authoritative memory?
+5. Should it have been revalidated, quarantined, tombstoned, or excluded?
+
+The first debugging move is to separate **retrieval relevance** from **operational validity**. A memory can be relevant and still unsafe because it is stale, superseded, cross-scoped, or no longer permitted.
+
+---
+
+### 11. Curiosity Bridge [Mandatory]
+
+Fresh memory lets an agent trust the right past at the right time. But long-lived work also needs durable execution: checkpoints, resumable tasks, retries, approvals, and recovery after failure.
+
+That leads directly to **Subtopic 16.3.d: Long-Running Task Decomposition and Checkpoint Strategy** — where memory becomes part of a workflow that can pause, resume, and survive real operations.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit Check:**
+You are done with this subtopic when you can, without notes:
+1. Explain why similarity search is not enough for memory retrieval.
+2. Design TTL and revalidation rules for at least three memory types.
+3. Debug a stale-memory failure using lifecycle metadata and source versioning.
+
+---
+
+**Carry-Forward Review (interleaved question from 16.3.b):**
+
+> *From 16.3.b:* Why should structured filters usually run before semantic ranking?
+
+> **Answer:** Structured filters enforce scope, permissions, tenant boundaries, freshness, and source trust. Semantic similarity alone can retrieve unsafe or wrong-context memory.
+
+---
+
+## Subtopic 16.3.d: Long-Running Task Decomposition and Checkpoint Strategy
+
+### ✅ Add to Knowledge Base
+
+### Reading Path + Level Tags
+
+- **Beginner:** Read sections 1-2 and Active Recall.
+- **Intermediate:** Add sections 3-5 and the Hands-On Lab Build step.
+- **Pro:** Complete the full Hands-On Lab (Build -> Break -> Measure -> Explain) plus the capstone practice question.
+
+---
+
+### 0. Pre-Question Hook [Beginner]
+
+**Pause:** An agent is preparing a prior authorization package. It reads records, drafts a letter, waits two days for clinician approval, receives a missing document, updates the package, submits it, then waits for payer response. The server restarts twice. Where should the agent store progress so it can resume correctly?
+
+If the answer is "the chat history," the system will break. Long-running work needs durable execution state, explicit step boundaries, checkpoints, retries, and recovery rules.
+
+---
+
+### 1. The Intuition (Plain English) [Beginner]
+
+Long-running agents are less like a single conversation and more like a workflow engine with model calls inside it. The agent may reason, but the system must still know exactly what has happened, what is pending, what can be retried, what needs approval, and where to resume after failure.
+
+The core mental model:
+
+```text
+Long-running task = decomposed steps + durable checkpoints + resumable state + recovery policy
+```
+
+Memory answers, "What should the agent know?" Checkpointing answers, "Where exactly is the work, and what can safely happen next?"
+
+Those are related but different. A memory might say, "This payer requires conservative therapy notes." A checkpoint says, "For case PA-123, therapy notes were requested, not yet received, and the workflow is paused before final submission."
+
+Real-world analogy: a package delivery network. A delivery does not depend on one driver remembering every detail. The system records package status: label created, picked up, in transit, delayed, out for delivery, delivered, failed attempt. If a driver changes or a scanner fails, the package still has a durable trail.
+
+**Where the analogy breaks down:** Packages usually follow fixed routes. Agent workflows may branch based on tool outputs, human approvals, model uncertainty, changing memory, and external events. So checkpoints must capture enough state to resume the correct branch, not just a status label.
+
+**Key terms (first use):**
+
+- **Durable execution** — running a workflow so progress survives process crashes, restarts, pauses, retries, and external waits.
+- **Workflow state machine** — a model of execution as named states and allowed transitions between them.
+- **Step boundary** — a deliberate point where the workflow can safely save state, retry, pause, or resume.
+- **Execution checkpoint** — a persisted snapshot of workflow progress, inputs, outputs, decisions, and next allowed actions.
+- **Checkpoint state** — the structured data saved at a checkpoint, such as completed steps, pending approvals, tool outputs, and retry counters.
+- **Progress ledger** — an append-only record of important workflow events, decisions, retries, approvals, and side effects.
+- **Resumability** — the system's ability to continue work from a checkpoint without repeating unsafe work or losing context.
+- **Idempotency** — the property that repeating an operation with the same key does not create duplicate side effects.
+- **Idempotency key** — a unique identifier used to make retries safe, such as `refund-123-submit-v1`.
+- **Side effect** — an external change caused by the workflow, such as sending an email, issuing a refund, writing to a database, or submitting a form.
+- **Retry policy** — rules for when and how a failed step should be attempted again.
+- **Backoff** — waiting longer between retries to avoid overwhelming dependencies or repeating transient failures too quickly.
+- **Timeout** — a limit after which a step, approval, or external wait is considered failed, expired, or escalated.
+- **Lease** — a temporary claim that one worker owns a task so another worker does not process it at the same time.
+- **Heartbeat** — a periodic signal proving that a worker is still alive while handling a long step.
+- **Dead-letter queue** — a holding area for tasks that failed too many times or cannot continue automatically.
+- **Compensation workflow** — a follow-up workflow that reverses or mitigates a completed side effect when full rollback is impossible.
+- **Saga pattern** — a sequence of local transactions where each completed step has a compensating step if later work fails.
+- **Recovery point** — the latest safe checkpoint from which execution can resume.
+- **Cancellation path** — a controlled route for stopping a workflow and cleaning up or compensating partial work.
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+#### Long-Running Agent Workflow
+
+```mermaid
+flowchart TD
+    A[Start task] --> B[Decompose into steps]
+    B --> C[Checkpoint: plan + inputs]
+
+    C --> D[Run step]
+    D --> E{Side effect?}
+    E -- no --> F[Save output checkpoint]
+    E -- yes --> G[Use idempotency key]
+    G --> H[Execute side effect]
+    H --> F
+
+    F --> I{Needs human or external wait?}
+    I -- yes --> P[Pause + persist wait state]
+    P --> R[Resume on event / timeout]
+    R --> J{More steps?}
+    I -- no --> J
+
+    J -- yes --> D
+    J -- no --> K[Finalize + audit]
+
+    D --> X{Failure?}
+    X -- retryable --> Y[Retry with backoff]
+    Y --> D
+    X -- not retryable --> Z[Dead-letter / compensate / escalate]
+```
+
+#### Checkpoint vs Memory
+
+```mermaid
+flowchart LR
+    T[Long-running task] --> CP[Checkpoint state\nwhere this run is]
+    T --> MEM[Memory\nwhat the agent may need to know]
+
+    CP --> A[completed steps]
+    CP --> B[pending approvals]
+    CP --> C[tool outputs]
+    CP --> D[next transition]
+    CP --> E[idempotency keys]
+
+    MEM --> F[user/repo/account facts]
+    MEM --> G[procedures and policies]
+    MEM --> H[past episodes]
+
+    A --> R[Resume safely]
+    F --> R
+```
+
+**What these diagrams teach:**
+- A long-running task needs a workflow state machine, not just chat context.
+- Checkpoints protect execution progress.
+- Memory informs decisions, but checkpoint state controls safe resumption.
+- Side effects require idempotency and compensation planning.
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+---
+
+#### Scenario A: Prior Authorization Package Agent
+
+**Product/use case context:**
+An agent gathers patient records, retrieves payer policy, drafts a letter, requests missing documents, waits for clinician approval, submits the package, tracks payer response, and prepares appeal if denied.
+
+**How long-running execution shows up:**
+- The task spans hours or days.
+- It pauses for humans and missing documents.
+- It depends on current payer policy and case-specific evidence.
+- It has irreversible or high-risk side effects: submitting a clinical package, notifying a patient, or filing an appeal.
+
+**Constraints and how they affect design:**
+- **Latency:** Some waits are long by design. The system must park the workflow cheaply instead of keeping a process alive.
+- **Reliability:** Restarting a worker must not resubmit the same package twice. Submission needs an idempotency key and external receipt tracking.
+- **Security/privacy:** Checkpoints contain PHI and must be encrypted, scoped, audited, and access-controlled.
+- **Failure modes:** A checkpoint that says "submitted" without storing receipt ID leaves the team unable to prove what happened.
+
+**What good looks like in production:**
+- Every case has a progress ledger.
+- Each side effect has idempotency metadata and receipt/evidence.
+- Human approval pauses are durable and expire into escalation paths.
+
+---
+
+#### Scenario B: Coding Agent Running a Multi-Step Refactor
+
+**Product/use case context:**
+A coding agent performs a refactor across modules: inspect usages, update schemas, edit code, run tests, fix failures, update docs, and produce a summary. The process may be interrupted by test failures, terminal restarts, or user corrections.
+
+**How long-running execution shows up:**
+- Step order matters: inspect before edit, edit before test, test before summary.
+- Some steps are safe to retry, such as reading files.
+- Some steps are risky to repeat blindly, such as applying patches or running migrations.
+- The user may intervene mid-task.
+
+**Constraints and how they affect design:**
+- **Reliability:** The agent must know which files it changed and which tests already ran.
+- **Latency/cost:** Re-scanning the entire repo after every interruption is wasteful. Store concise checkpoints.
+- **Human review:** User changes can appear while the agent works. The checkpoint must not assume the file state is unchanged.
+- **Failure modes:** If the agent loses its recovery point, it may repeat edits, overwrite user changes, or summarize tests it did not run.
+
+**What good looks like in production:**
+- The progress ledger records file edits, commands, outputs, failures, and user interruptions.
+- Checkpoints store current plan, completed steps, pending validation, and dirty-file awareness.
+- Resumption re-reads changed files before continuing.
+
+---
+
+#### Scenario C: Enterprise Research Agent Across Days
+
+**Product/use case context:**
+A research agent reads documents, extracts claims, verifies evidence, requests expert review, waits for feedback, updates a report, and ships a final deliverable.
+
+**How long-running execution shows up:**
+- Document processing can be batched and retried.
+- Claims need provenance and verifier status.
+- Expert review may pause work for days.
+- The final report depends on accepted and rejected findings.
+
+**Constraints and how they affect design:**
+- **Cost:** Reprocessing all documents after failure is expensive. Checkpoint per document batch and per claim state.
+- **Reliability:** A crash during synthesis should not lose verified claims.
+- **Security/privacy:** Some documents may have restricted access; checkpoint retrieval must enforce permissions.
+- **Failure modes:** If the workflow only stores a summary, it may lose which source supported each claim.
+
+**What good looks like in production:**
+- Each claim has state: extracted, verified, rejected, needs review, accepted.
+- Report synthesis can resume from verified claim state.
+- Expert feedback is recorded as an event with identity, timestamp, and decision.
+
+---
+
+### 4. System View (Think Like a Systems Engineer) [Intermediate]
+
+**Inputs -> Transformations -> Outputs:**
+
+```text
+[User goal / workflow trigger]
+    -> Decompose into durable steps:
+        - read/gather
+        - reason/classify
+        - call tools
+        - request approval
+        - perform side effect
+        - verify outcome
+        - finalize/report
+    -> Define step boundaries:
+        - before and after each external call
+        - before approvals
+        - before irreversible side effects
+        - after durable outputs are produced
+    -> Persist checkpoint state:
+        - workflow ID and version
+        - current state and next allowed transition
+        - completed steps and outputs
+        - pending approvals/external waits
+        - retry counters, idempotency keys, leases
+        - memory IDs and source versions used
+    -> Execute and observe:
+        - success, retryable failure, permanent failure, timeout, cancellation
+    -> Resume/recover:
+        - load recovery point
+        - validate assumptions and source freshness
+        - skip completed idempotent steps
+        - retry safe steps
+        - compensate or escalate unsafe partial work
+```
+
+**Observability — what we log, trace, and measure:**
+
+| Signal | What it tells you |
+|--------|-------------------|
+| Workflow state distribution | How many tasks are running, paused, failed, complete, or dead-lettered |
+| Checkpoint age | How long tasks have stayed at each state |
+| Resume success rate | Whether checkpoints are sufficient for recovery |
+| Duplicate side-effect count | Whether idempotency is working |
+| Retry count by step | Which dependencies or steps are unstable |
+| Timeout rate | Where external waits or tools exceed expected duration |
+| Lease expiration count | Whether workers crash or hold tasks too long |
+| Dead-letter rate | How often workflows cannot continue automatically |
+| Compensation count | How often partial side effects need mitigation |
+| Stale checkpoint resume count | Whether old checkpoints resume with outdated memory/source assumptions |
+
+**Failure points — where long-running tasks break:**
+
+| Failure | Symptom | How it shows up |
+|---------|---------|-----------------|
+| No durable checkpoint | Work disappears after restart | Agent asks user to repeat everything |
+| Checkpoint too vague | Resume guesses what happened | Duplicate actions or missed steps |
+| No idempotency | Retry repeats side effects | Duplicate emails, refunds, submissions |
+| No lease/heartbeat | Two workers process same task | Race conditions and conflicting writes |
+| No timeout path | Task waits forever | Hidden backlog and missed SLA |
+| No compensation | Partial side effects remain | User/business state becomes inconsistent |
+| No versioning | Old workflow resumes under new code incorrectly | State schema mismatch or wrong transition |
+| No memory freshness check on resume | Task resumes with stale assumptions | Wrong policy, old preference, invalid plan |
+
+---
+
+### 5. System Design Flavor [Intermediate]
+
+**Key components and interfaces:**
+
+```text
+Long-running agent runtime:
+  - Workflow definition:
+      states, transitions, step handlers, failure policies, compensation handlers
+  - Checkpoint store:
+      workflow ID, state, version, inputs, outputs, approvals, retries, idempotency keys
+  - Progress ledger:
+      append-only events for audit and debugging
+  - Task queue / scheduler:
+      ready tasks, delayed retries, timed waits, external event triggers
+  - Lease manager:
+      worker ownership, heartbeat, expiration, safe requeue
+  - Idempotency service:
+      deduplicates side effects and stores external receipts
+  - Recovery engine:
+      resumes from checkpoints, validates assumptions, applies retry/compensation policy
+  - Observability:
+      traces, state metrics, dead-letter dashboard, resume diagnostics
+```
+
+**Important tradeoffs:**
+
+1. **Fine-grained checkpoints vs overhead: precision vs cost**
+   - More checkpoints make recovery precise and reduce repeated work.
+   - Too many checkpoints increase storage, complexity, and write overhead.
+   - *When to choose:* checkpoint before/after expensive steps, external calls, human waits, and side effects. Do not checkpoint every tiny pure computation unless it is costly or risky to repeat.
+
+2. **Retry vs compensate: try again vs repair partial work**
+   - Retry is good for transient failures like timeouts or rate limits.
+   - Compensation is needed after side effects that partially succeeded.
+   - *When to choose:* retry idempotent reads and safe writes. For external side effects, check receipt/status first; if the world changed, compensate or escalate.
+
+3. **Flexible agent planning vs explicit workflow: adaptability vs reliability**
+   - Free-form agent planning can handle novel tasks.
+   - Explicit workflows are easier to resume, audit, and operate.
+   - *When to choose:* use explicit state machines for repeated, high-risk, user-facing, or regulated tasks. Use agent planning inside steps, not as the only execution controller.
+
+**Scaling consideration (10x traffic/data):**
+
+At 10x task volume, long-running agents become distributed systems. You need queue backpressure, partitioning, checkpoint compaction, lease expiration, dead-letter review, retry budgets, and workflow version migration. The hardest bugs are not model mistakes; they are duplicate side effects, stuck tasks, and stale resumed state.
+
+---
+
+### 6. Common Mistakes + Debugging [Intermediate]
+
+#### Mistake 1: Storing only a natural-language summary as the checkpoint
+
+**Symptom:** After resume, the agent knows roughly what happened but not which steps completed, which external calls succeeded, or which side effects are safe to retry.
+
+**Likely cause:** The system confused summary memory with checkpoint state.
+
+**First debugging step:** Inspect the checkpoint schema. It should contain structured fields for workflow state, completed steps, outputs, pending waits, retries, idempotency keys, and external receipts.
+
+---
+
+#### Mistake 2: Retrying side effects without idempotency
+
+**Symptom:** Users receive duplicate emails, refunds are issued twice, or a form is submitted multiple times after a timeout.
+
+**Likely cause:** The workflow retried an external operation without an idempotency key or receipt/status check.
+
+**First debugging step:** For every side-effecting step, verify the idempotency key, external receipt ID, retry policy, and compensation path. If any are missing, stop automatic retry for that step.
+
+---
+
+#### Mistake 3: Resuming from stale assumptions
+
+**Symptom:** A workflow resumes days later and uses old policy, old user preference, old file state, or outdated approval context.
+
+**Likely cause:** Resume logic loaded checkpoint state but did not revalidate memory/source freshness.
+
+**First debugging step:** Add a resume validation step: check source versions, memory freshness, approval TTLs, and whether the external world still matches checkpoint assumptions.
+
+---
+
+### 7. Hands-On Lab [Pro]
+
+> **Goal:** Build a tiny resumable workflow engine. You will decompose a task into steps, checkpoint progress, retry safely, and resume after a simulated crash. Then break it by removing idempotency and structured checkpoint state.
+
+---
+
+#### Build: Resumable Workflow With Checkpoints
+
+```python
+from dataclasses import dataclass, field
+from typing import Callable, Literal
+
+
+StepStatus = Literal["pending", "running", "done", "failed"]
+
+
+@dataclass
+class StepRecord:
+    name: str
+    status: StepStatus = "pending"
+    output: str | None = None
+    retries: int = 0
+    idempotency_key: str | None = None
+
+
+@dataclass
+class WorkflowCheckpoint:
+    workflow_id: str
+    workflow_version: str
+    current_step: str
+    steps: dict[str, StepRecord]
+    ledger: list[str] = field(default_factory=list)
+
+
+class CheckpointStore:
+    def __init__(self) -> None:
+        self.data: dict[str, WorkflowCheckpoint] = {}
+        self.side_effect_receipts: set[str] = set()
+
+    def save(self, checkpoint: WorkflowCheckpoint) -> None:
+        self.data[checkpoint.workflow_id] = checkpoint
+
+    def load(self, workflow_id: str) -> WorkflowCheckpoint:
+        return self.data[workflow_id]
+
+    def record_side_effect(self, idempotency_key: str) -> bool:
+        if idempotency_key in self.side_effect_receipts:
+            return False
+        self.side_effect_receipts.add(idempotency_key)
+        return True
+
+
+def run_step(
+    checkpoint: WorkflowCheckpoint,
+    store: CheckpointStore,
+    step_name: str,
+    handler: Callable[[], str],
+    side_effect: bool = False,
+) -> None:
+    step = checkpoint.steps[step_name]
+    if step.status == "done":
+        checkpoint.ledger.append(f"skip:{step_name}:already_done")
+        return
+
+    checkpoint.current_step = step_name
+    step.status = "running"
+    store.save(checkpoint)
+
+    if side_effect:
+        key = step.idempotency_key or f"{checkpoint.workflow_id}:{step_name}:v1"
+        step.idempotency_key = key
+        if not store.record_side_effect(key):
+            step.status = "done"
+            step.output = "side effect already completed"
+            checkpoint.ledger.append(f"dedupe:{step_name}:{key}")
+            store.save(checkpoint)
+            return
+
+    try:
+        step.output = handler()
+        step.status = "done"
+        checkpoint.ledger.append(f"done:{step_name}")
+    except Exception as exc:
+        step.status = "failed"
+        step.retries += 1
+        checkpoint.ledger.append(f"failed:{step_name}:{exc}")
+        raise
+    finally:
+        store.save(checkpoint)
+
+
+def create_workflow(workflow_id: str) -> WorkflowCheckpoint:
+    step_names = ["gather_docs", "draft_letter", "request_approval", "submit_package"]
+    return WorkflowCheckpoint(
+        workflow_id=workflow_id,
+        workflow_version="pa-workflow-v1",
+        current_step="gather_docs",
+        steps={name: StepRecord(name=name) for name in step_names},
+    )
+
+
+store = CheckpointStore()
+checkpoint = create_workflow("pa-123")
+store.save(checkpoint)
+
+run_step(checkpoint, store, "gather_docs", lambda: "records gathered")
+run_step(checkpoint, store, "draft_letter", lambda: "draft created")
+
+# Simulate crash before approval/submission.
+checkpoint = store.load("pa-123")
+
+run_step(checkpoint, store, "request_approval", lambda: "clinician approved")
+run_step(checkpoint, store, "submit_package", lambda: "submitted receipt R-999", side_effect=True)
+
+# Simulate accidental retry of submission after timeout.
+run_step(checkpoint, store, "submit_package", lambda: "submitted again", side_effect=True)
+
+print(checkpoint.current_step)
+print([(name, step.status, step.output) for name, step in checkpoint.steps.items()])
+print(checkpoint.ledger)
+```
+
+**Expected output (conceptually):**
+
+```text
+submit_package
+[
+  ('gather_docs', 'done', 'records gathered'),
+  ('draft_letter', 'done', 'draft created'),
+  ('request_approval', 'done', 'clinician approved'),
+  ('submit_package', 'done', 'submitted receipt R-999')
+]
+['done:gather_docs', 'done:draft_letter', 'done:request_approval', 'done:submit_package', 'skip:submit_package:already_done']
+```
+
+---
+
+#### Break: Force the Relevant Failure Modes
+
+**Break 1 — Remove structured step status:**
+Replace `steps` with one free-text summary. Now the workflow cannot reliably know which steps are complete or safe to skip.
+
+**Break 2 — Remove idempotency keys:**
+Delete `record_side_effect()` and retry `submit_package` after a simulated timeout. The external submission can happen twice.
+
+**Break 3 — Remove checkpoint saves before step execution:**
+If the process crashes during a step, the system may not know it was running. This creates ambiguous recovery: did it not start, fail midway, or succeed without recording receipt?
+
+---
+
+#### Measure: Concrete Signals
+
+| Measurement | How to capture | What to watch for |
+|-------------|----------------|-------------------|
+| Resume success rate | Resumed workflows / attempted resumes | Checkpoint quality |
+| Duplicate side-effect rate | Duplicate idempotency keys or external receipts | Retry safety failures |
+| Checkpoint write latency | Time to persist state at boundaries | Execution overhead |
+| Stuck task age | Time in same state without progress | Missing timeout/escalation |
+| Retry exhaustion rate | Steps moved to dead-letter after max retries | Unstable dependencies or bad policies |
+| Compensation rate | Compensating workflows triggered | Partial side-effect problems |
+| Recovery ambiguity count | Crashes where success/failure cannot be known | Missing receipts or pre-step checkpoints |
+
+---
+
+#### Explain: Why It Breaks and What Prevents It
+
+Long-running workflows break when progress is stored as prose instead of structured execution state. A summary can help a human understand the story, but it cannot reliably drive retries, transitions, idempotency, or compensation.
+
+Side effects are the second danger zone. A timeout does not mean the external action failed; it may have succeeded and the response was lost. Safe recovery requires idempotency keys, receipt lookup, and a policy that checks external status before retrying.
+
+The reliable design is to treat the agent as one part of a durable workflow: checkpoint at safe boundaries, store receipts for side effects, validate state on resume, and keep a progress ledger that explains every transition.
+
+---
+
+### 8. Active Recall (Spaced Repetition) [Beginner–Intermediate]
+
+**Q1 (Beginner):** What is the difference between memory and checkpoint state?
+
+> **Answer:** Memory stores useful knowledge for reasoning across time. Checkpoint state stores exact execution progress for a specific workflow run: current state, completed steps, pending waits, outputs, retries, and side-effect metadata.
+
+---
+
+**Q2 (Beginner):** Why do long-running tasks need step boundaries?
+
+> **Answer:** Step boundaries define where the system can safely save state, pause, retry, resume, or compensate. Without boundaries, recovery after failure is guesswork.
+
+---
+
+**Q3 (Intermediate):** Why is idempotency critical for side effects?
+
+> **Answer:** Retried side effects can duplicate external changes. Idempotency keys let the system retry safely without issuing duplicate refunds, emails, submissions, or database writes.
+
+---
+
+**Q4 (Intermediate):** What should happen when a workflow times out waiting for human approval?
+
+> **Answer:** The timeout should trigger a defined transition such as reminder, escalation, cancellation, or safe stop. The task should not wait forever in an invisible state.
+
+---
+
+**Q5 (Pro):** Why should resume logic revalidate memory/source assumptions?
+
+> **Answer:** A checkpoint may resume hours or days later. Policies, files, user preferences, approvals, or external state may have changed, so stale assumptions can make the resumed task unsafe.
+
+---
+
+### 9. Practice [Intermediate–Pro]
+
+**Mini-exercise:**
+
+For this workflow, choose checkpoint boundaries and side-effect controls:
+
+```text
+1. Gather customer account data
+2. Draft refund decision
+3. Ask manager for approval
+4. Issue refund
+5. Email customer
+6. Record audit event
+```
+
+> **Suggested answer outline:**
+> - Checkpoint after account data retrieval because it is useful and may be expensive.
+> - Checkpoint after draft decision with evidence and risk score.
+> - Pause durably at manager approval with timeout/escalation.
+> - Before issuing refund, revalidate account/refund policy and approval TTL.
+> - Use an idempotency key for refund issuance and store payment receipt.
+> - Use an idempotency key for customer email or store sent-message ID.
+> - Audit event should include workflow ID, approval ID, refund receipt, email ID, and final status.
+> - Compensation path may include refund reversal if allowed or manual finance escalation if not.
+
+---
+
+**Capstone system design question:**
+
+Design a durable execution system for an AI agent that performs multi-day enterprise onboarding. It collects documents, validates compliance requirements, asks humans for approvals, provisions accounts, sends notifications, and creates final audit reports.
+
+> **Suggested answer outline:**
+> - **Workflow states:** started, collecting_docs, validating, waiting_for_approval, provisioning, notifying, complete, failed, cancelled.
+> - **Checkpoints:** after document ingestion, validation result, approval request, approval decision, each provisioning side effect, notification receipt, final audit report.
+> - **State schema:** workflow ID/version, tenant/user scope, current state, completed steps, pending waits, source versions, memory IDs, retry counters, idempotency keys, external receipts.
+> - **Retries:** safe for reads and validations; bounded retries with backoff for APIs; external side effects require receipt lookup before retry.
+> - **Human waits:** approval TTL, reminders, escalation, cancellation path, decision audit trail.
+> - **Compensation:** deprovision accounts, revoke permissions, send correction notices, escalate manual cleanup for irreversible side effects.
+> - **Recovery:** load checkpoint, validate schema version, refresh memory/source assumptions, reacquire lease, resume from recovery point.
+> - **Observability:** workflow state dashboard, stuck-task alerts, duplicate side-effect metrics, dead-letter queue, resume success rate, compensation count.
+
+---
+
+### 10. Production Reality Check [Mandatory]
+
+> **If this fails in production, what's the first thing we inspect?**
+
+Inspect the **workflow checkpoint and progress ledger** for the failed run.
+
+Ask:
+1. What state did the workflow believe it was in?
+2. Which steps were marked complete, running, failed, or pending?
+3. What external side effects had receipts or idempotency keys?
+4. Was there a lease, heartbeat, retry, timeout, or dead-letter transition?
+5. Did resume logic revalidate memory, source versions, and approval freshness?
+6. Is compensation required for partial work?
+
+The first debugging move is to separate **reasoning failure** from **execution-state failure**. The model may have chosen a reasonable plan, but the workflow can still fail through duplicate side effects, missing checkpoints, stale resumed state, or bad retry policy.
+
+---
+
+### 11. Curiosity Bridge [Mandatory]
+
+This closes the operational arc of Module 16: coordination, human review, memory, freshness, and durable execution. The big pattern is now visible: reliable agent systems are not just smarter prompts; they are stateful distributed systems with model calls inside them.
+
+The next learning move is to connect these patterns into production-ready agent platforms: evaluation loops, deployment boundaries, observability, governance, and cost controls across the full GenAI system lifecycle.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit Check:**
+You are done with this subtopic when you can, without notes:
+1. Explain why long-running agents need checkpoint state separate from memory.
+2. Design step boundaries for a workflow with human waits and side effects.
+3. Debug a crash/retry/resume incident using checkpoint, ledger, idempotency, and compensation data.
+
+---
+
+**Carry-Forward Review (interleaved question from 16.3.c):**
+
+> *From 16.3.c:* Why can a memory be relevant but still unsafe to use?
+
+> **Answer:** Similarity can retrieve a memory that matches the task, but the memory may be stale, superseded, cross-scoped, no longer permitted, or contradicted by a newer authoritative source. Freshness and validity checks must happen before injection.
+
+---
+
+## Module Checkpoint
+
+You have reached the checkpoint for Module 16 when these three ideas feel obvious, practical, and debuggable:
+
+### 1. Explain Why Many "Multi-Agent" Demos Are Just Bad Workflow Design
+
+Many demos split a task into multiple named agents because it looks sophisticated, not because the work truly needs independent agents. If every "agent" shares the same model, same context, same tools, same permissions, and same lifecycle, then the system is often just a workflow wearing agent costumes.
+
+The practical test:
+
+```text
+If the role can be replaced by a function, tool call, validator, router, or workflow node without losing capability, it probably should be.
+```
+
+Good design starts with the workflow:
+- What inputs enter the system?
+- What transformations must happen?
+- What state must be preserved?
+- Which decisions require model judgment?
+- Which checks should be deterministic?
+- Where can the system fail?
+
+Only add more agents when they create a real boundary: different tools, different permissions, different memory, different expertise, different lifecycle, or independent review. Otherwise, multi-agent design adds coordination tax: more latency, more state, more logs, more failure modes, and harder debugging.
+
+**Checkpoint sentence:** A mature engineer does not ask, "How many agents can I use?" They ask, "What workflow boundary actually needs autonomy?"
+
+---
+
+### 2. Build Approval Boundaries Into Long-Running Systems
+
+Human approval is not a button sprinkled on top of an agent. It is a runtime boundary that changes how the system must store state, pause execution, resume safely, audit decisions, and handle timeouts.
+
+Approval boundaries matter most before actions that are:
+- Irreversible or hard to compensate.
+- Externally visible.
+- Financially, legally, clinically, operationally, or privacy sensitive.
+- Low-confidence but high-impact.
+- Dependent on human authority, not just model judgment.
+
+A strong approval boundary includes:
+- A clear proposed action.
+- Evidence and reasoning.
+- Risk level and consequences.
+- Approve, edit, reject, escalate, and request-more-info paths.
+- Durable pause/resume state.
+- Timeout and escalation behavior.
+- Audit trail and outcome measurement.
+- Compensation path when partial work has already happened.
+
+In long-running systems, approval must also interact with checkpoints. If a workflow pauses for two days, the system must remember what was approved, what changed since approval, whether approval expired, and whether the resumed action is still safe.
+
+**Checkpoint sentence:** Human approval is a control-plane feature, not a UI afterthought.
+
+---
+
+### 3. Treat Memory as a System Design Problem, Not a Magical Feature
+
+Memory is not "store chat history and retrieve it later." Production memory is a system with write policy, read policy, scope, provenance, freshness, ranking, deletion, and observability.
+
+A real memory design answers:
+- What should be remembered?
+- What should remain only in working/session state?
+- What should be summarized?
+- What should be searchable later?
+- Who or what is allowed to use it?
+- How do we know it is still true?
+- How do we correct or delete it?
+- How do we trace when memory influenced an output?
+
+The key distinction:
+
+```text
+Memory helps the agent know.
+Checkpoints help the workflow resume.
+They are related, but not interchangeable.
+```
+
+Good memory systems separate episodic, semantic, and procedural memory; combine session, summary, and retrieval memory; enforce freshness and forgetting strategies; and log memory influence so failures can be debugged.
+
+**Checkpoint sentence:** Memory becomes reliable only when it has lifecycle rules and observability.
+
+---
+
+### Module 16 Mastery Check
+
+You are ready to move on when you can explain this in one minute:
+
+> Reliable agent systems are stateful distributed systems with model calls inside them. Multi-agent coordination, HITL approval, memory, and long-running execution all create state. The engineering job is to make that state explicit, scoped, observable, resumable, and safe to change.
+
+---
+
 ## Module Glossary
 
 | Term | Definition |
@@ -4344,3 +7456,81 @@ You are done with this subtopic when you can, without notes:
 | **Decision latency** | Time from review request creation to reviewer decision. |
 | **Override control** | A UI control that lets the reviewer edit, reject, escalate, or request more evidence rather than only approve/deny. |
 | **Context reconstruction** | The work a reviewer must do to understand the case from the approval screen without reading raw traces or asking the agent to explain itself again. |
+| **Intervention quality** | How much a human review improves safety, correctness, usefulness, or compliance compared with the automated proposal. |
+| **Reviewer lift** | The measurable improvement caused by human review, such as fewer incidents, corrected payloads, or better downstream outcomes. |
+| **Cost per intervention** | Total operational cost of a human review, including reviewer time, tooling, delay, context switching, and follow-up work. |
+| **Avoidable escalation** | A case routed to human review even though it could have been safely automated, clarified, or verified without human involvement. |
+| **Necessary escalation** | A case where human judgment, authority, policy exception handling, or risk accountability was genuinely needed. |
+| **SLA breach rate** | Percentage of review items that miss the expected decision time window. |
+| **Override quality** | Whether human edits or rejections improve outcomes, not merely whether they differ from the agent. |
+| **Automation graduation** | Moving a repeatedly approved low-risk review type from human approval to automated handling with audit and monitoring. |
+| **Human agreement rate** | How consistently different reviewers make the same decision on similar or identical cases. |
+| **Queue economics** | The relationship between incoming review volume, reviewer capacity, decision latency, cost, and quality. |
+| **Intervention ROI** | Value gained from human review divided by review cost, often estimated by harm prevented, quality gain, or operational savings. |
+| **Shadow review** | Human review performed without affecting production decisions, used to measure what humans would have changed. |
+| **Working memory** | The temporary context the model can currently attend to, usually the prompt, recent messages, tool outputs, and active state. |
+| **Durable memory** | Persisted information stored outside the immediate context window so it can be retrieved in future turns, sessions, or workflow runs. |
+| **Episodic memory** | Records of specific events or experiences, including what happened, when, who was involved, and what outcome occurred. |
+| **Semantic memory** | Durable facts, preferences, concepts, entities, and relationships that should remain true beyond one event. |
+| **Procedural memory** | Reusable know-how or steps for doing a task, such as workflows, playbooks, policies, and learned operating patterns. |
+| **Long-horizon execution** | Completing work over many turns, sessions, tool calls, pauses, approvals, failures, and resumptions. |
+| **Memory scope** | The boundary that defines where a memory applies: user, organization, repo, project, task, session, or agent. |
+| **Memory write** | The act of deciding that information is important enough to store. |
+| **Memory retrieval** | Selecting relevant memories for the current task and injecting or using them at the right time. |
+| **Memory salience** | How important, reusable, recent, or decision-relevant a memory is. |
+| **Memory provenance** | Metadata about where a memory came from, when it was observed, and how trustworthy it is. |
+| **Memory consolidation** | Turning raw events into cleaner facts, summaries, preferences, or procedures. |
+| **Memory pollution** | Storing incorrect, irrelevant, private, stale, or overly broad information that later harms agent behavior. |
+| **Memory lifecycle** | The rules for creating, updating, validating, expiring, archiving, or deleting memories. |
+| **Session memory** | Short-lived state tied to the current conversation, workflow run, or task execution. |
+| **Summary memory** | Compressed representation of prior interaction or task history, written to preserve important state while reducing token load. |
+| **Retrieval memory** | External searchable memory queried at runtime, often backed by embeddings, keyword search, metadata filters, or databases. |
+| **Rolling summary** | A summary that is repeatedly updated as a conversation or workflow grows. |
+| **Context budget** | The limited number of tokens or structured fields available for the model's current reasoning step. |
+| **Memory injection** | Adding selected memory into the model prompt, tool context, workflow state, or system instructions. |
+| **Memory ranking** | Ordering candidate memories by relevance, recency, salience, trust, and scope. |
+| **Hybrid memory architecture** | A design that combines session state, summaries, retrieval, and durable stores instead of relying on one memory mechanism. |
+| **Summary drift** | Distortion that occurs when repeated summaries gradually omit, alter, or over-generalize important details. |
+| **Lost-in-the-middle effect** | The model paying less attention to information buried in the middle of a long context. |
+| **Memory hydration** | Loading selected durable state into an active session before reasoning or execution. |
+| **Memory eviction** | Removing or excluding less useful context from the active prompt or session state to stay within budget. |
+| **Retrieval precision** | The fraction of retrieved memories that are actually useful for the current task. |
+| **Retrieval recall** | The fraction of relevant available memories that retrieval successfully finds. |
+| **Memory read path** | The runtime process for selecting and using memories. |
+| **Memory write path** | The process for deciding what to store, summarize, update, or discard after an interaction. |
+| **Memory freshness** | How current and still-valid a memory is for the present task. |
+| **Memory drift** | Gradual mismatch between stored memory and reality, caused by changing users, systems, policies, data, or summaries. |
+| **Time-to-live (TTL)** | A configured duration after which a memory expires, requires revalidation, or is excluded from retrieval. |
+| **Freshness window** | The acceptable age range for a memory in a specific domain or risk tier. |
+| **Decay score** | A score that reduces a memory's retrieval priority as it ages or loses evidence of usefulness. |
+| **Revalidation** | Checking whether a memory is still true before using it or keeping it active. |
+| **Memory conflict** | Two or more memories disagreeing about the same fact, preference, policy, or procedure. |
+| **Source versioning** | Tracking the source version, document version, code commit, policy date, or schema version behind a memory. |
+| **Preference drift** | A user's or organization's preferences changing over time. |
+| **Policy drift** | Rules, compliance requirements, payer policies, product policies, or operational procedures changing over time. |
+| **Forgetting strategy** | A deliberate policy for expiring, archiving, demoting, deleting, or suppressing memories. |
+| **Retention policy** | Rules defining how long different memory types are kept and why. |
+| **Tombstone** | A marker that records that a memory was deleted or superseded so it does not silently reappear. |
+| **Memory quarantine** | Temporarily excluding a suspect memory from use until it is reviewed or revalidated. |
+| **Memory compaction** | Reducing many low-level memories into fewer higher-quality summaries, facts, or procedures. |
+| **Memory audit** | Systematic review of stored and retrieved memories for correctness, scope, freshness, safety, and usefulness. |
+| **Durable execution** | Running a workflow so progress survives process crashes, restarts, pauses, retries, and external waits. |
+| **Workflow state machine** | A model of execution as named states and allowed transitions between them. |
+| **Step boundary** | A deliberate point where the workflow can safely save state, retry, pause, or resume. |
+| **Execution checkpoint** | A persisted snapshot of workflow progress, inputs, outputs, decisions, and next allowed actions. |
+| **Checkpoint state** | Structured data saved at a checkpoint, such as completed steps, pending approvals, tool outputs, and retry counters. |
+| **Progress ledger** | An append-only record of important workflow events, decisions, retries, approvals, and side effects. |
+| **Resumability** | The system's ability to continue work from a checkpoint without repeating unsafe work or losing context. |
+| **Idempotency** | The property that repeating an operation with the same key does not create duplicate side effects. |
+| **Idempotency key** | A unique identifier used to make retries safe, such as `refund-123-submit-v1`. |
+| **Side effect** | An external change caused by the workflow, such as sending an email, issuing a refund, writing to a database, or submitting a form. |
+| **Retry policy** | Rules for when and how a failed step should be attempted again. |
+| **Backoff** | Waiting longer between retries to avoid overwhelming dependencies or repeating transient failures too quickly. |
+| **Timeout** | A limit after which a step, approval, or external wait is considered failed, expired, or escalated. |
+| **Lease** | A temporary claim that one worker owns a task so another worker does not process it at the same time. |
+| **Heartbeat** | A periodic signal proving that a worker is still alive while handling a long step. |
+| **Dead-letter queue** | A holding area for tasks that failed too many times or cannot continue automatically. |
+| **Compensation workflow** | A follow-up workflow that reverses or mitigates a completed side effect when full rollback is impossible. |
+| **Saga pattern** | A sequence of local transactions where each completed step has a compensating step if later work fails. |
+| **Recovery point** | The latest safe checkpoint from which execution can resume. |
+| **Cancellation path** | A controlled route for stopping a workflow and cleaning up or compensating partial work. |
