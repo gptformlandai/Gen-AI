@@ -15,9 +15,9 @@
 | 15.1.c | Sessions, state, and evaluation concepts | ✅ Done |
 | 15.1.d | When ADK is a better fit than LangGraph | ✅ Done |
 | **Topic 15.2** | **OpenAI Agents SDK patterns (10h)** | |
-| 15.2.a | Agent, runner, tools, and handoffs | 🔲 |
-| 15.2.b | Guardrails and sessions | 🔲 |
-| 15.2.c | MCP integration and sandbox agents | 🔲 |
+| 15.2.a | Agent, runner, tools, and handoffs | ✅ Done |
+| 15.2.b | Guardrails and sessions | ✅ Done |
+| 15.2.c | MCP integration and sandbox agents | ✅ Done |
 | 15.2.d | Realtime and voice-oriented pathways | 🔲 |
 | **Topic 15.3** | **Runtime comparison and selection (10h)** | |
 | 15.3.a | LangGraph vs ADK vs OpenAI Agents SDK | 🔲 |
@@ -31,6 +31,9 @@
 - 15.1.b — Graph workflows and routing: `Workflow` mental model, nodes and edges, `START` routes, sequential execution, conditional `Event.route` branching, `Event.output` data passing, parallel fan-out/fan-in with `JoinNode`, nested workflows, graph observability, graph routing vs `RoutedAgent`
 - 15.1.c — Sessions, state, and evaluation concepts: `Session` and `SessionService` lifecycle, `events` vs `state`, state prefixes (`user:`, `app:`, `temp:`), persistent vs in-memory session storage, safe state updates through events/context, trace debugging, eval files/evalsets, trajectory metrics, response metrics, hallucination/safety checks, multi-turn evaluation
 - 15.1.d — When ADK is a better fit than LangGraph: ADK-vs-LangGraph decision model, agent product runtime vs orchestration runtime, managed sessions/evals/deployment/observability tradeoffs, Google Cloud fit, team-skill fit, migration warning signs, production debugging checklist
+- 15.2.a — Agent, runner, tools, and handoffs: OpenAI Agents SDK primitive model, `Agent` configuration, `Runner` loop, `RunResult`, function tools, hosted tools, agents-as-tools, handoffs, handoff filters, structured outputs, context injection, tool-use behavior, max-turn debugging
+- 15.2.b — Guardrails and sessions: input/output/tool guardrails, tripwire behavior, blocking vs parallel guardrail execution, tool approval pause/resume, `RunState`, session-backed memory, history merge callbacks, session backends, server-managed conversation state, compaction, session debugging
+- 15.2.c — MCP integration and sandbox agents: hosted MCP vs local MCP servers, MCP transports, approval policies, tool filtering, prompts, caching, tracing, SandboxAgent workspace execution, manifests, capabilities, sandbox clients, sandbox lifecycle, snapshots, session-state resume, composition with handoffs/tools/MCP
 
 ---
 
@@ -1826,10 +1829,1456 @@ That leads into **OpenAI Agents SDK patterns**: agents, runners, tools, handoffs
 
 ---
 
+## Topic 15.2: OpenAI Agents SDK Patterns
+
+> **Topic time:** 10h  
+> Focus: Understanding the OpenAI Agents SDK as a lightweight Python-first runtime around the Responses API: agents, runners, tools, handoffs, guardrails, sessions, MCP, sandbox agents, realtime pathways, tracing, and when to use the SDK instead of lower-level model calls.
+
+---
+
+## Subtopic 15.2.a: Agent, Runner, Tools, and Handoffs
+
+### ✅ Add to Knowledge Base
+
+### 0. Reading Path + Level Tags
+
+- **Beginner:** Read sections 1-2 and Active Recall. Your goal is to explain the four core pieces: agent, runner, tool, handoff.
+- **Intermediate:** Add sections 3-6 and the Hands-On Lab. Your goal is to design a small multi-agent support workflow.
+- **Pro:** Do the full lab and capstone. Your goal is to debug loops, bad tool calls, incorrect handoffs, and state/history mistakes.
+
+---
+
+### 1. Pre-Question Hook + The Intuition
+
+**Pause:** before reading, imagine you have three specialists: a general support rep, a billing expert, and a refund expert. When should the general rep call a specialist as a tool, and when should the specialist take over the conversation entirely?
+
+[Beginner]
+
+The **OpenAI Agents SDK** is a lightweight Python runtime for building agentic apps on top of model calls. Its main idea is simple: define agents, give them tools, run them through a runner, and let the SDK manage the loop of model call -> tool call -> tool result -> next model call -> final answer.
+
+The core pieces:
+
+- **OpenAI `Agent`**: an LLM configured with `name`, `instructions`, optional `model`, `tools`, `handoffs`, `guardrails`, `output_type`, `model_settings`, and runtime hooks.
+- **`Runner`**: the execution engine that runs an agent against input. It handles model calls, tool execution, handoffs, streaming, sessions/history, max-turn limits, and final output.
+- **Tool**: a capability the model may call. Tools can be hosted OpenAI tools, Python function tools, local runtime tools, MCP tools, or even other agents exposed as tools.
+- **Handoff**: a delegation pattern where one agent transfers control to another specialist agent. The receiving agent takes over the conversation.
+
+The best mental model: an `Agent` defines the worker, tools define what the worker can do, handoffs define who the worker can transfer the case to, and `Runner` is the supervisor that keeps the work loop moving until a final answer appears.
+
+**Analogy:** Think of a hospital intake desk. The triage nurse handles simple questions, uses internal systems to look up patient info, calls a specialist for small checks, or transfers the patient to cardiology/orthopedics when that team should own the case.
+
+Where the analogy breaks: software handoffs are represented as model-callable tools, and the receiving agent sees conversation history according to SDK rules and filters. It is not a human memory transfer; it is structured transcript/control transfer.
+
+---
+
+### 2. Visual Diagram (Mermaid)
+
+```mermaid
+flowchart TD
+    U[User input] --> R[Runner.run / run_sync / run_streamed]
+    R --> A[Triage Agent]
+    A --> M[Model call]
+
+    M -->|final_output| O[RunResult.final_output]
+    M -->|function tool call| FT[Function tool]
+    M -->|hosted tool call| HT[Hosted OpenAI tool]
+    M -->|agent-as-tool call| AT[Specialist agent as tool]
+    M -->|handoff call| H[Handoff to specialist]
+
+    FT --> TR[Tool result appended]
+    HT --> TR
+    AT --> TR
+    TR --> R
+
+    H --> S[Specialist Agent takes over]
+    S --> M2[Model call under new current agent]
+    M2 -->|tool calls or final output| R
+
+    R -->|max_turns exceeded| E[MaxTurnsExceeded]
+```
+
+---
+
+### 3. Real-World Industry Scenarios
+
+#### Scenario A: Customer Support Triage With Billing and Refund Specialists
+
+**Context:** A SaaS company wants a support assistant that answers FAQs, looks up subscriptions, routes billing disputes to a billing specialist, and routes refund requests to a refund specialist.
+
+**How the pieces map:**
+
+- `triage_agent`: user-facing agent that decides whether to answer, call a lookup tool, call a specialist as a tool, or hand off.
+- `lookup_subscription`: function tool that fetches plan/status from internal billing data.
+- `billing_agent.as_tool(...)`: useful when the triage agent wants a specialist answer but should keep control.
+- `handoff(refund_agent)`: useful when the refund specialist should take over the conversation.
+
+**Constraints:**
+
+- **Latency:** Each handoff/tool loop can add another model call. What looks like one user turn may be multiple model calls under the runner.
+- **Cost:** Tool-heavy and handoff-heavy flows can multiply token usage because conversation history and tool schemas are included in model calls.
+- **Reliability:** Wrong specialist selection leads to poor customer experience. Clear `handoff_description`, tool descriptions, and eval cases are needed.
+- **Privacy:** Billing/refund tools may touch sensitive data. Tools should enforce auth and return minimal data to the model.
+
+**What good looks like in production:** The triage agent handles simple issues directly, uses tools for deterministic lookup, hands off only when ownership should transfer, traces show every tool/handoff decision, and evals test common routing cases.
+
+#### Scenario B: Compliance Assistant With Structured Output
+
+**Context:** A bank needs an assistant that reads a customer message, classifies risk, checks policy, and returns a structured compliance decision.
+
+**How the pieces map:**
+
+- `Agent(output_type=ComplianceDecision)` forces the final answer into a Pydantic shape.
+- `policy_lookup` is a function tool with a strict argument schema.
+- `RunConfig` can add tracing metadata and global guardrails.
+- A handoff to `escalation_agent` occurs only for high-risk cases.
+
+**Constraints:**
+
+- **Latency:** Structured output may require retries if the model violates schema. Keep schemas small and precise.
+- **Cost:** Policy lookups should return focused snippets, not huge policy documents.
+- **Reliability:** The model must not invent policy. Tool outputs and citations should be audited.
+- **Security/privacy:** Tool output must redact irrelevant customer details before the model sees them.
+
+**What good looks like in production:** Final outputs validate against the schema, every escalation includes a structured reason, tool errors are model-visible but sanitized, and traces can prove what policy was used.
+
+#### Scenario C: Internal Analytics Agent With Agents-As-Tools
+
+**Context:** A data team builds an assistant that can explain metrics, create SQL, summarize dashboards, and translate results for executives.
+
+**How the pieces map:**
+
+- A manager agent owns the conversation.
+- SQL agent, chart explainer agent, and executive summary agent are exposed with `as_tool(...)`.
+- The manager can call multiple specialist tools and synthesize one final answer.
+
+**Why agents-as-tools instead of handoffs:** The user should experience one coherent assistant. Specialists contribute bounded outputs, but the manager keeps control of the final response.
+
+**What good looks like in production:** Specialist tools have narrow descriptions, structured inputs where useful, tool results are traceable, and the final response clearly separates facts from interpretation.
+
+---
+
+### 4. System View (Think Like a Systems Engineer)
+
+[Intermediate]
+
+#### Inputs -> Transformations -> Outputs
+
+**Inputs:**
+
+- User input: string or list of Responses API input items.
+- Agent definition: `name`, `instructions`, `model`, `tools`, `handoffs`, `output_type`, `model_settings`.
+- Runtime context: app dependencies, user/session data, auth handles, feature flags.
+- Run configuration: model overrides, guardrails, tracing metadata, tool execution settings, handoff filters, max turns.
+
+**Transformations inside `Runner`:**
+
+1. Call the model for the current agent.
+2. If the model returns final output, stop.
+3. If the model calls tools, execute tools, append results, and call the model again.
+4. If the model chooses a handoff, switch the current agent, prepare handoff input/history, and continue.
+5. If `max_turns` is exceeded or a tool/model behavior error occurs, raise or route through configured error handling.
+
+**Outputs:**
+
+- `RunResult.final_output`: the final user-facing output, plain text or structured object.
+- `RunResult.new_items`: model outputs, tool calls, tool outputs, handoff items, and other run artifacts.
+- Usage/tracing data: token use, spans, tool activity, agent transitions, and errors.
+- Optional session/conversation state for future turns.
+
+#### Observability: What We Log, Trace, and Measure
+
+- `workflow_name`, `trace_id`, `group_id`, and `trace_metadata`.
+- Current agent name and every agent transition.
+- Tool name, arguments, call ID, approval state, timeout, and result shape.
+- Handoff source agent, target agent, input payload, and applied input filter.
+- `max_turns`, actual turn count, model calls per user turn, and total tokens.
+- Final output type validation success/failure.
+
+#### Failure Points: Where It Breaks and How It Shows Up
+
+- **Bad tool schema:** model calls tool with malformed or semantically wrong arguments.
+- **Vague tool descriptions:** model picks the wrong tool or ignores the correct tool.
+- **Wrong orchestration pattern:** using handoff when the manager should retain control, or agents-as-tools when a specialist should own the conversation.
+- **Looping behavior:** model repeatedly calls tools without reaching final output.
+- **History bloat:** handoffs and repeated runs forward too much transcript, increasing cost and lowering accuracy.
+- **Context confusion:** app state is passed through conversation history instead of typed runtime context.
+
+---
+
+### 5. System Design Flavor
+
+[Intermediate]
+
+#### Key Components / Interfaces
+
+**Minimal agent:**
+
+```python
+from agents import Agent, Runner
+
+agent = Agent(
+    name="Assistant",
+    instructions="Answer clearly and concisely.",
+)
+
+result = Runner.run_sync(agent, "Explain recursion in one sentence.")
+print(result.final_output)
+```
+
+**Function tool:**
+
+```python
+from agents import Agent, Runner, function_tool
+
+@function_tool
+def lookup_order(order_id: str) -> str:
+    """Look up order status by order ID."""
+    return f"Order {order_id} is in transit."
+
+agent = Agent(
+    name="Support agent",
+    instructions="Use tools for order-specific questions.",
+    tools=[lookup_order],
+)
+
+result = Runner.run_sync(agent, "Where is order A123?")
+```
+
+**Agents-as-tools vs handoffs:**
+
+```python
+from agents import Agent, handoff
+
+billing_agent = Agent(
+    name="Billing agent",
+    instructions="Handle subscription, invoice, and payment questions.",
+    handoff_description="Use for billing or invoice ownership.",
+)
+
+refund_agent = Agent(
+    name="Refund agent",
+    instructions="Own refund eligibility and refund request conversations.",
+    handoff_description="Use when the user wants a refund decision.",
+)
+
+triage_agent = Agent(
+    name="Triage agent",
+    instructions="Answer simple questions. Delegate carefully.",
+    tools=[
+        billing_agent.as_tool(
+            tool_name="ask_billing_specialist",
+            tool_description="Get a billing specialist answer while retaining control.",
+        )
+    ],
+    handoffs=[handoff(refund_agent)],
+)
+```
+
+#### 3 Important Tradeoffs
+
+| Tradeoff | Choose This When... | Watch Out For... |
+|---|---|---|
+| Function tool vs hosted tool | Use function tools when your app owns the API/data. Use hosted tools for OpenAI-managed web/file/code/search surfaces. | Hosted tools may be model/provider-specific; function tools require your own auth, retries, and sanitization. |
+| Agent-as-tool vs handoff | Use agent-as-tool when the manager should keep control. Use handoff when the specialist should own the conversation. | A bad choice creates either over-centralized answers or fragmented user experience. |
+| Manual history vs sessions/server state | Use manual `to_input_list()` for small loops and full control. Use sessions/conversations for persistent multi-turn apps. | Mixing persistence strategies can duplicate context or confuse the runner. |
+
+In layman's terms: a tool answers a subquestion; a handoff changes who is responsible for the conversation.
+
+#### Scaling Consideration at 10x Traffic/Data
+
+At 10x traffic, the expensive parts are model turns, tool latency, and trace volume. You need max-turn limits, focused tool schemas, good tool timeouts, trace sampling/redaction, and eval coverage for routing decisions.
+
+At 10x tool count, do not dump every tool into every agent. Use specialist agents, tool namespaces, deferred loading/tool search, or MCP boundaries so the model sees a manageable action surface.
+
+---
+
+### 6. Common Mistakes + Debugging
+
+#### Mistake 1: Using a Handoff When an Agent-As-Tool Is Better
+
+**Symptom:** The user asks one question, but the conversation suddenly changes voice or loses the original triage context.
+
+**Likely cause:** The triage agent transferred control when it only needed a specialist answer.
+
+**First debugging step:** Inspect run items for a handoff call. If the specialist should have returned a bounded result, expose it with `agent.as_tool(...)` instead.
+
+#### Mistake 2: Tool Schema Is Technically Valid but Semantically Weak
+
+**Symptom:** The model calls `lookup_user` with email when the tool needs user ID, or calls a broad tool for a narrow task.
+
+**Likely cause:** Tool name, docstring, argument descriptions, or Pydantic constraints are too vague.
+
+**First debugging step:** Print the generated tool schema and compare it to real user requests. Add precise descriptions, argument constraints, and eval cases for wrong-argument prompts.
+
+#### Mistake 3: Infinite or Wasteful Tool Loops
+
+**Symptom:** The runner keeps calling tools and eventually hits `MaxTurnsExceeded`.
+
+**Likely cause:** Forced tool use was not reset, the tool result does not answer the model's question, or instructions require a tool even after the answer is known.
+
+**First debugging step:** Inspect `new_items` and trace spans in order. Check `ModelSettings.tool_choice`, `agent.reset_tool_choice`, `tool_use_behavior`, and the exact text returned by each tool.
+
+---
+
+### 7. Hands-On Lab: Build -> Break -> Measure -> Explain
+
+[Pro]
+
+#### Build: Small Support Workflow
+
+Install when you are ready to run locally:
+
+```bash
+pip install openai-agents
+```
+
+Then build a tiny support workflow:
+
+```python
+from agents import Agent, Runner, function_tool, handoff
+
+@function_tool
+def lookup_order(order_id: str) -> str:
+    """Look up shipping status for a customer order ID."""
+    if order_id == "A123":
+        return "Order A123 shipped yesterday and arrives Friday."
+    return "No order found for that ID."
+
+billing_agent = Agent(
+    name="Billing agent",
+    instructions="Answer billing questions. Be precise and ask for invoice ID if missing.",
+    handoff_description="Use when the user has a billing or invoice problem.",
+)
+
+refund_agent = Agent(
+    name="Refund agent",
+    instructions="Own refund request conversations and explain next steps.",
+    handoff_description="Use when the user explicitly requests a refund.",
+)
+
+triage_agent = Agent(
+    name="Triage agent",
+    instructions=(
+        "Help support users. Use lookup_order for order status. "
+        "Ask billing specialist as a tool for invoice questions. "
+        "Hand off to refund agent when the user wants a refund."
+    ),
+    tools=[
+        lookup_order,
+        billing_agent.as_tool(
+            tool_name="ask_billing_specialist",
+            tool_description="Get a billing expert answer without transferring the conversation.",
+        ),
+    ],
+    handoffs=[handoff(refund_agent)],
+)
+
+result = Runner.run_sync(triage_agent, "Where is order A123?")
+print(result.final_output)
+```
+
+#### Break: Force Three Failure Modes
+
+1. Make the tool vague: rename `lookup_order` to `lookup` and remove the docstring.
+2. Force a loop: set model/tool instructions that require a tool call even after the answer is known.
+3. Misuse handoff: hand off billing questions to `billing_agent` even when the triage agent only needs one billing fact.
+
+#### Measure: Capture Concrete Signals
+
+Record:
+
+- Number of model calls per user turn.
+- Number of tool calls and handoffs.
+- Whether `final_output` arrived before `max_turns`.
+- Whether the correct tool/handoff was selected.
+- Whether tool arguments matched schema and business meaning.
+- Whether trace/run items explain the failure without guessing.
+
+#### Explain: Why It Broke
+
+Vague tools break because the model chooses from names/descriptions/schemas, not from your hidden intent.
+
+Loops happen because the runner faithfully continues the agent loop until final output or `max_turns`; if instructions/tool behavior never create a final-answer path, the SDK cannot invent one safely.
+
+Handoff mistakes happen because handoffs transfer conversation ownership. If you only need a specialist computation, use an agent-as-tool and let the manager synthesize the response.
+
+---
+
+### 8. Active Recall (Spaced Repetition)
+
+**Q1 [Beginner]:** What does `Runner` do in the OpenAI Agents SDK?
+
+> **A:** It executes the agent loop: calls the model, runs tools, handles handoffs, repeats until final output, and returns a result.
+
+**Q2 [Beginner]:** What is the difference between an agent-as-tool and a handoff?
+
+> **A:** Agent-as-tool lets a manager agent call a specialist and keep control. A handoff transfers control so the specialist becomes the current agent.
+
+**Q3 [Intermediate]:** Why are function tool names, docstrings, and argument descriptions production-critical?
+
+> **A:** They become the action schema the model uses to decide whether and how to call the tool. Vague schemas cause wrong tools and wrong arguments.
+
+**Q4 [Pro]:** What should you inspect when a run hits `MaxTurnsExceeded`?
+
+> **A:** Inspect `new_items`/trace spans: model outputs, tool calls, tool outputs, handoffs, `tool_choice`, `tool_use_behavior`, and whether any step gave the model enough information to produce final output.
+
+---
+
+### 9. Practice
+
+#### Mini-Exercise: Pick the Coordination Pattern
+
+A user asks: "Can you translate this paragraph into Spanish and French, then summarize both translations in English?"
+
+**Suggested answer:** Use a manager agent with Spanish and French agents as tools. The manager should call both specialists, receive bounded translations, and synthesize the final English summary. A handoff would be awkward because no single specialist should own the whole conversation.
+
+#### Capstone-Style System Design Question
+
+Design an OpenAI Agents SDK workflow for an ecommerce assistant that can answer order questions, handle billing disputes, and process refund requests.
+
+**Answer outline:**
+
+- Start with a `triage_agent` that owns the user conversation.
+- Add `lookup_order(order_id)` and `lookup_invoice(invoice_id)` as function tools with precise schemas.
+- Expose a billing specialist as `billing_agent.as_tool(...)` if billing advice should be folded into the triage response.
+- Use `handoff(refund_agent, input_type=RefundReason)` when the refund specialist should own the next part of the conversation.
+- Add handoff descriptions so the model can choose correctly.
+- Use trace metadata: `workflow_name="ecommerce_support"`, customer/session group ID, and redaction settings.
+- Add eval cases for: order lookup, missing order ID, invoice dispute, refund request, wrong-tool prevention, and max-turn loop prevention.
+
+---
+
+### 10. Production Reality Check (Mandatory Ending)
+
+**If this fails in prod, what's the first thing we inspect?**
+
+Inspect the run trace/run items in chronological order: current agent, model output, tool calls, tool arguments, tool results, handoff calls, and final output decision.
+
+Why: most SDK failures are loop failures, tool-contract failures, or delegation failures. The trace tells you whether the model chose the wrong capability, received a bad tool result, handed off to the wrong agent, or simply never got a clean final-answer path.
+
+---
+
+### 11. Curiosity Bridge (Mandatory Ending)
+
+This unlocks the basic OpenAI Agents SDK loop, but it also exposes the next risk: what prevents bad inputs, unsafe outputs, or messy conversation history from reaching users?
+
+That leads into **guardrails and sessions**: input/output checks, session-backed memory, conversation-state choices, and safer multi-turn execution.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit check:** You're done with 15.2.a when you can build a small SDK workflow with one triage agent, one function tool, one specialist agent-as-tool, one handoff, and explain how `Runner` reaches `final_output` or fails with a traceable reason.
+
+---
+
+**Carry-Forward Review (interleaved recall from 15.1.d):**
+
+*Q: What is the framework-selection difference between ADK and the OpenAI Agents SDK at a high level?*
+
+> **A:** ADK leans toward an opinionated Google-oriented agent product runtime with sessions/evals/deployment patterns. The OpenAI Agents SDK is a lightweight Python-first runtime around the Responses API with a small primitive set: agents, tools, handoffs, guardrails, sessions, and tracing.
+
+---
+
+## Subtopic 15.2.b: Guardrails and Sessions
+
+### ✅ Add to Knowledge Base
+
+### 0. Reading Path + Level Tags
+
+- **Beginner:** Read sections 1-2 and Active Recall. Your goal is to explain guardrails and sessions in plain English.
+- **Intermediate:** Add sections 3-6 and the Hands-On Lab. Your goal is to design safe multi-turn behavior.
+- **Pro:** Do the full lab and capstone. Your goal is to debug guardrail tripwires, approval pauses, history bloat, and session persistence choices.
+
+---
+
+### 1. Pre-Question Hook + The Intuition
+
+**Pause:** before reading, imagine a customer asks your support agent: "Delete my account, refund my card, and forget everything I said before." Which parts should be blocked, checked, remembered, forgotten, or sent for approval?
+
+[Beginner]
+
+The OpenAI Agents SDK gives you two major safety and continuity tools:
+
+- **Guardrail**: a programmable check that inspects input, output, or function-tool calls and can stop, reject, replace, or flag unsafe behavior.
+- **Session**: SDK-managed conversation memory that stores prior input/output/tool items so future runs can continue the same conversation without manually calling `result.to_input_list()`.
+
+Think of guardrails as gates and sessions as memory.
+
+Guardrails answer: "Should this input, output, or tool call be allowed?"
+
+Sessions answer: "What should the agent remember from previous turns?"
+
+The important engineering point: these are different layers. A session can accidentally preserve bad or sensitive history. A guardrail can block an unsafe request but still needs access to the right context. Good production design uses both: sessions for continuity, guardrails for boundaries, and approvals for risky actions.
+
+**Analogy:** A bank branch has customer records and security checks. The records help staff remember your account history. The security checks decide whether a wire transfer, password reset, or account closure should proceed. Good memory without security is dangerous; strong security without memory is frustrating.
+
+Where the analogy breaks: agent memory is not human memory. It is a stored list of model input items, tool calls, outputs, and generated items. You must decide what gets stored, retrieved, filtered, compacted, encrypted, or deleted.
+
+---
+
+### 2. Visual Diagram (Mermaid)
+
+```mermaid
+flowchart TD
+    U[User turn] --> S{Session used?}
+    S -->|yes| H[Load session history]
+    S -->|no| N[Use current input only]
+    H --> M[Merge history + new input]
+    N --> M
+
+    M --> IG{Input guardrail}
+    IG -->|tripwire| IX[Stop with InputGuardrailTripwireTriggered]
+    IG -->|pass| R[Runner agent loop]
+
+    R --> TC{Tool call?}
+    TC -->|function tool| TG[Tool input guardrail / approval / execution / output guardrail]
+    TC -->|no| FO[Candidate final output]
+    TG --> R
+
+    FO --> OG{Output guardrail}
+    OG -->|tripwire| OX[Stop with OutputGuardrailTripwireTriggered]
+    OG -->|pass| RES[RunResult.final_output]
+    RES --> STORE[Store new run items in session]
+```
+
+---
+
+### 3. Real-World Industry Scenarios
+
+#### Scenario A: Customer Support Agent With Unsafe Requests
+
+**Context:** A support assistant answers account questions, looks up orders, updates shipping address, and can initiate cancellations. The company wants multi-turn continuity but must block off-topic abuse, redact sensitive data, and require approval for destructive actions.
+
+**Design:**
+
+- Use an **input guardrail** to detect off-topic, abusive, or policy-disallowed requests before expensive model/tool work.
+- Use **tool guardrails** around function tools that touch account data.
+- Use `needs_approval=True` or a dynamic approval function for cancellations, refunds, account closure, and emails.
+- Use a `SQLiteSession` locally and a production session backend such as `SQLAlchemySession`, `RedisSession`, `MongoDBSession`, `DaprSession`, or encrypted wrapper depending on infrastructure.
+
+**Constraints:**
+
+- **Latency:** Blocking input guardrails add upfront latency, but prevent wasted tokens and side effects. Parallel guardrails reduce latency, but the agent may start spending tokens before the guardrail trips.
+- **Cost:** Sessions can replay long histories. Use `SessionSettings(limit=N)`, `session_input_callback`, or compaction when conversations grow.
+- **Reliability:** Approvals must resume with the same `RunState` and same session/backing store, or the agent may lose context.
+- **Security/privacy:** Session history may include sensitive tool outputs. Use redaction, encryption, TTL, and trace settings such as sensitive-data controls.
+
+**What good looks like in production:** Unsafe requests trip early; destructive tools pause for approval; rejected tools return safe model-visible messages; session history is scoped per user/thread; long histories are pruned or compacted; traces show which guardrail or approval decision fired.
+
+#### Scenario B: Regulated Advice Assistant
+
+**Context:** A financial guidance assistant explains account options but must not provide personalized investment advice unless a licensed workflow is active.
+
+**Design:**
+
+- Input guardrail detects when the user asks for regulated advice.
+- Output guardrail checks final answers for prohibited claims or missing disclaimers.
+- Session tracks prior user goals and preferences, but sensitive attributes are minimized.
+- `call_model_input_filter` redacts or drops old details right before model calls.
+
+**Constraints:**
+
+- **Latency:** Output guardrails run after final output, so the user waits longer on every answer that needs compliance checking.
+- **Cost:** Guardrails implemented with separate model calls add cost. Use deterministic checks for simple policies and smaller/cheaper models for classification when possible.
+- **Reliability:** A guardrail that is too broad blocks helpful answers; too narrow lets unsafe advice through.
+- **Privacy:** Compliance traces must avoid storing raw account details unless required and protected.
+
+**What good looks like in production:** Guardrail outputs include `output_info` explaining what was checked, tripwire rates are monitored, false positives are reviewed, and final answers can be traced back to policy/tool context.
+
+#### Scenario C: Long-Running Approval Workflow
+
+**Context:** An internal operations agent can run a shell tool, call an MCP deployment tool, and open tickets. Some actions require human approval and may sit for hours.
+
+**Design:**
+
+- Tools declare `needs_approval` or MCP `require_approval`.
+- When the run pauses, inspect `result.interruptions`, convert to `RunState` with `result.to_state()`, serialize it, and resume after approval or rejection.
+- Pass the same session instance or another instance pointed at the same store when resuming.
+
+**Constraints:**
+
+- **Latency:** Approval latency may be minutes or days; the important property is resumability, not instant response.
+- **Cost:** Avoid re-running long histories unnecessarily after approval. Use session limits or compaction.
+- **Reliability:** Store agent/tool definition version next to serialized state so old approvals can resume under compatible code.
+- **Security/privacy:** Serialized `RunState` can include app context, approvals, tool input, trace metadata, and server-managed conversation settings. Treat it as sensitive data.
+
+**What good looks like in production:** Pending approvals survive process restarts, decisions are auditable, rejected actions give the model a safe explanation, and resumed runs continue in the correct conversation/session.
+
+---
+
+### 4. System View (Think Like a Systems Engineer)
+
+[Intermediate]
+
+#### Inputs -> Transformations -> Outputs
+
+**Inputs:**
+
+- User input and prior session history.
+- Guardrail functions: input, output, and tool-level checks.
+- Tool approval policies and approval decisions.
+- Session backend and session ID.
+- `RunConfig`: session settings, callbacks, guardrails, tracing, tool execution behavior.
+
+**Transformations:**
+
+1. Retrieve session history, if session-backed memory is used.
+2. Merge history and current input, optionally through `session_input_callback`.
+3. Run input guardrails in parallel or blocking mode.
+4. Execute the agent loop: model calls, tool calls, handoffs, and final output.
+5. For function tools, run tool guardrails and approvals around tool execution.
+6. Run output guardrails on final output.
+7. Store new run items back into the session.
+
+**Outputs:**
+
+- Final answer or structured output.
+- Guardrail result/tripwire exception.
+- Pending approval interruptions and resumable `RunState`.
+- Updated session history.
+- Trace spans and run items for debugging.
+
+#### Observability: What We Log, Trace, and Measure
+
+- Guardrail name, type, execution mode, latency, result, `output_info`, and tripwire status.
+- Exception type: `InputGuardrailTripwireTriggered`, `OutputGuardrailTripwireTriggered`, tool guardrail rejection, or approval rejection.
+- Session ID, backend type, item count retrieved, item count stored, and history limit.
+- Whether `session_input_callback` or `call_model_input_filter` changed model input.
+- Approval interruption details: tool name, arguments, agent name, approval/rejection outcome.
+- Session store errors, duplicate items, stale history, compaction latency, and resume success rate.
+
+#### Failure Points: Where It Breaks and How It Shows Up
+
+- **Guardrail scope mismatch:** input guardrails only run for the first agent; output guardrails only run for the final-output agent; tool guardrails apply to function tools, not every hosted/built-in/handoff surface.
+- **Parallel guardrail surprise:** a parallel input guardrail may trip after tokens were already spent or after early side effects began.
+- **Session/history bloat:** the agent becomes slower, more expensive, or confused by stale history.
+- **Mixed persistence strategies:** sessions plus `conversation_id`/`previous_response_id` duplicate or conflict with state.
+- **Unsafe serialized state:** `RunState` or sessions contain secrets because app context or tool outputs were not minimized.
+
+---
+
+### 5. System Design Flavor
+
+[Intermediate]
+
+#### Key Components / Interfaces
+
+**Input guardrail:**
+
+```python
+from pydantic import BaseModel
+from agents import Agent, GuardrailFunctionOutput, Runner, input_guardrail
+
+class SafetyCheck(BaseModel):
+    blocked: bool
+    reason: str
+
+safety_agent = Agent(
+    name="Safety check",
+    instructions="Decide whether the user request is unsafe or off-topic.",
+    output_type=SafetyCheck,
+)
+
+@input_guardrail(name="support_input_policy", run_in_parallel=False)
+async def support_input_policy(ctx, agent, input):
+    result = await Runner.run(safety_agent, input, context=ctx.context)
+    return GuardrailFunctionOutput(
+        output_info=result.final_output,
+        tripwire_triggered=result.final_output.blocked,
+    )
+```
+
+**Session-backed multi-turn conversation:**
+
+```python
+from agents import Agent, Runner, SQLiteSession
+
+agent = Agent(name="Assistant", instructions="Reply concisely.")
+session = SQLiteSession("support_thread_123", "conversations.db")
+
+first = await Runner.run(agent, "Where is the Golden Gate Bridge?", session=session)
+second = await Runner.run(agent, "What state is it in?", session=session)
+```
+
+**Approval pause/resume:**
+
+```python
+from agents import Agent, Runner, function_tool
+
+@function_tool(needs_approval=True)
+async def cancel_order(order_id: str) -> str:
+    return f"Cancelled order {order_id}."
+
+agent = Agent(name="Support agent", tools=[cancel_order])
+result = await Runner.run(agent, "Cancel order A123", session=session)
+
+if result.interruptions:
+    state = result.to_state()
+    for interruption in result.interruptions:
+        state.approve(interruption)
+    result = await Runner.run(agent, state, session=session)
+```
+
+#### 3 Important Tradeoffs
+
+| Tradeoff | Choose This When... | Watch Out For... |
+|---|---|---|
+| Blocking vs parallel input guardrails | Blocking when unsafe inputs must not spend tokens or trigger tools. Parallel when latency matters and early work is acceptable. | Parallel guardrails can trip after work has already started. |
+| Client-managed sessions vs OpenAI server-managed state | Sessions when you want your app/storage to own history. `conversation_id` or `previous_response_id` when OpenAI-managed continuation is simpler. | Do not combine session persistence with server-managed conversation settings in the same run. |
+| Full history vs limited/filtered/compacted history | Full history for short conversations. Limits, filters, or compaction for long conversations. | Aggressive pruning can drop facts the user expects the agent to remember. |
+
+In layman's terms: guardrails decide what is allowed; sessions decide what is remembered; approvals decide which risky actions must wait for a human or policy decision.
+
+#### Scaling Consideration at 10x Traffic/Data
+
+At 10x traffic, guardrails become their own production subsystem. Track tripwire rates, false positives, false negatives, latency, and cost separately from the main agent.
+
+At 10x conversation length, session strategy becomes a quality and cost problem. You need history limits, summarization/compaction, session TTL, encryption, and tools to inspect or clear bad session history.
+
+---
+
+### 6. Common Mistakes + Debugging
+
+#### Mistake 1: Assuming Input Guardrails Run on Every Agent After Handoff
+
+**Symptom:** A request passes initial triage, then a specialist agent produces behavior that you expected an input guardrail to catch.
+
+**Likely cause:** Agent-level input guardrails run only for the first agent in the chain.
+
+**First debugging step:** Inspect the trace for which agent started the run and which guardrail spans executed. Put checks at the correct boundary: initial input guardrail, handoff filter, specialist instructions, tool guardrails, or output guardrail.
+
+#### Mistake 2: Mixing Session Memory With Server-Managed Conversation State
+
+**Symptom:** The model repeats context, sees duplicated history, or behaves as if older messages were sent twice.
+
+**Likely cause:** The app combines `session` with `conversation_id`, `previous_response_id`, or `auto_previous_response_id`.
+
+**First debugging step:** Choose one persistence strategy per conversation and log it. If using SDK sessions, pass the same session/backing store. If using OpenAI server-managed state, pass only the new turn plus the correct conversation/response ID.
+
+#### Mistake 3: Treating `RunState` as Harmless Metadata
+
+**Symptom:** Pending approvals are stored in a queue or database and later discovered to contain secrets, raw tool inputs, or app context.
+
+**Likely cause:** Serialized `RunState` includes more than approval IDs; it can include context, tool input, nested resumptions, trace metadata, usage, and conversation settings.
+
+**First debugging step:** Inspect serialized `RunState` in a safe environment, define a serializer/deserializer policy, avoid putting secrets in run context, and version stored pending tasks.
+
+---
+
+### 7. Hands-On Lab: Build -> Break -> Measure -> Explain
+
+[Pro]
+
+#### Build: Guarded Multi-Turn Support Agent
+
+```python
+from pydantic import BaseModel
+from agents import (
+    Agent,
+    GuardrailFunctionOutput,
+    Runner,
+    SQLiteSession,
+    function_tool,
+    input_guardrail,
+)
+
+class InputPolicy(BaseModel):
+    blocked: bool
+    reason: str
+
+policy_agent = Agent(
+    name="Input policy checker",
+    instructions="Block requests for destructive account actions unless they ask for guidance only.",
+    output_type=InputPolicy,
+)
+
+@input_guardrail(name="destructive_intent_check", run_in_parallel=False)
+async def destructive_intent_check(ctx, agent, input):
+    result = await Runner.run(policy_agent, input, context=ctx.context)
+    return GuardrailFunctionOutput(
+        output_info=result.final_output,
+        tripwire_triggered=result.final_output.blocked,
+    )
+
+@function_tool(needs_approval=True)
+async def close_account(account_id: str) -> str:
+    """Close a customer account after approval."""
+    return f"Account {account_id} closed."
+
+support_agent = Agent(
+    name="Support agent",
+    instructions="Help users safely. Use close_account only after approval.",
+    tools=[close_account],
+    input_guardrails=[destructive_intent_check],
+)
+
+session = SQLiteSession("support_thread_001", "support_history.db")
+```
+
+Run two turns:
+
+```python
+first = await Runner.run(support_agent, "My account ID is acct_123.", session=session)
+second = await Runner.run(support_agent, "Close it now.", session=session)
+```
+
+#### Break: Force Three Failure Modes
+
+1. Set `run_in_parallel=True` and watch whether the agent begins work before the guardrail finishes.
+2. Remove the session and ask a follow-up that depends on prior context.
+3. Trigger `close_account`, leave `result.interruptions` unresolved, then try to resume without the same session/backing store.
+
+#### Measure: Capture Concrete Signals
+
+- Guardrail latency and whether the main agent started before guardrail completion.
+- Tripwire rate and `output_info.reason` quality.
+- Session item count before/after each turn.
+- Whether follow-up questions work with and without session.
+- Whether approval interruptions appear with tool name, arguments, and agent name.
+- Whether resumed runs preserve conversation history and pending approvals.
+
+#### Explain: Why It Broke
+
+Parallel guardrails optimize latency but allow work to begin before safety completes. That is fine for low-risk text-only flows and risky for side-effecting tools.
+
+Without a session, the SDK treats the next run as a fresh call unless you manually pass prior input items or use server-managed state.
+
+Resuming approval flows requires the saved `RunState` and compatible session/history. Otherwise the run may continue without the context that caused the pending tool call.
+
+---
+
+### 8. Active Recall (Spaced Repetition)
+
+**Q1 [Beginner]:** What is the difference between a guardrail and a session?
+
+> **A:** A guardrail checks whether input/output/tool behavior is allowed. A session stores conversation history so future runs remember prior turns.
+
+**Q2 [Intermediate]:** When should you use blocking input guardrails instead of parallel input guardrails?
+
+> **A:** Use blocking guardrails when unsafe input must not consume tokens or trigger tool side effects before the check completes.
+
+**Q3 [Intermediate]:** Why should you avoid mixing SDK sessions with `conversation_id` or `previous_response_id` in the same run?
+
+> **A:** They are different persistence strategies. Combining them can duplicate history or create confusing state because both layers try to carry conversation context.
+
+**Q4 [Pro]:** What does a pending approval resume require?
+
+> **A:** The original top-level agent, serialized or in-memory `RunState` with approval/rejection decisions, and the same session instance or another session pointing at the same backing store if session memory is used.
+
+---
+
+### 9. Practice
+
+#### Mini-Exercise: Place the Guardrail
+
+An ecommerce assistant has a `refund_payment` function tool. You need to block refund amounts over $500 unless a human approves. Where should the check live?
+
+**Suggested answer:** Put deterministic amount validation as a function-tool input guardrail or inside the tool itself. Add `needs_approval` for refunds above the policy threshold. Do not rely only on an agent-level output guardrail, because by then the tool may already have executed.
+
+#### Capstone-Style System Design Question
+
+Design a safe multi-turn support assistant for a healthcare portal. It can answer benefit questions, remember conversation context, update contact preferences, and escalate account deletion requests.
+
+**Answer outline:**
+
+- Use sessions with a production backend and per-user/thread session IDs.
+- Use encrypted sessions or app-level encryption/TTL if sensitive data is stored.
+- Use input guardrails for off-topic, abusive, or unsafe requests.
+- Use tool guardrails for contact update tools and PHI-minimizing tool outputs.
+- Use `needs_approval` and `RunState` for account deletion or irreversible actions.
+- Use `SessionSettings(limit=N)` and `session_input_callback` to limit stale history.
+- Do not combine SDK sessions with OpenAI server-managed conversation state unless intentionally migrating.
+- Trace guardrail tripwires, approval decisions, history size, and session-store errors.
+
+---
+
+### 10. Production Reality Check (Mandatory Ending)
+
+**If this fails in prod, what's the first thing we inspect?**
+
+Inspect the trace and session state together: which guardrails ran, whether a tripwire fired, what session items were loaded, what tool/approval state existed, and what new items were stored after the run.
+
+Why: guardrail/session failures often look like model failures. The real issue is usually a boundary problem: the wrong guardrail ran, history was missing/stale/duplicated, approval state was not resumed, or sensitive context was stored and replayed.
+
+---
+
+### 11. Curiosity Bridge (Mandatory Ending)
+
+This works well for safe text-agent loops, but the next production jump is tool surfaces beyond local Python functions.
+
+That leads into **MCP integration and sandbox agents**: connecting external tool servers, isolating workspace actions, and deciding when an agent needs a real execution environment.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit check:** You're done with 15.2.b when you can design a multi-turn SDK agent with session memory, input/output/tool guardrails, approval pause/resume, and a clear persistence strategy without mixing incompatible history mechanisms.
+
+---
+
+**Carry-Forward Review (interleaved recall from 15.2.a):**
+
+*Q: In the OpenAI Agents SDK, what is the difference between a specialist agent used as a tool and a specialist reached by handoff?*
+
+> **A:** An agent-as-tool returns a bounded specialist result to the manager agent, which keeps conversation control. A handoff transfers control so the specialist becomes the current agent and owns the next part of the conversation.
+
+---
+
+## Subtopic 15.2.c: MCP Integration and Sandbox Agents
+
+### ✅ Add to Knowledge Base
+
+---
+
+### 0. Reading Path + Level Tags
+
+**Beginner:** Read sections 1-2, the decision table in section 5, and Active Recall.
+
+**Intermediate:** Add sections 3-7 so you understand how MCP and sandbox execution behave in real systems.
+
+**Pro:** Do the Hands-On Lab, the capstone prompt, and the production debugging checklist. This is where the topic becomes design skill instead of vocabulary.
+
+---
+
+### 1. Pre-Question Hook + The Intuition (Plain English)
+
+**Pause:** before reading, if an agent needed to inspect a private repo, call a calendar API, edit files, and run tests, which pieces should run in your app, which should run near the model, and which should run in an isolated workspace?
+
+**Model Context Protocol (MCP)** is a standard way for tools, resources, and prompts to be exposed to an AI system through a server interface. In the OpenAI Agents SDK, MCP gives an agent access to tool servers without rewriting every tool as a Python function.
+
+**Sandbox agents** are Agents SDK agents paired with an execution workspace. A `SandboxAgent` is still an `Agent`, but it gets a live filesystem, shell/filesystem capabilities, a `Manifest` that defines what should exist in a fresh workspace, and a `SandboxRunConfig` that decides where and how that workspace runs.
+
+Mental model: MCP is the agent's adapter plug; sandbox agents are the agent's temporary workbench. MCP connects the agent to external tool systems. A sandbox gives the agent a bounded place to manipulate files and run commands.
+
+Where the analogy breaks: real MCP and sandbox systems are not passive plugs and workbenches. They have auth, lifecycle, state, approval policy, tracing, failure modes, and cost/latency implications.
+
+**HostedMCPTool** is the SDK tool type that lets the OpenAI Responses API call a publicly reachable or connector-backed MCP server on the model's behalf.
+
+**MCPServerStreamableHttp** is the SDK local-runtime client for MCP servers reachable over the newer Streamable HTTP transport.
+
+**MCPServerStdio** is the SDK local-runtime client that launches an MCP server as a local subprocess and communicates through stdin/stdout.
+
+**SandboxAgent** is an agent subclass/configuration that keeps the normal Agents SDK surface while adding sandbox-specific defaults such as a workspace manifest, capabilities, and run identity.
+
+**Manifest** is the fresh-workspace contract: files, directories, repos, mounts, environment, users, groups, and path grants that should exist when a fresh sandbox starts.
+
+**SandboxRunConfig** is the per-run configuration that decides whether the run creates, injects, resumes, or snapshots a sandbox session.
+
+---
+
+### 2. Visual Diagram (Mermaid)
+
+```mermaid
+flowchart TD
+    user[User request] --> runner[Runner]
+    runner --> agent[Agent or SandboxAgent]
+
+    agent --> localTools[Python function tools]
+    agent --> hostedMCP[HostedMCPTool in tools list]
+    agent --> localMCP[Local MCP servers in mcp_servers]
+    agent --> sandbox[Sandbox session]
+
+    hostedMCP --> responses[OpenAI Responses API]
+    responses --> remoteMCP[Public or connector-backed MCP server]
+
+    localMCP --> stdio[MCPServerStdio]
+    localMCP --> http[MCPServerStreamableHttp]
+    localMCP --> sse[MCPServerSse legacy]
+    stdio --> mcpTools[MCP tools/resources/prompts]
+    http --> mcpTools
+    sse --> mcpTools
+
+    sandbox --> manifest[Manifest: repo, docs, mounts, env]
+    sandbox --> caps[Capabilities: shell, filesystem, skills, memory]
+    sandbox --> files[Workspace files and artifacts]
+
+    runner --> trace[Tracing, approvals, RunState, results]
+```
+
+Key distinction: hosted MCP is configured as a hosted tool because OpenAI's infrastructure performs the tool round trip. Local MCP servers are configured in `mcp_servers` because your Python process connects, lists tools, calls tools, and cleans up connections.
+
+---
+
+### 3. Real-World Industry Scenarios
+
+#### Scenario A: Enterprise Knowledge Assistant with Connector-Backed MCP [Intermediate]
+
+Product context: a workplace assistant answers questions from Google Calendar, internal wiki pages, ticket systems, and project docs. Some tools are read-only, while others can create tickets or update calendar events.
+
+How MCP affects the system: instead of baking every integration into the agent process, each integration can be exposed through an MCP server or connector-backed hosted MCP tool. The agent sees a tool surface; the integration team owns auth, API mapping, schemas, and rate limits behind the server.
+
+Constraints:
+- Latency: hosted MCP avoids an extra Python callback for every remote MCP tool call, but remote connector latency still matters. Local MCP adds network hops through your app runtime.
+- Cost: large tool surfaces inflate tool-schema tokens unless you filter tools or defer loading through hosted tool search.
+- Reliability: the assistant can fail because the model chose the wrong tool, the MCP server failed `list_tools()`, auth expired, the remote API rate-limited, or the server returned ambiguous tool output.
+- Security/privacy: connector tokens, tenant IDs, and user scopes must be enforced outside the model. The model should never choose its own tenant or permission boundary.
+
+What good looks like in production: each MCP server exposes a small, well-described tool set; sensitive tools require approval; tenant metadata is injected by trusted code through `_meta` or connector auth; traces show `list_tools`, tool calls, approval decisions, and server failures.
+
+#### Scenario B: Coding or Document Agent with a Sandbox Workspace [Intermediate]
+
+Product context: a support engineering assistant receives a bug report, opens a repository, edits files, runs a targeted test, and writes a patch summary. Another variant receives a document bundle, extracts facts, and writes completed output files.
+
+How sandbox agents affect the system: the agent needs a living filesystem, not just chat memory. The `Manifest` stages a repo or document packet; capabilities expose shell and filesystem tools; the sandbox session contains file changes and command outputs.
+
+Constraints:
+- Latency: creating and materializing a workspace can dominate the first run, especially with large repos or mounted storage.
+- Cost: long file inspections and test logs consume tokens if they are returned to the model too verbosely.
+- Reliability: commands can hang, tests can be flaky, repo paths may be wrong, or snapshots may restore stale artifacts.
+- Security/privacy: Unix-local is convenient for development, but production generally needs stronger isolation, constrained mounts, restricted users, network policy, and audit logs.
+
+What good looks like in production: the sandbox starts from a narrow manifest, runs under a least-privilege user, writes outputs to a known directory, persists snapshots intentionally, and reports the exact files/commands used for verification.
+
+#### Scenario C: Multi-Agent Review System with Shared or Separate Sandboxes [Pro]
+
+Product context: a release-review assistant coordinates specialist agents: one reviews pricing docs, one inspects code changes, one checks compliance language, and one writes the final report.
+
+How composition changes design: if specialists only inspect the same workspace, they can reuse a live sandbox session with different `run_as` users and permissions. If specialists can mutate files or run untrusted commands, each specialist should get its own sandbox boundary through its own `RunConfig`.
+
+Constraints:
+- Latency: separate sandboxes improve isolation but repeat workspace hydration.
+- Reliability: shared workspaces risk accidental interference; separate workspaces risk divergent views of the source material.
+- Security/privacy: read-only reviewers should not have write permissions just because the coordinator does.
+- Observability: nested agent-as-tool runs need separate tracing and approval visibility so the outer run can resume correctly.
+
+What good looks like in production: the design explicitly says which agents share state, which agents isolate state, which actions require approval, and how final artifacts are merged.
+
+---
+
+### 4. System View (Think Like a Systems Engineer)
+
+#### MCP Integration Flow [Intermediate]
+
+Inputs:
+- User request
+- Agent instructions
+- Local Python tools
+- Hosted MCP tool configs or local MCP server objects
+- Run context such as tenant ID, user ID, auth scope, or trace ID
+
+Transformations:
+1. The runner prepares the agent and available tool surfaces.
+2. For local MCP, the SDK connects to servers and calls `list_tools()`.
+3. Tool filtering and schema conversion decide what the model sees.
+4. The model chooses a tool.
+5. The SDK or OpenAI-hosted runtime calls the MCP server.
+6. Tool output returns as text, structured content, images, or an error message.
+7. The runner appends the tool result and continues the agent loop.
+
+Outputs:
+- Final answer
+- Tool call items
+- MCP traces
+- Approval interruptions if sensitive MCP tools require approval
+- Server errors or model-visible tool failure messages
+
+Observability:
+- Log server connection success/failure, tool-list latency, tool names exposed, tool call latency, approval decisions, auth/tenant metadata presence, and error type.
+- Trace `list_tools()` separately from `call_tool()`. A tool-call failure means something different from a discovery failure.
+- Track tool-schema size and loaded tool count because huge tool surfaces increase cost and decision noise.
+
+Failure points:
+- Tool discovery fails because the MCP process did not start, URL is wrong, auth headers are missing, or network policy blocks the server.
+- The model picks the wrong MCP tool because descriptions are weak or too many tools are visible.
+- A sensitive mutation runs without approval because the approval policy was configured too broadly.
+- Structured content is duplicated if both `content` and `structured_content` are sent and `use_structured_content` is set incorrectly.
+
+#### Sandbox Agent Flow [Intermediate]
+
+Inputs:
+- `SandboxAgent` definition
+- `Manifest` or run-level manifest override
+- `SandboxRunConfig` with client/session/session_state/snapshot
+- Capabilities such as shell, filesystem, skills, memory, compaction
+- User prompt
+
+Transformations:
+1. The runner resolves the live sandbox session.
+2. For fresh sessions, it materializes manifest entries: files, dirs, local dirs, Git repos, mounts, environment, users, groups.
+3. Capabilities process the manifest and attach sandbox-native tools.
+4. The final instructions are prepared: sandbox base instructions, agent instructions, capability instructions, mount policy text, and workspace tree.
+5. The normal agent loop runs, but tool calls can now inspect/edit files or run commands inside the sandbox session.
+6. The runner saves state, snapshots workspace contents, and returns final output.
+
+Outputs:
+- Final answer
+- Workspace changes
+- Generated artifacts
+- Command/test output
+- Snapshot or session-state payload for resume
+- Trace with sandbox capability tool calls
+
+Observability:
+- Log sandbox client type, workspace materialization time, manifest entry count/size, command duration, exit codes, changed files, snapshot persistence status, and resumed state source.
+- Store enough metadata to answer: Which workspace did the model actually see? Which user executed commands? Which snapshot/session state was used?
+
+Failure points:
+- The manifest staged the wrong path or too much data.
+- A local source path is blocked by the manifest trust boundary or missing `extra_path_grants`.
+- The sandbox client does not support the capability or mount strategy you configured.
+- A resumed sandbox state wins over a manifest override, so the expected fresh files are not present.
+- The agent edits the wrong path because `apply_patch` paths are workspace-root-relative.
+
+---
+
+### 5. System Design Flavor (Practical and Concise)
+
+#### Key Components and Interfaces
+
+| Need | SDK surface | Production meaning |
+|---|---|---|
+| Public or connector-backed MCP tool execution near the model | `HostedMCPTool(...)` inside `Agent.tools` | OpenAI Responses API performs MCP tool calls; your app configures server label, URL/connector, auth, approval. |
+| MCP server controlled by your runtime | `MCPServerStreamableHttp`, `MCPServerStdio`, `MCPServerSse` in `Agent.mcp_servers` | Your Python process owns connection, discovery, tool calls, failures, cleanup. |
+| Multiple MCP servers with partial failure handling | `MCPServerManager` | Connect many servers, drop failed ones, retry/reconnect, expose active servers. |
+| Narrow MCP tool surface | `tool_filter`, `create_static_tool_filter`, dynamic filter callbacks | Hide tools the agent should not see for this run/user/tenant. |
+| Workspace execution | `SandboxAgent` + `SandboxRunConfig` | Agent runs with a live filesystem and sandbox-native capabilities. |
+| Fresh workspace contents | `Manifest` | Defines repo/docs/files/mounts/env/users for new sandbox sessions. |
+| Runtime sandbox location | `UnixLocalSandboxClient`, `DockerSandboxClient`, hosted sandbox clients | Choose local speed, container isolation, or provider-managed execution. |
+| Resume workspace work | `RunState`, `SandboxRunConfig.session_state`, `SnapshotSpec` | Continue a previous sandbox session or seed a new one from saved workspace contents. |
+
+#### Tradeoff 1: Hosted MCP vs Local MCP [Intermediate]
+
+Choose hosted MCP when the MCP server is publicly reachable, supported by Responses API hosted MCP, or connector-backed, and you want fewer round trips through your app runtime.
+
+Choose local MCP when the server is private, local, development-only, needs your network, uses stdio, or must receive trusted runtime context from your app.
+
+Plain-English version: hosted MCP is cleaner when OpenAI can safely reach the tool server. Local MCP is better when the tool lives inside your house and should stay there.
+
+#### Tradeoff 2: Tool Filtering vs Tool Search [Intermediate]
+
+Use filtering when the app knows a tool should never be visible for this user/run.
+
+Use hosted tool search when the tool set is valid but too large to load upfront and the model should search/load only the relevant subset.
+
+Plain-English version: filtering is permission and relevance control. Tool search is token and discovery control.
+
+#### Tradeoff 3: Hosted Shell/Code Interpreter vs SandboxAgent [Intermediate]
+
+Use hosted shell or code interpreter for one-off computation, lightweight scripts, or generated analysis.
+
+Use `SandboxAgent` when the workspace boundary itself matters: repos, multi-file edits, document packets, snapshots, user permissions, capabilities, or repeated runs over the same artifact set.
+
+Plain-English version: a hosted shell is a tool. A sandbox agent is a work environment.
+
+#### Scaling Consideration: 10x Traffic/Data [Pro]
+
+At 10x traffic, MCP and sandbox bottlenecks move away from model output quality and toward infrastructure pressure:
+- MCP servers need connection pooling, tool-list caching, rate-limit handling, auth refresh, and partial-failure behavior.
+- Sandbox systems need workspace hydration limits, archive extraction limits, snapshot storage lifecycle, job queues, timeout controls, and provider capacity planning.
+- Tool traces become operational data: p95 `list_tools`, p95 command duration, tool error rate, approval queue time, snapshot restore/persist time, and token cost per workspace task.
+
+---
+
+### 6. Common Mistakes + Debugging
+
+#### Mistake 1: Exposing Every MCP Tool to Every Agent
+
+Symptom: the model picks strange tools, tool-call cost rises, tool selection becomes inconsistent, or tool names collide across servers.
+
+Likely cause: the MCP server publishes a broad tool set and the agent receives all of it without `tool_filter`, namespacing, or `include_server_in_tool_names`.
+
+First debugging step: inspect the trace/tool list for the actual tool names and descriptions exposed to the model. Then add static or dynamic filtering and enable server-prefixed names when multiple servers can publish overlapping names.
+
+#### Mistake 2: Treating MCP Approval as a Prompting Problem
+
+Symptom: a destructive MCP tool, such as delete/update/send, executes because the prompt said "ask first" but no runtime approval policy blocked it.
+
+Likely cause: approval was described in natural language but not configured with `require_approval` or a hosted MCP `on_approval_request` callback.
+
+First debugging step: inspect whether the MCP server/tool config has `require_approval` for sensitive tool names. If not, add a deterministic policy and test that the run pauses before execution.
+
+#### Mistake 3: Using a SandboxAgent for Simple Tool Calls
+
+Symptom: slow startup, high infrastructure cost, and more complex cleanup for an agent that only needed one API call or one small script.
+
+Likely cause: the design used a full workspace runtime when a function tool, hosted shell, code interpreter, or local MCP server was enough.
+
+First debugging step: write down the required state boundary. If the task does not need persistent files, multi-file context, command execution over staged material, snapshots, or workspace permissions, remove the sandbox.
+
+#### Mistake 4: Assuming the Manifest Always Wins
+
+Symptom: expected files are missing or stale files appear even though the `Manifest` looks correct.
+
+Likely cause: the run reused a live sandbox, resumed from `RunState`, resumed from `session_state`, or restored a snapshot. Those runtime sources can override the fresh-session manifest path.
+
+First debugging step: inspect `SandboxRunConfig`: did the run pass `session`, resume from `RunState`, pass `session_state`, pass `snapshot`, or create a fresh session? Then inspect the actual workspace tree at run start.
+
+---
+
+### 7. Hands-On Lab (Concept -> Build -> Break -> Measure -> Explain)
+
+This lab is a design-and-code drill. You can run the MCP half if you have an MCP server; the sandbox half is intentionally small and local-development oriented.
+
+#### Build A: Local MCP Filesystem Server [Pro]
+
+Goal: connect an SDK agent to a filesystem MCP server through stdio, expose only safe read tools, and inspect tool discovery.
+
+```python
+import asyncio
+from pathlib import Path
+
+from agents import Agent, Runner
+from agents.mcp import MCPServerStdio, create_static_tool_filter
+
+
+async def main() -> None:
+    sample_dir = Path("sample_files").resolve()
+
+    async with MCPServerStdio(
+        name="safe_filesystem",
+        params={
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-filesystem", str(sample_dir)],
+        },
+        cache_tools_list=True,
+        tool_filter=create_static_tool_filter(
+            allowed_tool_names=["read_file", "list_directory"]
+        ),
+        require_approval={"always": {"tool_names": ["write_file", "delete_file"]}},
+    ) as server:
+        agent = Agent(
+            name="Filesystem analyst",
+            instructions="Use filesystem MCP tools only to inspect files and answer briefly.",
+            mcp_servers=[server],
+            mcp_config={"include_server_in_tool_names": True},
+        )
+
+        print([tool.name for tool in await server.list_tools()])
+        result = await Runner.run(agent, "List the available files and summarize them.")
+        print(result.final_output)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+Break it on purpose:
+- Remove `tool_filter` and observe how many tools become visible.
+- Disable `cache_tools_list` and measure repeated `list_tools()` latency.
+- Point `sample_dir` to a missing directory and observe startup/tool discovery failure.
+
+Measure:
+- Tool count exposed to the model
+- `list_tools()` latency with and without caching
+- Tool call success/error rate
+- Whether sensitive tools pause or stay hidden
+
+Explain:
+Filtering is not just a convenience. It changes the model's action space. Caching is not just performance polish; repeated remote discovery can dominate short runs. Approval should be runtime policy, not only an instruction.
+
+#### Build B: SandboxAgent for a Tiny Repo Task [Pro]
+
+Goal: stage a local repo into a sandbox workspace, let the agent inspect/edit/run a test, and keep the workspace boundary explicit.
+
+```python
+import asyncio
+from pathlib import Path
+
+from agents import Runner
+from agents.run import RunConfig
+from agents.sandbox import Manifest, SandboxAgent, SandboxRunConfig
+from agents.sandbox.entries import LocalDir
+from agents.sandbox.sandboxes.unix_local import UnixLocalSandboxClient
+
+
+HOST_REPO_DIR = Path("./repo").resolve()
+
+
+def build_agent() -> SandboxAgent[None]:
+    return SandboxAgent(
+        name="Sandbox engineer",
+        instructions=(
+            "Read `repo/task.md`, make the smallest correct change, "
+            "run the targeted test, and summarize changed files and verification. "
+            "Use workspace-root-relative paths when applying patches."
+        ),
+        default_manifest=Manifest(
+            entries={
+                "repo": LocalDir(src=HOST_REPO_DIR),
+            }
+        ),
+    )
+
+
+async def main() -> None:
+    result = await Runner.run(
+        build_agent(),
+        "Fix the issue described in `repo/task.md` and run the test named there.",
+        run_config=RunConfig(
+            sandbox=SandboxRunConfig(client=UnixLocalSandboxClient()),
+            workflow_name="tiny sandbox repair",
+        ),
+    )
+    print(result.final_output)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+Break it on purpose:
+- Change `LocalDir(src=HOST_REPO_DIR)` to a wrong source path.
+- Put the task under `repo/task.md` but tell the agent to patch `src/...` instead of `repo/src/...`.
+- Reuse a prior sandbox session and expect a fresh manifest override; observe stale workspace behavior.
+
+Measure:
+- Workspace materialization time
+- Number and size of staged files
+- Command/test duration and exit code
+- Changed files
+- Whether snapshot/session-state resume used expected workspace contents
+
+Explain:
+Sandbox failures often look like model confusion, but the root cause is frequently workspace setup. The model can only inspect what the runner actually staged or resumed. When debugging, check the effective workspace before judging the agent.
+
+---
+
+### 8. Active Recall (Spaced Repetition)
+
+1. What is the main difference between `HostedMCPTool` and `MCPServerStreamableHttp`?
+2. Why is tool filtering usually a production requirement for MCP integrations?
+3. When should you choose a `SandboxAgent` instead of a normal `Agent` with a shell tool?
+4. What is the difference between `session_state` and a snapshot in sandbox runs?
+5. If a sensitive MCP tool should pause before execution, where should that policy live?
+
+**Answer keys:**
+
+1. `HostedMCPTool` lets OpenAI's hosted Responses runtime call the MCP server; `MCPServerStreamableHttp` is a local-runtime MCP client managed by your Python process.
+2. It limits tool confusion, reduces schema/token load, enforces least privilege, and prevents irrelevant or dangerous tools from entering the model's action space.
+3. Choose `SandboxAgent` when the task needs a real workspace boundary: staged files/repos, multi-file edits, command execution over artifacts, snapshots, resume, mounts, permissions, or sandbox-native capabilities.
+4. `session_state` resumes a specific serialized sandbox backend/session; a snapshot seeds a fresh sandbox with saved workspace contents.
+5. In deterministic SDK/runtime configuration: hosted MCP `require_approval` plus optional `on_approval_request`, or local MCP server `require_approval`. Do not rely only on instructions.
+
+---
+
+### 9. Practice
+
+#### Mini-Exercise: Pick the Boundary
+
+You are building an assistant that can answer repo questions, edit code, call Jira, and post release notes to Slack. Design the tool/runtime layout.
+
+**Suggested answer:**
+
+- Use a `SandboxAgent` for repo inspection/edit/test because it needs a workspace.
+- Use Jira and Slack through MCP only if those integrations already exist as MCP servers or need a shared connector interface.
+- Filter Jira/Slack tools by user permission and workflow step.
+- Require approval for posting Slack messages or mutating Jira issues.
+- Use separate sandbox sessions for independent code-review specialists if they can mutate files; share a live read-only sandbox only if they inspect the same material.
+
+#### Capstone-Style System Design Question
+
+Design a regulated document-processing agent for insurance claims. It receives a document bundle, extracts facts, calls policy/claims systems, creates a draft decision memo, and stores generated artifacts.
+
+**Answer outline:**
+
+- Use `SandboxAgent` because document bundles and generated artifacts need a workspace.
+- Use `Manifest` to stage only the claim packet, policy reference files, and an `output/` directory.
+- Run as a least-privilege sandbox user; make source documents read-only and `output/` writable.
+- Use local/private MCP servers for internal claims/policy systems, with tenant/user metadata injected by trusted code.
+- Use tool filtering so the claim agent sees only claim-relevant read/update tools.
+- Require approval for claim status changes, payment triggers, or external notifications.
+- Persist a snapshot for audit/review, but avoid storing secrets or mounted remote storage as durable workspace contents.
+- Trace document reads, MCP calls, approvals, generated files, and final decision output.
+
+---
+
+### 10. Production Reality Check (Mandatory Ending)
+
+**If this fails in prod, what's the first thing we inspect?**
+
+Inspect the run trace plus the effective tool/workspace boundary:
+- Which MCP tools were actually exposed?
+- Which server/transport handled the call?
+- Did approval policy run?
+- Which sandbox session source was used: fresh manifest, injected live session, resumed `RunState`, explicit `session_state`, or snapshot?
+- What files existed at workspace start?
+
+Why: MCP/sandbox failures usually masquerade as model reasoning failures. The real fault is often boundary drift: wrong tools exposed, missing auth metadata, stale workspace state, unsupported sandbox capability, or a sensitive action not gated at runtime.
+
+---
+
+### 11. Curiosity Bridge (Mandatory Ending)
+
+This works well for text-first agents that occasionally call tools or operate on files, but it breaks when the interaction itself becomes continuous, low-latency, and multimodal.
+
+That leads into **Realtime and voice-oriented pathways**: agent loops where speech, streaming events, interruptions, latency budgets, and turn-taking become the system design center.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit check:** You're done with 15.2.c when you can decide between hosted MCP, local MCP, hosted shell/code interpreter, and `SandboxAgent`, then explain the security, latency, state, approval, and observability implications of that choice.
+
+---
+
+**Carry-Forward Review (interleaved recall from 15.2.b):**
+
+*Q: How do approval interruptions relate to `RunState`?*
+
+> **A:** A run pauses with pending interruptions. You serialize the result to `RunState`, approve or reject pending items, then resume so the SDK can continue from the saved execution state instead of starting over.
+
+---
+
 ## Module Glossary
 
 | Term | Definition |
 |------|------------|
+| **Model Context Protocol (MCP)** | Open protocol for exposing tools, resources, and prompts to AI applications through standardized server interfaces. |
+| **HostedMCPTool** | Agents SDK hosted tool that lets the OpenAI Responses API call a remote or connector-backed MCP server on the model's behalf. |
+| **MCPServerStreamableHttp** | Agents SDK local-runtime MCP client for servers using the Streamable HTTP transport. |
+| **MCPServerStdio** | Agents SDK local-runtime MCP client that launches an MCP server subprocess and communicates over stdin/stdout. |
+| **MCPServerSse** | Agents SDK local-runtime MCP client for legacy HTTP with Server-Sent Events MCP servers. |
+| **MCPServerManager** | SDK helper that connects multiple MCP servers, tracks active/failed servers, and supports reconnect behavior. |
+| **Tool filtering** | MCP mechanism for exposing only an allowed subset of server tools to an agent, either statically or dynamically per run. |
+| **`tool_meta_resolver`** | MCP server option that injects trusted per-call `_meta` data such as tenant ID or trace context before tool execution. |
+| **`include_server_in_tool_names`** | Agent MCP configuration that prefixes local MCP tool names with server names to avoid collisions. |
+| **SandboxAgent** | Agents SDK agent that keeps the normal agent surface while adding sandbox workspace defaults, capabilities, manifest, and run identity. |
+| **Manifest** | Sandbox fresh-session workspace contract defining staged files, dirs, repos, mounts, environment, users, groups, and path grants. |
+| **SandboxRunConfig** | Per-run sandbox configuration that decides whether to create, inject, resume, or snapshot a sandbox session. |
+| **Sandbox session** | Live isolated execution environment where sandbox commands run and workspace files change. |
+| **Sandbox client** | Backend adapter such as Unix-local, Docker, or hosted provider client that creates/resumes sandbox sessions. |
+| **Capability** | Sandbox-native extension that can add tools, instructions, files, mounts, or runtime behavior to a SandboxAgent. |
+| **SnapshotSpec** | Sandbox policy describing how workspace contents should be restored into a fresh session and persisted afterward. |
+| **`session_state`** | Serialized sandbox backend state used to reconnect to a prior sandbox session outside or alongside runner-managed RunState. |
+| **`run_as`** | SandboxAgent option selecting the sandbox user identity for model-facing shell, filesystem, and patch actions. |
+| **Guardrail** | Programmable check that validates agent input, final output, or function-tool calls and can allow, reject, replace, or halt behavior. |
+| **Input guardrail** | Agent-level guardrail that checks the first agent's input and can stop execution by triggering an input tripwire. |
+| **Output guardrail** | Agent-level guardrail that checks the final agent output and can stop delivery by triggering an output tripwire. |
+| **Tool guardrail** | Function-tool-level check that runs before or after a custom function tool invocation. |
+| **Tripwire** | Guardrail signal that halts execution and raises a tripwire exception when a safety or policy condition is met. |
+| **`GuardrailFunctionOutput`** | SDK object returned by guardrail functions containing optional `output_info` and `tripwire_triggered`. |
+| **`InputGuardrailTripwireTriggered`** | Exception raised when an input guardrail's tripwire is triggered. |
+| **`OutputGuardrailTripwireTriggered`** | Exception raised when an output guardrail's tripwire is triggered. |
+| **SDK session** | Client-managed Agents SDK memory object that stores and retrieves conversation history for a session ID. |
+| **`SQLiteSession`** | Built-in lightweight SQLite-backed SDK session implementation for local development and simple apps. |
+| **`SessionSettings`** | Per-run/session configuration for controlling how much session history is retrieved. |
+| **`session_input_callback`** | RunConfig callback that customizes how retrieved session history and new input are merged before a model call. |
+| **`call_model_input_filter`** | RunConfig hook that edits prepared model input immediately before the model call. |
+| **`RunState`** | Serializable SDK state used to resume interrupted runs, including approval decisions and runtime metadata. |
+| **`interruptions`** | Run result field containing pending approval items that must be approved or rejected before a paused run can continue. |
+| **`needs_approval`** | Tool or agent-as-tool setting that pauses execution until a tool call is approved or rejected. |
+| **`conversation_id`** | OpenAI Conversations API identifier for server-managed conversation history. |
+| **`previous_response_id`** | Responses API continuation primitive that links a new run to a prior response without replaying full history. |
+| **`OpenAIConversationsSession`** | Agents SDK session implementation backed by the OpenAI Conversations API. |
+| **`OpenAIResponsesCompactionSession`** | Session wrapper that compacts stored history using the OpenAI Responses API. |
+| **OpenAI Agents SDK** | Lightweight Python framework/runtime for building agentic apps with agents, tools, handoffs, guardrails, sessions, and tracing around the OpenAI Responses API. |
+| **OpenAI `Agent`** | SDK primitive representing an LLM configured with instructions, tools, optional handoffs, guardrails, output type, model settings, and hooks. |
+| **`Runner`** | OpenAI Agents SDK execution engine that runs the agent loop, calls models, executes tools, handles handoffs, streams events, and returns run results. |
+| **Agent loop** | Runtime cycle of model call, tool or handoff handling, result appending, and repeated model calls until final output or failure. |
+| **`RunResult`** | Result object from a completed run containing final output, newly generated run items, usage, and metadata. |
+| **`RunResultStreaming`** | Streaming result object that exposes run events as they arrive and later contains the complete run result. |
+| **`RunConfig`** | Per-run configuration for model/provider defaults, sessions, guardrails, handoff filtering, tracing, tool execution, and error behavior. |
+| **Function tool** | Python function exposed as a model-callable tool with schema generated from signature, type hints, docstring, and Pydantic validation. |
+| **Hosted tool** | OpenAI-managed tool surface such as web search, file search, code interpreter, hosted MCP, image generation, tool search, or hosted shell. |
+| **Agent-as-tool** | Pattern where one agent is exposed as a callable tool so a manager agent can use specialist output while retaining conversation control. |
+| **Handoff** | Delegation pattern where one agent transfers control to another specialist agent that becomes the current conversation owner. |
+| **`handoff()`** | SDK helper for creating configurable handoffs with tool name/description overrides, metadata input, callbacks, filters, and runtime enablement. |
+| **`handoff_description`** | Short specialist-agent description used to help the model choose the correct handoff destination. |
+| **`input_filter`** | Handoff mechanism for changing what conversation history or items the receiving agent sees. |
+| **`output_type`** | Agent configuration that requests structured final output validated against a Pydantic-compatible type. |
+| **`tool_use_behavior`** | Agent configuration that controls whether tool results are sent back to the model or treated as final output under specified conditions. |
+| **`MaxTurnsExceeded`** | Exception raised when an SDK run exceeds the configured maximum number of agent-loop turns. |
 | **Agent product runtime** | Opinionated runtime shape for shipping agents with tools, sessions, events, evaluation, observability, and deployment conventions. |
 | **Orchestration runtime** | Lower-level execution layer focused on controlling workflow state, node transitions, persistence, retries, interrupts, and long-running behavior. |
 | **Durable execution** | Ability for a workflow to persist progress through failures, pauses, or restarts and resume from a saved execution state. |
