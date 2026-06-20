@@ -18,12 +18,12 @@
 | 14.2.a | Query engines and response synthesis | ✅ Done |
 | 14.2.b | Retriever customization and fusion | ✅ Done |
 | 14.2.c | Workflow orchestration in data-heavy applications | ✅ Done |
-| 14.2.d | Sub-question query engine and query decomposition | 🔲 |
-| **Topic 14.3** | **Agents, Tools, and Advanced Patterns (8h)** | |
-| 14.3.a | LlamaIndex agents and ReActAgent | 🔲 |
-| 14.3.b | QueryEngineTool and ToolSpec integration | 🔲 |
-| 14.3.c | LlamaIndex + LangChain + MCP interop | 🔲 |
-| 14.3.d | Observability, callbacks, and production instrumentation | 🔲 |
+| 14.2.d | When LlamaIndex beats generic frameworks for knowledge tasks | ✅ Done |
+| **Topic 14.3** | **Document AI and Knowledge-Heavy Applications (8h)** | |
+| 14.3.a | Document parsing and structure extraction concepts | ✅ Done |
+| 14.3.b | Tables, forms, and structured extraction workflows | ✅ Done |
+| 14.3.c | Knowledge assistants and research copilots | ✅ Done |
+| 14.3.d | Evaluation for document understanding systems | ✅ Done |
 
 **Covered so far:**
 - 14.1.a — Loaders, readers, and connectors: SimpleDirectoryReader, LlamaHub connector ecosystem, custom BaseReader implementation, document model (Document/TextNode), metadata propagation, transformation pipeline, loader failure modes and production patterns
@@ -33,6 +33,11 @@
 - 14.2.a — Query engines and response synthesis: QueryEngine vs Retriever interface, ResponseSynthesizer modes (refine/compact/tree_summarize/accumulate/simple_summarize), RetrieverQueryEngine composition, source_nodes provenance, streaming responses, token-budget-aware synthesis, NodePostprocessor chain (reranking, similarity cutoff, metadata replacement), production failure modes
 - 14.2.b — Retriever customization and fusion: VectorIndexRetriever (ANN dense), BM25Retriever (sparse keyword), QueryFusionRetriever (RRF hybrid fusion), custom BaseRetriever, dense vs sparse vs hybrid recall/precision tradeoffs, cross-encoder reranking (SentenceTransformerRerank), query rewriting for retrieval, retriever observability and failure modes
 - 14.2.c — Workflow orchestration in data-heavy applications: LlamaIndex Workflow API (event-driven, @step decorator, StartEvent/StopEvent/custom events), ctx.send_event() for fan-out, IngestionPipeline vs Workflow comparison, sequential vs parallel step execution, human-in-the-loop checkpoints, ctx.get()/ctx.set() shared state, external orchestrators (Airflow/Prefect) integration patterns, production error handling and retries, cost-awareness in large-scale workflows
+- 14.2.d — When LlamaIndex beats generic frameworks for knowledge tasks: LlamaIndex vs LangChain vs raw API decision framework, LlamaIndex unique strengths (data ingestion abstraction, index variety, node-level provenance, metadata filtering, IngestionPipeline+Cache), LangChain unique strengths (agent orchestration, LCEL, tool ecosystems), when to use each or both together, cost/latency/complexity tradeoffs across framework choices, hybrid architecture patterns
+- 14.3.a — Document parsing and structure extraction concepts: document parsing fundamentals (text layer vs OCR vs structured extraction), document type challenges (PDF multi-column/tables/scanned, HTML semantic structure, Word/Excel), LlamaParse cloud parser, UnstructuredReader, hierarchical structure preservation in nodes, structure-aware chunking at semantic boundaries, metadata enrichment from document structure (page number, section title, heading level), NodeRelationship chains from document hierarchy, parser selection decision framework, OCR cost/latency tradeoffs
+- 14.3.b — Tables, forms, and structured extraction workflows: table extraction strategies (pdfplumber, LlamaParse, camelot, pandas), table-to-Markdown vs table-to-DataFrame node representation, form field extraction (key-value pair detection, checkboxes, radio buttons), structured extraction with Pydantic programs (LLM-guided field extraction), multi-table document routing, table provenance metadata, handling merged cells and nested tables, end-to-end structured extraction pipeline design
+- 14.3.c — Knowledge assistants and research copilots: chat engine taxonomy (SimpleChatEngine → ContextChatEngine → OpenAIAgent-with-tools), conversational memory patterns (ChatMemoryBuffer, VectorMemory, SimpleComposableMemory), multi-document synthesis with SubQuestionQueryEngine, citation and provenance (CitationQueryEngine, source metadata), progressive refinement interaction design, streaming responses, research copilot system design, session management at scale
+- 14.3.d — Evaluation for document understanding systems: five evaluation dimensions (faithfulness, answer relevancy, context precision, context recall, extraction accuracy), FaithfulnessEvaluator and AnswerRelevancyEvaluator, BatchEvalRunner for parallel offline eval, DatasetGenerator for synthetic golden set creation, online evaluation via 5-10% query sampling, regression gate design, extraction F1 and grounding check pass rate, two-signal triage (retrieval vs synthesis failure isolation), Module 14 checkpoint
 
 ---
 
@@ -4524,6 +4529,4101 @@ That's **14.3.a: LlamaIndex Agents and ReActAgent** — where your workflow scaf
 > **A:** Most likely cause: `QueryFusionRetriever.similarity_top_k` is set too small (e.g., 3), cutting the merged list before the cross-encoder reranker can re-score it. BM25 may have correctly retrieved the exact GDPR article at rank 4–5, but the tight fusion cut eliminated it. First debug step: run `BM25Retriever.retrieve("GDPR Article 17 right to erasure")` in isolation — if it returns the correct node, the issue is the fusion top_k discarding it. Fix: set `similarity_top_k=15` on `QueryFusionRetriever` and let `SentenceTransformerRerank(top_n=5)` do the final cut.
 
 
+
+## Subtopic 14.2.d: When LlamaIndex Beats Generic Frameworks for Knowledge Tasks
+
+### Reading Path + Level Tags
+
+- **Beginner:** Read sections 1–2 and the Active Recall.
+- **Intermediate:** Add sections 3–5 and the decision framework table.
+- **Pro:** Work through section 7 (the architecture drill) and the capstone system design question.
+
+---
+
+### 0. Pre-Question Hook [Beginner]
+
+**Pause:** You're building a document Q&A system over 500,000 enterprise knowledge base articles. Your team already uses LangChain for other GenAI features. Before reading — would you build the document retrieval on top of LangChain, switch to LlamaIndex, or keep both? What factors would drive your decision?
+
+---
+
+### 1. The Intuition (Plain English) [Beginner]
+
+Every GenAI framework makes a bet. LangChain's bet is: *the hardest problem is chaining LLM calls, tools, and agents together.* LlamaIndex's bet is: *the hardest problem is getting heterogeneous data into a form that LLMs can actually query well.*
+
+These bets lead to very different default abstractions:
+
+| Design axis | LangChain | LlamaIndex |
+|------------|-----------|------------|
+| Core primitive | `Chain` / `Runnable` (composable LLM call sequences) | `Index` / `QueryEngine` (data retrieval and synthesis) |
+| Document handling | Loaders + splitters exist, but are secondary | First-class: 150+ loaders, 5 index types, node-level metadata |
+| Retrieval | `Retriever` interface (pluggable) | `VectorIndexRetriever`, `BM25Retriever`, `QueryFusionRetriever`, `RouterRetriever` |
+| Agent model | `AgentExecutor`, `LangGraph` (mature, battle-tested) | `ReActAgent`, `Workflow` (capable, newer) |
+| Structured output | Pydantic output parsers, LCEL | `Pydantic programs`, structured prediction |
+| Observability | LangSmith (tracing + eval, commercial) | Callbacks, `arize-phoenix` (open-source alternative) |
+
+**The key insight:** LlamaIndex wins when *your data is the hard part* — when you have many document types, need node-level metadata and provenance, want multiple index strategies over the same corpus, or need fine-grained retrieval control. LangChain wins when *the agent logic is the hard part* — when you need multi-step reasoning, complex tool orchestration, human-in-the-loop approval flows, or a production-grade agent runtime.
+
+**Analogy:** LangChain is a professional kitchen with every tool imaginable — it can cook anything, but you bring your own ingredients. LlamaIndex is a professional food-prep system — it excels at sourcing, cleaning, cutting, and organising ingredients so that any cooking step (including LangChain) works better. The analogy breaks down because both systems can do both jobs reasonably well; the tradeoffs are about *optimisation*, not hard limits.
+
+**Key terms (first use):**
+
+- **Framework positioning** — the set of problems a framework is optimised to solve; not what it *can* do but where it has the deepest abstractions and most production validation.
+- **LCEL (LangChain Expression Language)** — LangChain's composable `|` pipe operator for chaining `Runnable` objects; excellent for building LLM call chains with streaming, parallelism, and fallbacks.
+- **`RouterQueryEngine`** — LlamaIndex abstraction that routes a query to one of several sub-query-engines based on LLM classification or metadata; no equivalent first-class primitive in LangChain.
+- **`SubQuestionQueryEngine`** — LlamaIndex engine that decomposes a complex question into sub-questions, routes each to a different query engine, and synthesizes a unified answer; deeply data-centric.
+- **`LlamaIndex + LangChain interop`** — LlamaIndex query engines can be wrapped as LangChain `Tool` objects; LangChain agents can call LlamaIndex retrievers via the `Tool` interface; the two frameworks compose rather than compete.
+- **Data-centric RAG** — a RAG architecture where the primary engineering investment is in data quality, index structure, and retrieval precision — not in the LLM call itself; LlamaIndex's home turf.
+- **Agent-centric orchestration** — a GenAI architecture where the primary engineering investment is in how the agent decides what to do, what tools to call, and how to handle failures — LangChain's and LangGraph's home turf.
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+```mermaid
+flowchart TD
+    Q["User Query / Task"]
+
+    subgraph Decision["Framework Selection Decision"]
+        D1{"Is retrieval over\nlarge structured/unstructured\ndocument corpus the core?"}
+        D2{"Do you need multi-step\nagent loops, tool calling,\nor complex orchestration?"}
+        D3{"Both?"}
+    end
+
+    LI["Use LlamaIndex\n─────────────────\n• Multi-index routing\n• Node-level metadata + provenance\n• IngestionPipeline + Cache\n• BM25 + hybrid retrieval\n• KnowledgeGraphIndex\n• SubQuestionQueryEngine"]
+
+    LC["Use LangChain / LangGraph\n─────────────────\n• AgentExecutor / ReAct loops\n• LCEL composability\n• 200+ tool integrations\n• LangGraph state machines\n• LangSmith observability\n• Multi-agent networks"]
+
+    BOTH["Use LlamaIndex + LangChain together\n─────────────────\n• LlamaIndex handles data layer\n• LangChain handles agent logic\n• LlamaIndex QueryEngine wrapped as LangChain Tool\n• Best of both: data quality + agent capability"]
+
+    RAW["Use Raw LLM API\n─────────────────\n• Single document < 128K tokens\n• No retrieval needed\n• Maximum cost control\n• Minimum latency"]
+
+    Q --> D1
+    D1 -->|Yes, primary problem| LI
+    D1 -->|No| D2
+    D2 -->|Yes, primary problem| LC
+    D2 -->|No - simple single doc| RAW
+    D1 & D2 --> D3
+    D3 -->|Yes, both matter| BOTH
+
+    style LI fill:#d1e7dd,stroke:#0f5132
+    style LC fill:#cfe2ff,stroke:#084298
+    style BOTH fill:#fff3cd,stroke:#664d03
+    style RAW fill:#f8d7da,stroke:#842029
+```
+
+**Key insight:** These are not competing choices in most production systems — they are *complementary layers*. The data layer (LlamaIndex) feeds into the agent layer (LangChain/LangGraph). The question is which layer to invest engineering time in, based on where your retrieval and reasoning failures actually occur.
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+#### Scenario A: Enterprise Knowledge Base — LlamaIndex Wins Clearly
+
+**Context:** A global professional services firm needs a knowledge assistant over 2M documents: internal wikis, client engagement reports, regulatory filings, and financial models (PDFs, Word, Excel, databases). Users ask questions ranging from *"What did we recommend to Client X in the 2022 engagement?"* to *"Compare our regulatory exposure across EU and US filings."*
+
+**Why LlamaIndex beats LangChain here:**
+
+- **150+ loaders:** `SimpleDirectoryReader` + LlamaHub covers PDF, Word, Excel, SharePoint, Confluence, Notion, SQL databases — each with metadata propagation. LangChain has document loaders too, but LlamaIndex's are more opinionated and production-tested for this use case.
+- **Index variety:** Financial models → `SummaryIndex` (full-scan over structured rows). Client reports → `VectorStoreIndex` (semantic ANN). Regulatory cross-references → `KnowledgeGraphIndex` (entity relationships). LangChain provides one FAISS/Chroma vector store; index type differentiation requires manual engineering.
+- **`SubQuestionQueryEngine`:** The comparison query (*"compare regulatory exposure across EU and US"*) is decomposed into: (1) *"What are our EU regulatory filings?"* → EU index, (2) *"What are our US regulatory filings?"* → US index, (3) synthesize a unified comparison. LangChain would require custom chain logic to achieve this. LlamaIndex ships it as a single abstraction.
+- **Node-level provenance:** Every answer includes `source_nodes` with document name, page number, and chunk position. The firm's compliance requirements demand auditability — *"show me exactly which paragraph this answer came from."* LlamaIndex provides this natively; LangChain requires custom tracking.
+- **`IngestionPipeline` + `IngestionCache`:** 2M documents updated incrementally. Cache skips unchanged nodes → 90% cost reduction on weekly re-indexing runs.
+
+**What "good" looks like:** A query over 2M documents returns a cited answer with source provenance in < 3 seconds. Re-indexing 2M documents weekly costs < $200. Any answer can be traced to an exact document, page, and paragraph for compliance audit.
+
+---
+
+#### Scenario B: Multi-Tool Customer Service Agent — LangChain/LangGraph Wins
+
+**Context:** A telecom company builds a customer service agent that must: look up account information (CRM API), check network outage status (monitoring API), process refund requests (billing API), and *also* answer questions from a policy knowledge base (RAG). The agent must handle multi-turn conversations, remember context, and escalate to a human agent if confidence is low.
+
+**Why LangChain wins here (and LlamaIndex plays a supporting role):**
+
+- **LangGraph state machine:** The agent's conversation flow — greeting → intent classification → tool call → response → follow-up or escalation — is a state machine with conditional branching. LangGraph's `StateGraph` models this exactly. LlamaIndex's `Workflow` can do it, but LangGraph has more production mileage for complex multi-turn agent flows.
+- **Tool ecosystem:** LangChain has pre-built integrations for Salesforce CRM, PagerDuty, Stripe, and 200+ other systems. LlamaIndex's `ToolSpec` covers document-oriented tools well but lacks the breadth of LangChain's tool library for non-document APIs.
+- **LlamaIndex as a tool:** The policy knowledge base is still served by a LlamaIndex `VectorStoreIndex` with hybrid retrieval. The LangChain agent calls it via a `Tool` wrapper: `Tool(name="policy_kb", func=llama_query_engine.query)`. LlamaIndex handles data retrieval; LangChain handles agent orchestration.
+- **LangSmith observability:** Multi-turn agent traces — showing which tool was called, what it returned, and why the agent chose the next action — are the primary debugging surface. LangSmith provides this out of the box. LlamaIndex callbacks require more configuration for equivalent tracing.
+
+**What "good" looks like:** The agent resolves 80% of customer issues without human escalation. Tool call success rate > 99%. Average conversation < 5 turns. Every conversation is traceable in LangSmith.
+
+---
+
+#### Scenario C: Research Paper Analysis — Hybrid LlamaIndex + LangChain
+
+**Context:** A pharmaceutical company builds an assistant to help researchers: (1) retrieve relevant papers from a 500K-paper corpus (data-centric, LlamaIndex's strength), (2) compare findings across papers (synthesis, LlamaIndex's `tree_summarize`), and (3) generate a structured research brief with citations, clinical trial suggestions, and risk assessments (agent with structured output, LangChain's strength).
+
+**How they compose:**
+
+```python
+# LlamaIndex handles the data layer
+from llama_index.core import VectorStoreIndex
+from llama_index.core.retrievers import QueryFusionRetriever
+
+query_engine = RetrieverQueryEngine(
+    retriever=QueryFusionRetriever([dense_ret, bm25_ret], ...),
+    response_synthesizer=get_response_synthesizer(response_mode="tree_summarize"),
+)
+
+# Wrap as a LangChain Tool
+from langchain.tools import Tool
+paper_search_tool = Tool(
+    name="research_paper_search",
+    description="Search 500K research papers for relevant findings. Input: research question string.",
+    func=lambda q: str(query_engine.query(q)),
+)
+
+# LangChain agent handles the reasoning and structured output layer
+from langchain.agents import AgentExecutor, create_react_agent
+from langchain_openai import ChatOpenAI
+from langchain_core.output_parsers import PydanticOutputParser
+from pydantic import BaseModel
+
+class ResearchBrief(BaseModel):
+    summary: str
+    key_findings: list[str]
+    suggested_trials: list[str]
+    risk_factors: list[str]
+    citations: list[str]
+
+agent = create_react_agent(
+    llm=ChatOpenAI(model="gpt-4o"),
+    tools=[paper_search_tool, clinical_trial_lookup_tool, risk_db_tool],
+    prompt=research_brief_prompt,
+)
+executor = AgentExecutor(agent=agent, tools=[...], verbose=True)
+brief_raw = executor.invoke({"input": "Summarise findings on PCSK9 inhibitors for LDL reduction"})
+# Parse into structured output
+brief = PydanticOutputParser(pydantic_object=ResearchBrief).parse(brief_raw["output"])
+```
+
+**Why this hybrid wins over either alone:**
+- LlamaIndex alone: great retrieval and synthesis, but building a structured multi-tool agent loop requires LlamaIndex `Workflow` + custom tool routing — more engineering than using LangChain's mature `AgentExecutor`.
+- LangChain alone: could use LangChain's document loaders and FAISS vector store, but would lose LlamaIndex's hybrid retrieval, `KnowledgeGraphIndex`, `SubQuestionQueryEngine`, and `IngestionPipeline` caching.
+- Together: LlamaIndex is a high-precision retrieval tool called by a LangChain agent. Each framework does what it's optimised for.
+
+---
+
+### 4. System View (Think Like a Systems Engineer) [Intermediate]
+
+**Framework decision signals — what to measure before choosing:**
+
+| Signal | LlamaIndex-first | LangChain-first | Raw API |
+|--------|-----------------|-----------------|---------|
+| Document corpus size | > 10K documents | < 1K documents or no docs | Single document or in-context |
+| Document type diversity | PDF + DB + API + spreadsheet | One type | One type |
+| Retrieval precision requirements | High (compliance, legal, medical) | Moderate | Not applicable |
+| Agent reasoning complexity | Low–Medium | High (multi-tool, multi-turn) | None |
+| Required observability | Node-level provenance + citations | Conversation traces + tool call traces | Token-level costs |
+| Team expertise | Strong in data engineering | Strong in backend/API integration | Strong in prompt engineering |
+| Time to first prototype | Longer (more config) | Faster (more pre-built agents) | Fastest |
+
+**Where LlamaIndex is uniquely strong (no equivalent in LangChain out-of-the-box):**
+
+1. **`SubQuestionQueryEngine`** — decomposes complex multi-part questions into sub-questions, routes each to a separate query engine, synthesizes a unified answer. Requires custom chain logic in LangChain.
+2. **`RouterQueryEngine`** — LLM-based or keyword-based routing to different index types (vector vs summary vs graph) based on query intent. Requires manual routing logic in LangChain.
+3. **`KnowledgeGraphIndex`** — builds and queries entity-relationship triples from documents; enables structured graph traversal over unstructured text. No built-in equivalent in LangChain.
+4. **`IngestionCache`** — content-hash caching of transformed nodes; skips unchanged documents on re-indexing runs; massive cost saving at scale. LangChain has no built-in equivalent.
+5. **`NodeRelationship`** — explicit parent-child-previous-next relationships between chunks, enabling hierarchical retrieval (retrieve a summary, then drill down to the specific chunk). Not native to LangChain's document model.
+6. **`HierarchicalNodeParser` + `AutoMergingRetriever`** — parses documents into a hierarchy of chunk sizes; retrieves at fine granularity, then auto-merges to coarser chunks for synthesis. Unique LlamaIndex pattern.
+
+**Where LangChain is uniquely strong (no equivalent in LlamaIndex out-of-the-box):**
+
+1. **`LangGraph` state machines** — directed graphs with conditional edges, persistent state, and human-in-the-loop nodes. The production standard for complex multi-turn agents. LlamaIndex `Workflow` is newer and less battle-tested for this.
+2. **LCEL composability** — `chain = retriever | prompt | llm | output_parser` — readable, testable, streamable pipeline composition. LlamaIndex's composition is more object-oriented and less declarative.
+3. **Tool breadth** — 200+ pre-built tool integrations (Google Search, Wikipedia, SQL, APIs, browsers). LlamaIndex's `ToolSpec` covers document-oriented tools but is narrower.
+4. **LangSmith** — production tracing, prompt management, dataset curation, and evaluation. Deeply integrated with LangChain. LlamaIndex requires third-party tools (Arize Phoenix, Weights & Biases) for equivalent coverage.
+5. **Multi-agent networks** — `LangGraph` supports supervisor/worker agent architectures with shared state. LlamaIndex's multi-agent support is emerging.
+
+**Failure points when choosing the wrong framework:**
+
+1. **Using LangChain for large-scale document retrieval without LlamaIndex** — LangChain's vector store integrations are functional but don't provide `IngestionCache`, `SubQuestionQueryEngine`, or `RouterQueryEngine`. Teams end up re-building these abstractions manually. *How it shows up:* large custom codebase for what LlamaIndex provides natively; retrieval bugs that are hard to debug without node-level provenance.
+
+2. **Using LlamaIndex for complex multi-step agent orchestration without LangGraph** — LlamaIndex `Workflow` is capable, but lacks the production tooling (persistent checkpoints, human-in-the-loop nodes, visual DAG editor) that LangGraph provides. *How it shows up:* custom event-handling boilerplate that reimplements what LangGraph already has; difficult-to-debug agent loops with no conversation-level tracing.
+
+3. **Using raw LLM API for > 100K token corpora** — context stuffing becomes the retrieval strategy. Cost explodes (every query sends the full corpus). Latency degrades (128K token completion = 30+ seconds). *How it shows up:* $10+ per query at scale; users abandoning the product due to latency.
+
+---
+
+### 5. System Design Flavor [Intermediate]
+
+**The interop pattern — LlamaIndex as a precision retrieval tool inside a LangChain agent:**
+
+```python
+# interop_pattern.py
+# pip install llama-index-core langchain langchain-openai
+
+# ── LlamaIndex: build the precision retrieval layer ───────────────────────────
+from llama_index.core import VectorStoreIndex, Document, Settings
+from llama_index.core.retrievers import QueryFusionRetriever, VectorIndexRetriever
+from llama_index.core.query_engine import RetrieverQueryEngine
+from llama_index.core import get_response_synthesizer
+from llama_index.core.node_parser import SentenceSplitter
+
+# Build index (replace with your actual documents)
+docs = [
+    Document(text="LlamaIndex v0.10 introduced event-driven Workflows.", metadata={"source": "llamaindex_changelog.txt"}),
+    Document(text="LangChain LCEL enables composable LLM pipelines via the pipe operator.", metadata={"source": "langchain_docs.txt"}),
+    Document(text="Hybrid retrieval combines dense ANN and sparse BM25 for higher recall.", metadata={"source": "retrieval_guide.txt"}),
+]
+nodes = SentenceSplitter(chunk_size=256).get_nodes_from_documents(docs)
+index = VectorStoreIndex(nodes)
+
+dense_ret = VectorIndexRetriever(index=index, similarity_top_k=5)
+
+# Compact query engine with source provenance
+llama_query_engine = RetrieverQueryEngine(
+    retriever=dense_ret,
+    response_synthesizer=get_response_synthesizer(response_mode="compact"),
+)
+
+def llama_search(question: str) -> str:
+    """Thin wrapper for LangChain Tool compatibility."""
+    response = llama_query_engine.query(question)
+    # Include source provenance in output
+    sources = [n.node.metadata.get("source", "unknown") for n in response.source_nodes]
+    return f"{response.response}\n\nSources: {', '.join(sources)}"
+
+
+# ── LangChain: build the agent layer ─────────────────────────────────────────
+from langchain.tools import Tool
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_react_agent
+from langchain_core.prompts import PromptTemplate
+
+# Wrap LlamaIndex engine as a LangChain Tool
+knowledge_tool = Tool(
+    name="knowledge_base_search",
+    description=(
+        "Use this to search the knowledge base for factual information. "
+        "Input should be a specific question. Returns an answer with sources."
+    ),
+    func=llama_search,
+)
+
+# Additional tools the agent can use
+def get_current_date(_: str) -> str:
+    from datetime import date
+    return str(date.today())
+
+date_tool = Tool(
+    name="get_current_date",
+    description="Returns today's date. Use when the user asks about current events.",
+    func=get_current_date,
+)
+
+# ReAct agent prompt
+REACT_PROMPT = PromptTemplate.from_template("""Answer the following question using the available tools.
+
+Tools: {tools}
+Tool names: {tool_names}
+
+Question: {input}
+Scratchpad: {agent_scratchpad}
+
+Think step by step. Use tools to find information. Cite sources when available.
+""")
+
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+agent = create_react_agent(llm=llm, tools=[knowledge_tool, date_tool], prompt=REACT_PROMPT)
+executor = AgentExecutor(agent=agent, tools=[knowledge_tool, date_tool], verbose=True, max_iterations=5)
+
+# Run a query that uses both LlamaIndex retrieval and LangChain reasoning
+result = executor.invoke({
+    "input": "What are the key differences between LlamaIndex Workflows and LangChain LCEL? Explain clearly."
+})
+print(result["output"])
+
+
+# ── RouterQueryEngine: LlamaIndex-native routing (no LangChain needed) ────────
+from llama_index.core.query_engine import RouterQueryEngine
+from llama_index.core.selectors import LLMSingleSelector
+from llama_index.core.tools import QueryEngineTool
+
+# Two specialised index/engine combinations
+summary_engine = index.as_query_engine(response_mode="tree_summarize")
+vector_engine   = index.as_query_engine(response_mode="compact")
+
+router_engine = RouterQueryEngine(
+    selector=LLMSingleSelector.from_defaults(),
+    query_engine_tools=[
+        QueryEngineTool.from_defaults(
+            query_engine=summary_engine,
+            description="Use for broad summarisation questions like 'Summarise all content about X'",
+        ),
+        QueryEngineTool.from_defaults(
+            query_engine=vector_engine,
+            description="Use for specific factual questions like 'What is X?' or 'How does Y work?'",
+        ),
+    ],
+    verbose=True,
+)
+
+# The LLM picks which engine to use based on the query
+r1 = router_engine.query("Summarise all content about retrieval strategies.")  # → tree_summarize
+r2 = router_engine.query("What is hybrid retrieval?")                           # → compact/vector
+print(f"Router selected engine for summary query: {r1.metadata.get('selector_result')}")
+print(f"Router selected engine for factual query: {r2.metadata.get('selector_result')}")
+
+
+# ── SubQuestionQueryEngine: multi-index decomposition ────────────────────────
+from llama_index.core.query_engine import SubQuestionQueryEngine
+
+# Two separate indexes (e.g., different document collections)
+llamaindex_docs = [Document(text="LlamaIndex specialises in data ingestion and retrieval.", metadata={"source": "li_docs"})]
+langchain_docs  = [Document(text="LangChain specialises in agent orchestration and tool use.", metadata={"source": "lc_docs"})]
+
+li_index = VectorStoreIndex(SentenceSplitter(chunk_size=256).get_nodes_from_documents(llamaindex_docs))
+lc_index = VectorStoreIndex(SentenceSplitter(chunk_size=256).get_nodes_from_documents(langchain_docs))
+
+sub_question_engine = SubQuestionQueryEngine.from_defaults(
+    query_engine_tools=[
+        QueryEngineTool.from_defaults(
+            query_engine=li_index.as_query_engine(),
+            name="llamaindex_kb",
+            description="Contains documentation about LlamaIndex framework",
+        ),
+        QueryEngineTool.from_defaults(
+            query_engine=lc_index.as_query_engine(),
+            name="langchain_kb",
+            description="Contains documentation about LangChain framework",
+        ),
+    ],
+    verbose=True,
+)
+
+# Automatically decomposes into sub-questions per index
+response = sub_question_engine.query(
+    "Compare what LlamaIndex and LangChain are each best suited for."
+)
+print(response.response)
+# Under the hood:
+# Sub-question 1: "What is LlamaIndex best suited for?" -> llamaindex_kb
+# Sub-question 2: "What is LangChain best suited for?" -> langchain_kb
+# Synthesis: combines both answers into a unified comparison
+```
+
+**Key tradeoffs:**
+
+| Tradeoff | LlamaIndex-only | LangChain-only | Hybrid |
+|----------|----------------|----------------|--------|
+| **Setup complexity** | Medium (index config, loader selection) | Low (one vector store, one agent) | High (two frameworks, two abstraction layers) |
+| **Retrieval quality** | High (5 index types, hybrid retrieval, caching) | Moderate (one vector store type per integration) | High (LlamaIndex layer) |
+| **Agent capability** | Moderate (Workflow, ReActAgent — newer) | High (LangGraph, AgentExecutor — mature) | High (LangChain layer) |
+| **Maintenance burden** | Lower (LlamaIndex owns the data pipeline) | Lower (LangChain owns the agent loop) | Higher (two frameworks to version and update) |
+| **Cost at scale** | Lower (IngestionCache, incremental ingestion) | Moderate (no built-in caching layer) | Lower (cache lives in LlamaIndex) |
+
+**Scaling consideration (10x query volume + 10x corpus size):**
+
+At 10x scale, the boundary between frameworks becomes a *performance boundary*:
+- **LlamaIndex** controls the retrieval SLA. At 10x query volume, the vector store becomes the bottleneck — migrate from `SimpleVectorStore` to Pinecone or pgvector with horizontal scaling. `IngestionCache` becomes critical for cost — without it, 10x corpus re-indexing costs 10x more.
+- **LangChain/LangGraph** controls the agent reasoning SLA. At 10x, agent loops that call LlamaIndex query engines must be async (`acall()` instead of `invoke()`). LangSmith trace storage becomes expensive — sample at 10% for cost control.
+- **The interop interface** — the `Tool.func` call from LangChain to LlamaIndex — must be async (`afunc=llama_query_engine.aquery`) to avoid blocking the agent's asyncio event loop.
+
+---
+
+### 6. Common Mistakes + Debugging [Beginner → Intermediate]
+
+#### Mistake 1: Rebuilding LlamaIndex Abstractions Inside LangChain
+
+**Symptom:** The team is using LangChain for everything. Someone adds "just a simple RAG" and implements: a custom document loader, a custom chunking function, a custom metadata extractor, a custom routing chain that checks query type and selects a retriever, and a custom cache using Redis. Three months later, the codebase has 4,000 lines of custom RAG infrastructure.
+
+**Likely cause:** The team didn't evaluate LlamaIndex, or assumed "we already use LangChain so we should keep it all in LangChain." Every abstraction they built manually exists in LlamaIndex (`SimpleDirectoryReader`, `SentenceSplitter`, `MetadataExtractor`, `RouterQueryEngine`, `IngestionCache`).
+
+**First debugging step:** Run a spike: *"Can LlamaIndex + LangChain interop replace our custom RAG infrastructure in 2 days?"* Load one document collection through LlamaIndex's `IngestionPipeline`, wrap the query engine as a LangChain `Tool`, and measure the code delta. If it's significantly less code with equivalent quality, plan a migration.
+
+---
+
+#### Mistake 2: Using LlamaIndex `Workflow` for Agent Loops That Need LangGraph
+
+**Symptom:** The team builds a multi-turn customer service agent in LlamaIndex `Workflow`. After 3 months, the workflow has 15+ event types, complex conditional fan-out logic, and a human-in-the-loop node that requires durable state persistence across process restarts. Debugging is extremely difficult — the event routing is not visually inspectable.
+
+**Likely cause:** LlamaIndex `Workflow` is excellent for data pipeline orchestration (fan-out ingestion, parallel retrieval, human review gates on documents). But for multi-turn *conversational* agent loops with persistent state and complex conditional branching, LangGraph's `StateGraph` with `checkpointers` (SQLite, Postgres) is better suited.
+
+**First debugging step:** Map the agent's conversation flow as a state diagram. If it has more than 5 distinct states with conditional transitions — *and* it needs durable state across restarts — evaluate LangGraph. The `StateGraph` visualiser in LangSmith makes the flow immediately inspectable.
+
+---
+
+#### Mistake 3: Passing Full LlamaIndex `Response` Objects to LangChain Tools
+
+**Symptom:** LlamaIndex query engine is wrapped as a LangChain Tool, but the `func` passes the raw `Response` object instead of a string. LangChain's agent receives a Python object and can't parse it into its reasoning scratchpad.
+
+**Likely cause:** `Tool(name="kb", func=query_engine.query)` — `query_engine.query()` returns a `Response` object, not a string. The agent receives `"Response(response='...', source_nodes=[...])"` which confuses the LLM.
+
+**First debugging step:**
+```python
+# WRONG: returns Response object
+tool = Tool(name="kb", func=query_engine.query)
+
+# RIGHT: convert to string with provenance
+def search_kb(question: str) -> str:
+    response = query_engine.query(question)
+    sources = [n.node.metadata.get("source", "?") for n in response.source_nodes]
+    return f"{response.response}\n(Sources: {', '.join(sources)})"
+
+tool = Tool(name="kb", func=search_kb)
+```
+
+---
+
+### 7. Hands-On Lab [Pro]
+
+#### Build — Framework Decision Drill (Architecture Classification)
+
+This lab replaces the standard coding exercise with a structured decision drill. For each scenario below, classify the correct framework choice and justify your reasoning by referencing specific abstractions.
+
+**Scenario 1:** A legal tech startup has 300,000 case law documents in PDF format. Users ask questions like *"What precedents support fair use in software reverse-engineering?"* — requiring precise retrieval with exact citation.
+
+> **Classification:** LlamaIndex-primary (with optional LangChain wrapper for agent loop if needed).
+> **Justification:** 300K PDFs → `SimpleDirectoryReader` with PDF loader. Semantic retrieval for case law → `VectorStoreIndex` with `BM25Retriever` hybrid (exact citation lookup). Precise citation → `source_nodes` provenance mandatory. The core problem is data-centric; LangChain's retriever interface lacks `SubQuestionQueryEngine` for multi-issue legal queries.
+
+**Scenario 2:** An e-commerce company builds a shopping assistant that searches products (API), checks inventory (database), applies discount codes (pricing API), and looks up return policies (small knowledge base of ~20 docs).
+
+> **Classification:** LangChain-primary (with LlamaIndex optional for the 20-doc KB if hybrid retrieval is needed).
+> **Justification:** The core problem is multi-tool orchestration (3 APIs + 1 KB). LangChain has pre-built integrations for SQL databases, REST APIs, and product search tools. 20 documents fit comfortably in one FAISS index with basic retrieval — no need for LlamaIndex's advanced indexing. LangGraph manages the multi-turn conversation flow.
+
+**Scenario 3:** A biotech company has a 10K-paper corpus (PubMed PDFs) and needs a researcher assistant that: retrieves relevant papers, extracts findings, and generates a structured clinical brief (with sections: summary, key findings, suggested trials, risks).
+
+> **Classification:** Hybrid LlamaIndex + LangChain.
+> **Justification:** 10K papers → LlamaIndex `IngestionPipeline` (PDF loading, `SentenceSplitter`, `MetadataExtractor` for author/year/abstract). Hybrid retrieval (BM25 for citation lookups + dense for semantic). `SubQuestionQueryEngine` for multi-paper comparison. LangChain `AgentExecutor` with Pydantic structured output parser for the research brief generation. LlamaIndex is the retrieval tool; LangChain is the output generation orchestrator.
+
+**Scenario 4:** A startup is prototyping a chatbot that answers questions from a 50-page FAQ document. Budget is zero, timeline is 2 days.
+
+> **Classification:** Raw LLM API (no framework needed yet).
+> **Justification:** 50 pages × ~500 words/page = ~25,000 tokens. Fits within a single 128K context window. Send the full FAQ + user question in one prompt. No indexing, no retrieval, no framework overhead. Use a framework only when the document set outgrows the context window or when retrieval precision becomes a problem.
+
+---
+
+#### Break — Measure the Cost of Wrong Framework Choice
+
+```python
+# cost_comparison.py
+# Demonstrate context-stuffing cost vs retrieval cost at scale
+
+import tiktoken
+
+# Scenario: 500-page document corpus, user asks 1,000 questions/day
+PAGES = 500
+WORDS_PER_PAGE = 500
+TOKENS_PER_WORD = 1.3
+QUERIES_PER_DAY = 1_000
+COST_PER_1K_TOKENS = 0.002   # gpt-4o-mini input price
+
+corpus_tokens = PAGES * WORDS_PER_PAGE * TOKENS_PER_WORD
+print(f"Corpus size: {corpus_tokens:,.0f} tokens")
+
+# Option A: Context stuffing (no framework / wrong choice)
+tokens_per_query_stuffing = corpus_tokens + 500   # corpus + question
+daily_cost_stuffing = (tokens_per_query_stuffing / 1_000) * COST_PER_1K_TOKENS * QUERIES_PER_DAY
+print(f"\nOption A: Context stuffing (raw API)")
+print(f"  Tokens per query: {tokens_per_query_stuffing:,.0f}")
+print(f"  Daily cost:       ${daily_cost_stuffing:,.2f}")
+print(f"  Monthly cost:     ${daily_cost_stuffing * 30:,.2f}")
+
+# Option B: LlamaIndex RAG (retrieve top-5 nodes ~512 tokens each)
+RETRIEVED_NODES = 5
+NODE_TOKENS = 512
+tokens_per_query_rag = (RETRIEVED_NODES * NODE_TOKENS) + 500   # nodes + question + prompt
+daily_cost_rag = (tokens_per_query_rag / 1_000) * COST_PER_1K_TOKENS * QUERIES_PER_DAY
+print(f"\nOption B: LlamaIndex RAG")
+print(f"  Tokens per query: {tokens_per_query_rag:,.0f}")
+print(f"  Daily cost:       ${daily_cost_rag:,.2f}")
+print(f"  Monthly cost:     ${daily_cost_rag * 30:,.2f}")
+
+reduction = (1 - daily_cost_rag / daily_cost_stuffing) * 100
+print(f"\nCost reduction with LlamaIndex RAG: {reduction:.0f}%")
+
+# At what corpus size does context stuffing become infeasible?
+MAX_CONTEXT_TOKENS = 128_000
+pages_that_fit = MAX_CONTEXT_TOKENS / (WORDS_PER_PAGE * TOKENS_PER_WORD)
+print(f"\nContext window limit: {MAX_CONTEXT_TOKENS:,} tokens")
+print(f"Max pages that fit:   {pages_that_fit:.0f} pages")
+print(f"Your corpus:          {PAGES} pages -> {'FITS' if PAGES <= pages_that_fit else 'DOES NOT FIT - RAG required'}")
+```
+
+---
+
+#### Measure — Retrieval Precision vs Cost Decision Boundary
+
+```python
+# When does LlamaIndex's retrieval precision justify its complexity over raw API?
+
+SCENARIOS = [
+    {"name": "FAQ chatbot",          "docs": 50,      "daily_queries": 100,    "precision_req": "low"},
+    {"name": "Legal case research",  "docs": 300_000, "daily_queries": 5_000,  "precision_req": "high"},
+    {"name": "Internal wiki Q&A",    "docs": 10_000,  "daily_queries": 2_000,  "precision_req": "medium"},
+    {"name": "Customer service KB",  "docs": 500,     "daily_queries": 50_000, "precision_req": "medium"},
+]
+
+TOKENS_PER_PAGE = 650
+COST_PER_1K_TOKENS = 0.002
+
+for s in SCENARIOS:
+    corpus_tokens = s["docs"] * TOKENS_PER_PAGE
+    fits_in_context = corpus_tokens < 128_000
+
+    # Rough monthly cost estimates
+    if fits_in_context:
+        tokens_per_query = corpus_tokens + 500
+        recommendation = "Raw API (fits in context window)"
+    elif s["docs"] < 1000 and s["precision_req"] == "low":
+        tokens_per_query = 5 * 512 + 500  # simple RAG, LangChain sufficient
+        recommendation = "LangChain with simple vector store"
+    elif s["precision_req"] == "high" or s["docs"] > 50_000:
+        tokens_per_query = 5 * 512 + 500
+        recommendation = "LlamaIndex (hybrid retrieval + provenance)"
+    else:
+        tokens_per_query = 5 * 512 + 500
+        recommendation = "Either framework; LlamaIndex preferred for caching"
+
+    monthly_cost = (tokens_per_query / 1_000) * COST_PER_1K_TOKENS * s["daily_queries"] * 30
+    print(f"\n{s['name']} ({s['docs']:,} docs, {s['daily_queries']:,} queries/day):")
+    print(f"  Corpus tokens: {corpus_tokens:,} | Fits in context: {fits_in_context}")
+    print(f"  Estimated monthly LLM cost: ${monthly_cost:,.2f}")
+    print(f"  Recommendation: {recommendation}")
+```
+
+---
+
+#### Explain — Why the Framework Boundary Exists at Document Scale and Retrieval Precision
+
+The fundamental reason LlamaIndex beats generic frameworks at document scale is that it treats retrieval as a *first-class engineering problem*, not a feature. When you have 300,000 documents, a single FAISS index with cosine similarity is good enough for demos but breaks down in production: exact citations are missed (sparse retrieval needed), multi-section answers require query decomposition, and reindexing costs spiral without caching.
+
+LangChain's retriever interface is deliberately minimal — it's designed to be *plugged into*, not to own the retrieval engineering. This is the right design choice for LangChain's goals (agent orchestration), but it means teams building document-heavy systems spend months building custom retrieval infrastructure that LlamaIndex provides out of the box.
+
+The interop pattern works because both frameworks respect the same interface: a function that takes a string and returns a string. LlamaIndex query engines are callable with `.query(question_str)`. LangChain `Tool` wrappers accept any callable. The frameworks compose at the interface boundary.
+
+The cost model is the decisive factor at scale: context stuffing costs O(N) per query where N is corpus size. Retrieval-augmented costs O(1) per query (fixed number of retrieved nodes). At 500 pages and 1,000 queries/day, the cost difference is already significant — at 300,000 documents, it's the difference between a viable product and an unsustainable one.
+
+---
+
+### 8. Active Recall (Spaced Repetition) [Beginner → Pro]
+
+**Q1 [Beginner]:** What is the core design bet that differentiates LlamaIndex from LangChain?
+
+> **A:** LlamaIndex bets that *getting heterogeneous data into a queryable form* is the hardest problem — so it optimises for data ingestion, index variety, node-level metadata, and retrieval precision. LangChain bets that *chaining LLM calls, tools, and agents together* is the hardest problem — so it optimises for composability (LCEL), tool breadth (200+ integrations), and agent orchestration (LangGraph). These are complementary bets, not competing ones — they compose well.
+
+---
+
+**Q2 [Beginner]:** Name three LlamaIndex abstractions that have no built-in equivalent in LangChain.
+
+> **A:** (1) `SubQuestionQueryEngine` — decomposes a multi-part question into sub-questions routed to separate query engines, then synthesises a unified answer. (2) `RouterQueryEngine` — LLM-based routing to different index types (vector vs summary vs graph) based on query intent. (3) `IngestionCache` — content-hash caching of parsed/embedded nodes; skips unchanged documents on re-ingestion runs; critical for cost control at scale.
+
+---
+
+**Q3 [Intermediate]:** A user asks: *"Compare the revenue growth of Company A and Company B across all quarterly reports."* Would you use LlamaIndex's `SubQuestionQueryEngine` or build a custom LangChain chain? Justify.
+
+> **A:** LlamaIndex `SubQuestionQueryEngine` — this is exactly its use case. The query decomposes into: (1) *"What is Company A's revenue growth across quarterly reports?"* → Company A index engine. (2) *"What is Company B's revenue growth across quarterly reports?"* → Company B index engine. (3) Synthesis: combine into a comparison. Building this in LangChain requires: a custom decomposition chain, routing logic to two separate retrievers, and a custom synthesis chain — all manually implemented. LlamaIndex ships the whole pattern as a single abstraction.
+
+---
+
+**Q4 [Intermediate]:** You wrap a LlamaIndex query engine as a LangChain Tool and the agent produces wrong answers. What is the most likely cause and fix?
+
+> **A:** Most likely cause: `Tool(func=query_engine.query)` passes the raw `Response` object to the agent. The LLM receives a Python object string like `"Response(response='...', source_nodes=[...])"` instead of clean text. Fix: wrap in a string converter — `def search(q): resp = qe.query(q); return f"{resp.response}\nSources: {[n.node.metadata.get('source') for n in resp.source_nodes]}"` — and pass this function as `Tool(func=search)`.
+
+---
+
+**Q5 [Pro]:** A team uses LangChain exclusively. They have 50,000 internal policy documents, re-indexed weekly, with 30% document churn per week. What is the specific cost/quality risk, and what is the LlamaIndex abstraction that directly addresses it?
+
+> **A:** Cost risk: without `IngestionCache`, every weekly re-indexing embeds all 50,000 documents regardless of whether they changed. At 3 nodes/doc × $0.0001/embedding = $15,000/re-indexing run. With 30% churn, 70% of documents are unchanged — re-embedding them wastes $10,500/run. LlamaIndex `IngestionCache` stores content hashes of parsed nodes and skips any node whose text hasn't changed since the last run. Only the 30% changed documents (15,000 docs × 3 nodes × $0.0001 = $4,500) incur embedding cost. Saving: $10,500/run → $126,000/year at weekly cadence.
+
+---
+
+### 9. Practice
+
+**Mini-exercise:** You're advising a team that has: 200,000 product manuals (PDFs), users asking both semantic questions (*"How do I troubleshoot motor overheating?"*) and exact model-number lookups (*"What are the specs for motor model XC-440?"*). They currently use LangChain with a single FAISS index. What's missing, and how would you restructure?
+
+> **Suggested answer:**
+> - **What's missing:** A single FAISS index with cosine similarity misses exact model-number lookups (sparse retrieval needed). No content caching means re-indexing 200K manuals weekly is expensive. No node-level provenance means engineers can't trace which manual section answered the query.
+> - **Restructure:** Add LlamaIndex as the data layer:
+>   - `IngestionPipeline` with `SentenceSplitter` + `TitleExtractor` + `MetadataExtractor` for model numbers
+>   - `QueryFusionRetriever` with `VectorIndexRetriever` (semantic) + `BM25Retriever` (exact model lookup)
+>   - `SentenceTransformerRerank` for final precision
+>   - `IngestionCache` to skip unchanged manuals on re-indexing
+>   - Wrap as LangChain `Tool` for the existing agent to call
+> - Keep LangChain for the agent loop (it handles the multi-turn conversation and other tools). LlamaIndex replaces only the retrieval layer.
+
+---
+
+**Capstone system design question:** A fintech company has: 500K regulatory documents (SEC filings, FINRA rules, internal policies), a customer-facing Q&A chatbot, and a compliance analyst tool. The chatbot needs < 2s latency and cost < $0.01/query. The analyst tool needs deep multi-document synthesis, exact citation, and a structured output report. Both systems share the same document corpus. Design the architecture, specifying which framework handles which layer and why.
+
+> **Answer outline:**
+> - **Shared data layer (LlamaIndex):** `IngestionPipeline` with `SentenceSplitter(chunk_size=512)` + `MetadataExtractor(extractors=[TitleExtractor, KeywordExtractor])`. `QueryFusionRetriever` (dense + BM25) backed by Pinecone. `IngestionCache` for weekly re-indexing (500K docs at 30% churn). `StorageContext` with separate vector store namespaces for SEC, FINRA, internal policy.
+> - **Customer chatbot (LangChain + LlamaIndex):** LangChain `ConversationBufferMemory` for multi-turn context. LlamaIndex query engine wrapped as Tool with `compact` synthesis mode (low token count → low cost). LlamaIndex `MetadataFilters` to restrict retrieval to the relevant document namespace based on query classification. Target: 5 nodes × 512 tokens + 500 overhead = 3,060 tokens/query × $0.002/1K = $0.006/query. Within budget.
+> - **Compliance analyst tool (LlamaIndex-primary):** `SubQuestionQueryEngine` over 3 sub-engines (one per namespace). `tree_summarize` synthesis for deep multi-document synthesis. `SentenceTransformerRerank(top_n=10)` for citation precision. Pydantic structured output via LlamaIndex's `structured_predict()` for the final compliance report. LangSmith (or Arize Phoenix) for trace-level auditability. Latency: 5–15s acceptable for analyst use case.
+> - **Why not one framework for both:** The chatbot prioritises latency and cost (LangChain's ConversationBufferMemory + LlamaIndex compact retrieval). The analyst tool prioritises depth and precision (LlamaIndex SubQuestionQueryEngine + tree_summarize). Sharing the same LlamaIndex index layer means one ingestion pipeline serves both use cases.
+
+---
+
+### 10. Production Reality Check (Mandatory)
+
+**If this fails in prod, what's the first thing we inspect?**
+
+> **Check whether your retrieval layer is actually the bottleneck — or whether you over-engineered the framework choice.**
+>
+> The most common failure mode when choosing frameworks is *over-complexity before you need it*. A team builds a hybrid LlamaIndex + LangChain system for a 500-document corpus that grows to 5,000 documents over 2 years. The framework overhead (two dependency trees to maintain, two abstraction layers to debug, two sets of version incompatibilities) costs more engineering time than the retrieval quality improvement justifies.
+>
+> **The diagnostic question:** Does your system have measurable retrieval failures (wrong answers, missing citations, recall < 0.8 on test queries) that are specifically caused by limitations of your current retrieval setup? If yes → invest in LlamaIndex's advanced retrieval abstractions. If no → your retrieval is good enough; the failures are elsewhere (prompt quality, LLM reasoning, output parsing, latency).
+>
+> **First thing to check in production:**
+> ```python
+> # Run Recall@5 and Precision@5 on a sample of 50 known-answer queries
+> # using your current retrieval setup
+> def evaluate_retrieval(query_engine, test_cases):
+>     hits = 0
+>     for q, expected_source in test_cases:
+>         results = query_engine.retrieve(q)
+>         retrieved_sources = {r.node.metadata.get("source") for r in results}
+>         if expected_source in retrieved_sources:
+>             hits += 1
+>     return hits / len(test_cases)
+>
+> recall = evaluate_retrieval(current_engine, test_cases)
+> print(f"Recall@5: {recall:.2f}")
+> # If recall < 0.75: invest in hybrid retrieval (LlamaIndex BM25 + dense)
+> # If recall >= 0.75: retrieval is not the problem; look at synthesis or prompting
+> ```
+> Framework choice should follow measured retrieval failure — not precede it.
+
+---
+
+### 11. Curiosity Bridge (Mandatory)
+
+You now have a clear decision framework for *when* LlamaIndex is the right tool — and how it composes with LangChain when you need both. The data layer is solid.
+
+The next question is: what happens when you want the retrieval system itself to act as an *agent* — deciding not just *which nodes to return* but *what actions to take* based on what it finds? When a query engine becomes a tool-calling reasoning loop that can look up multiple sources, verify information, and iterate until it's confident in an answer?
+
+That's **14.3.a: LlamaIndex Agents and ReActAgent** — where the query engine you've built becomes the data backend for an autonomous reasoning loop that knows when to search, when to stop, and when to ask for clarification.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit check:** You're done with 14.2.d when you can explain the core design bet of LlamaIndex vs LangChain, name at least 3 LlamaIndex-only abstractions with no LangChain equivalent, correctly classify a given use case as LlamaIndex-primary / LangChain-primary / hybrid / raw API, and implement the LlamaIndex-as-LangChain-Tool interop pattern with correct string conversion of `Response` objects.
+
+---
+
+**Carry-Forward Review (interleaved recall from 14.2.c):**
+
+*Q: A LlamaIndex Workflow fan-out emits 10 `ValidDoc` events. The `finalize` step uses `ctx.collect_events(ev, [ParsedNodes]*10, wait_for=10)`. After 3 minutes, the workflow hangs. What's the most likely cause and the first diagnostic step?*
+
+> **A:** Most likely cause: one or more `parse_nodes` step instances crashed silently (exception caught internally or unhandled), emitting no event. `collect_events(wait_for=10)` is waiting for events that will never arrive. First diagnostic step: enable `verbose=True` on the workflow and count the `"Step parse_nodes received ValidDoc"` log lines vs the `"Emitting event: ParsedNodes"` lines. If you see 10 receptions but only 8 emissions, 2 steps crashed without emitting. Fix: add `try/except → return FailedEvent(...)` in every step, and include `FailedEvent` in the `collect_events` type list so partial failure completes the fan-in instead of deadlocking it.
+
+
+
+---
+
+## Topic 14.3: Document AI and Knowledge-Heavy Applications
+
+> **Topic time:** 8h
+> Focus: Turning raw, heterogeneous documents into structured, queryable knowledge — the layer between raw files and the LLM.
+
+---
+
+## Subtopic 14.3.a: Document Parsing and Structure Extraction Concepts
+
+### Reading Path + Level Tags
+
+- **Beginner:** Read sections 1–2 and the Active Recall.
+- **Intermediate:** Add sections 3–5 and the parser decision framework table.
+- **Pro:** Complete the full Hands-On Lab (Build → Break → Measure → Explain) and the capstone question.
+
+---
+
+### 0. Pre-Question Hook [Beginner]
+
+**Pause:** You download a 200-page pharmaceutical regulatory filing as a PDF. It has a title page, a table of contents, numbered sections with headings, embedded data tables with drug trial results, footnotes, multi-column layouts, and scanned signature pages. You want to index it so an LLM can answer *"What were the adverse event rates in Trial 2?"* Before reading — what are the three distinct ways that content might exist inside that PDF, and how would each require a different extraction strategy?
+
+---
+
+### 1. The Intuition (Plain English) [Beginner]
+
+When you give a PDF to `SimpleDirectoryReader`, you're trusting a parser to answer one question: *"What text is in here and where does it belong?"* The catch is that documents encode information in at least three different ways, and each requires a completely different extraction strategy:
+
+| Content encoding | What's happening inside the file | Extraction strategy |
+|-----------------|----------------------------------|---------------------|
+| **Text layer** | Characters stored as Unicode strings in the file | Direct text extraction (fast, free, no AI needed) |
+| **Scanned image** | Pages are photographs — no text layer at all | OCR (Optical Character Recognition) |
+| **Structured layout** | Content is visually arranged (tables, columns, forms) — text layer may exist but spatial relationships carry meaning | Layout-aware parsing |
+
+A document can have all three on different pages. A 200-page regulatory filing might have: text-layer content (sections 1–10), an embedded table (section 5 — text layer but spatial structure encodes column headers), and a scanned signature page (page 200 — pure image).
+
+**Document parsing** is the process of extracting not just text, but *structure* — headings, sections, tables, lists, key-value pairs, and their relationships. The goal is to preserve enough structure in your nodes that retrieval finds the right piece of information at the right granularity.
+
+**Analogy:** Parsing a document is like disassembling a piece of IKEA furniture to understand how it was built. The text layer is like reading the assembly instructions that came printed. OCR is like photographing the instructions and using a translator to read them. Layout-aware parsing is like understanding that step 12 means "connect part A to part B" by reading the *diagram*, not just the text. The analogy breaks down here: IKEA instructions have a canonical structure; real documents are wildly inconsistent, and no parser handles all formats equally well.
+
+**Key terms (first use):**
+
+- **Text layer** — the embedded Unicode text in a PDF or Word file; extractable directly without image processing; not all PDFs have one (scanned PDFs do not).
+- **OCR (Optical Character Recognition)** — converting a scanned document image into machine-readable text; adds latency (~1–5s/page) and cost; accuracy degrades on poor scan quality or unusual fonts.
+- **Layout-aware parsing** — extracting text while preserving spatial relationships (table rows/columns, multi-column layout, heading hierarchy); required for tables and complex PDFs.
+- **`LlamaParse`** — LlamaIndex's cloud-based advanced document parser; handles multi-column PDFs, embedded tables, formulas, and code blocks with higher accuracy than open-source alternatives; API-based, has a free tier.
+- **`UnstructuredReader`** — open-source document parser (`unstructured.io`) supporting 25+ file types; categorises elements as `Title`, `NarrativeText`, `Table`, `ListItem`, `Header`, etc.; runs locally or via API.
+- **Structure-aware chunking** — splitting documents at natural semantic boundaries (section headings, paragraph breaks, table boundaries) rather than fixed character counts; preserves meaning coherence within chunks.
+- **`ElementType`** — in `UnstructuredReader`, the category of each extracted element (Title, NarrativeText, Table, Image, ListItem, Header, Footer, PageBreak, etc.); used to filter or route elements during ingestion.
+- **Heading hierarchy** — the h1/h2/h3 or numbered section structure of a document (Chapter 3 → Section 3.2 → Subsection 3.2.1); mapping this to `NodeRelationship` parent-child links enables hierarchical retrieval.
+- **Document metadata enrichment** — attaching structural metadata to nodes at parse time: page number, section title, heading level, document title, author, date; enables metadata-filtered retrieval (*"find information from Section 5 only"*).
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+```mermaid
+flowchart TD
+    RAW["Raw Document\n(PDF / Word / HTML / Excel / Image)"]
+
+    subgraph Detection["Content Type Detection"]
+        TL{"Has text layer?"}
+        SC{"Scanned / image-only?"}
+        ST{"Has structured layout?\n(tables, multi-column, forms)"}
+    end
+
+    subgraph Parsers["Parser Selection"]
+        P1["Direct text extraction\n(pypdf, python-docx, BeautifulSoup)\nFast, free, no AI\n~1ms/page"]
+        P2["OCR\n(Tesseract, AWS Textract,\nAzure Document Intelligence)\nSlower, costly\n~1-5s/page, $0.001-0.01/page"]
+        P3["Layout-aware parser\n(LlamaParse, Unstructured,\nPaddleOCR Table)\nHandles tables + columns\n~2-10s/page, $0.003/page LlamaParse"]
+    end
+
+    subgraph Structure["Structure Extraction"]
+        H["Heading hierarchy\n(h1→h2→h3 or\n1.→1.1→1.1.2)\n→ NodeRelationship parent-child"]
+        TB["Tables\n→ Markdown table strings\nor pandas DataFrame nodes\n→ structured_data metadata"]
+        M["Metadata enrichment\npage_number, section_title,\nheading_level, doc_title, author"]
+    end
+
+    subgraph Chunking["Structure-Aware Chunking"]
+        SAC["Split at semantic boundaries:\n• Section headings\n• Paragraph breaks\n• Table boundaries\n(NOT arbitrary char counts)"]
+    end
+
+    NODES["TextNode / TableNode\nwith metadata + relationships\n→ Ready for indexing"]
+
+    RAW --> Detection
+    TL -->|yes, no tables| P1
+    SC -->|yes| P2
+    ST -->|yes| P3
+    P1 & P2 & P3 --> H & TB & M
+    H & TB & M --> SAC
+    SAC --> NODES
+```
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+#### Scenario A: Legal Due Diligence Platform — 50,000 Contract PDFs
+
+**Context:** A legal tech company indexes 50,000 commercial contracts for due diligence. Contracts have: a structured header (parties, date, governing law), numbered clauses (1. Definitions, 2. Term, 3. Payment, etc.), inline tables (payment schedules, pricing matrices), and exhibit attachments (sometimes scanned). Attorneys ask *"What are the indemnification caps in contracts with Vendor X?"* and *"Find all contracts with automatic renewal clauses."*
+
+**How document parsing fits in:**
+- **Per-document parsing strategy:** Most contracts have a text layer → `pypdf` or `LlamaParse`. Exhibit attachments may be scanned → OCR fallback. Payment schedule tables → layout-aware extraction.
+- **Structure extraction:** `LlamaParse` extracts clause numbering as heading hierarchy. Each clause → parent `TextNode` with `metadata={"clause_number": "3", "clause_title": "Payment", "page": 5}`. Sub-clauses → child nodes with `NodeRelationship.PARENT` pointing to the clause node.
+- **Metadata enrichment:** `TitleExtractor` adds the contract title. Custom metadata extractor pulls `governing_law`, `effective_date`, `party_a`, `party_b` from the header using a regex or LLM extraction step.
+- **Retrieval:** `MetadataFilters(filters=[ExactMatchFilter("clause_title", "Indemnification")])` + semantic retrieval finds indemnification clauses across all 50K contracts without touching non-relevant sections.
+
+**Constraints:**
+- **Parsing cost:** 50K contracts × 20 pages/contract = 1M pages. `LlamaParse` at $0.003/page = $3,000 one-time. Cheaper than manual review. Re-parsing only changed contracts (via `IngestionCache`) = near-zero incremental cost.
+- **Latency:** `LlamaParse` processes ~10 pages/second via API → 1M pages / 10 = 100,000 seconds ≈ 28 hours for full initial parse. Parallelise across 10 workers → 2.8 hours. For ongoing ingestion of new contracts (10–50/day), real-time parsing per document is acceptable.
+- **OCR quality:** Scanned exhibits have 85–95% OCR accuracy. Low-confidence OCR tokens should be flagged in metadata for attorney review rather than silently included in the index.
+- **What "good" looks like:** A query for *"indemnification caps > $5M"* returns exactly the relevant clause nodes from relevant contracts, with `source_nodes` showing contract name, clause number, and page. Zero hallucinated clauses.
+
+---
+
+#### Scenario B: Financial Report Ingestion — Structured Tables in SEC Filings
+
+**Context:** A fintech platform indexes 10,000 SEC 10-K filings. Each filing has: narrative text (MD&A, risk factors), financial statement tables (income statement, balance sheet — with precise numeric data), and footnotes. Analysts ask *"What was Apple's R&D expense in fiscal 2023?"* — a query that requires extracting from a specific row/column of a financial table, not from narrative text.
+
+**How structured table extraction works:**
+- **Naive approach (fails here):** `SimpleDirectoryReader` with default PDF reader extracts table content as raw text — losing column alignment. The income statement row *"Research and development ... 29,915 ... 26,251 ... 21,914"* looks like unstructured text; the model can't reliably associate `29,915` with `fiscal 2023`.
+- **Layout-aware approach:** `LlamaParse` returns tables as Markdown-formatted strings with proper column alignment:
+  ```
+  | | 2023 | 2022 | 2021 |
+  |---|---|---|---|
+  | Research and development | 29,915 | 26,251 | 21,914 |
+  ```
+  Each table is stored as a separate `TextNode` with `metadata={"element_type": "table", "table_title": "Consolidated Statements of Operations", "page": 45}`.
+- **Hybrid nodes:** Narrative text nodes and table nodes are indexed separately. A `RouterQueryEngine` routes numeric queries to a table-filtered retriever and narrative queries to the main semantic retriever.
+
+**Constraints:**
+- **Precision requirement:** A wrong number in a financial answer is a legal liability. Table nodes must preserve exact numeric values. Any parser that merges table cells with adjacent narrative text produces incorrect data.
+- **Scale:** 10,000 10-K filings × 100 pages average = 1M pages. Same cost math as Scenario A. SEC filings are dense with tables — `LlamaParse` is justified.
+- **What "good" looks like:** *"Apple R&D 2023"* retrieves the exact table row with correct column alignment and the model reads `$29,915 million` directly from the structured node.
+
+---
+
+#### Scenario C: Knowledge Base from Mixed-Format Enterprise Docs
+
+**Context:** A company builds an internal knowledge assistant over SharePoint content: Word documents (policy manuals), Excel spreadsheets (product catalogs, pricing), PowerPoint presentations (training materials), HTML pages (internal wiki), scanned PDFs (legacy compliance certificates). All 5 formats.
+
+**Parser-per-format approach:**
+- **Word (.docx):** `python-docx` preserves heading styles → heading hierarchy. `docx2txt` as a fallback for text-only extraction.
+- **Excel (.xlsx):** Each sheet → pandas DataFrame → serialised as structured text (`df.to_markdown()`) → one `TextNode` per sheet with `metadata={"sheet_name": "Pricing_Q3", "columns": ["SKU", "Price", "Region"]}`.
+- **PowerPoint (.pptx):** Each slide → one `TextNode`. Speaker notes as a separate child node. Slide title → `metadata={"slide_number": 7, "slide_title": "Q3 Revenue Overview"}`.
+- **HTML:** `BeautifulSoup` with tag-aware extraction. `<h1>/<h2>/<h3>` → heading hierarchy. `<table>` → Markdown table node. `<p>` → narrative text nodes.
+- **Scanned PDFs:** `UnstructuredReader` with `strategy="hi_res"` triggers Tesseract OCR automatically. Elements classified by `ElementType` (Title, NarrativeText, Table).
+
+**Constraints:**
+- **Format detection:** `SimpleDirectoryReader` uses file extension to pick the reader. Edge cases: a `.pdf` that's actually text-layer vs scanned must be detected at parse time (check if extracted text length is suspiciously short → fallback to OCR).
+- **Cross-format consistency:** All formats ultimately produce `TextNode` objects with the same metadata schema (`source`, `page`, `section_title`, `element_type`). Retrieval works uniformly across formats.
+- **What "good" looks like:** A query for *"What is the list price for SKU-4421?"* retrieves the Excel pricing table row. A query for *"What is the company's remote work policy?"* retrieves the Word document clause. Both show correct `source_nodes` with file name and section.
+
+---
+
+### 4. System View (Think Like a Systems Engineer) [Intermediate]
+
+**Inputs → Transformations → Outputs for document parsing:**
+
+```
+INPUTS:
+  - Raw files: PDF, Word, Excel, HTML, PowerPoint, images
+  - Parser configuration: strategy (fast/hi_res), OCR backend, table format
+  - Metadata schema: which fields to extract and how
+
+TRANSFORMATIONS:
+  1. Format detection: file extension + content sniffing → parser selection
+  2. Content extraction:
+     - Text layer:  extract Unicode text, preserving reading order
+     - OCR:         image → bounding boxes → text + confidence scores
+     - Layout:      bounding boxes → spatial relationship detection →
+                    table cells / column grouping / heading levels
+  3. Element classification (Unstructured model or rule-based):
+     Title, NarrativeText, Table, ListItem, Header, Footer, Image, Formula
+  4. Hierarchy mapping:
+     h1 → parent node; h2 → child of h1; h3 → child of h2
+     clause 3 → parent; clause 3.1 → child of clause 3
+  5. Metadata enrichment:
+     page_number, section_title, heading_level, element_type, doc_title, author
+  6. Structure-aware chunking:
+     split at heading boundaries (not arbitrary chars)
+     keep table as atomic unit (never split a table mid-row)
+     sentence splitter within narrative sections
+  7. NodeRelationship wiring:
+     PARENT, CHILD, PREVIOUS, NEXT relationships between nodes
+
+OUTPUTS:
+  - List[TextNode] with text + metadata + relationships
+  - Ready for VectorStoreIndex or IngestionPipeline
+```
+
+**Observability — what to log and measure:**
+
+| Signal | What to capture | Why |
+|--------|----------------|-----|
+| `parser_type` | Which parser ran for each document | Track parser coverage; identify files needing fallback |
+| `element_counts_by_type` | Count of Title/Table/NarrativeText per doc | Detect parsing failures (0 Tables when tables expected) |
+| `ocr_confidence_avg` | Average OCR confidence score per page | Low confidence → flag for manual review |
+| `text_extraction_length` | Chars extracted vs expected doc length | Very short extraction → parse failure or scanned doc |
+| `table_node_count` | Tables extracted per document | 0 tables in a financial report → parser misconfiguration |
+| `parse_latency_p95` | Wall-clock time per document | Identify slow parsers (OCR >> text layer) |
+| `nodes_per_document` | Average node count after chunking | Very high count → chunk size too small; very low → too large |
+
+**Failure points — where it breaks and how it shows up:**
+
+1. **Text layer mistaken for full content on a mixed PDF** — A PDF has 80 text-layer pages and 20 scanned pages. The parser extracts the 80 text pages correctly but silently skips the 20 scanned pages (or extracts garbage characters from the image layer). *How it shows up:* nodes from pages 1–80 are present; nodes from pages 81–100 are absent; queries about content on those pages return no results. *Fix:* detect short/empty text extractions per page and trigger OCR fallback for those pages only.
+
+2. **Table extracted as linear text — column alignment lost** — A PDF table is parsed by `pypdf` which reads left-to-right, top-to-bottom across the whole page. The result is the table's text scrambled with adjacent paragraph text. *How it shows up:* numeric queries (e.g., *"R&D expense in 2023"*) return nearby narrative text instead of the table cell; numbers are present but without column-header context. *Fix:* use `LlamaParse` or `pdfplumber` for documents with financial tables; detect tables by checking if extracted text contains repetitive numeric patterns adjacent to short text strings.
+
+3. **Multi-column PDF parsed as single column** — A two-column academic paper or newsletter is parsed left-to-right across the full page width, mixing column A and column B text. *How it shows up:* sentences are interleaved from both columns, producing grammatically nonsensical chunks. *Fix:* use `LlamaParse` or `unstructured` with `strategy="hi_res"` which detects multi-column layout via bounding box analysis.
+
+4. **Heading hierarchy not extracted — all nodes at the same level** — The parser extracts all text as flat `NarrativeText` elements with no `Title` or heading-level metadata. Structure-aware chunking can't find section boundaries, so all content is split by character count, breaking logical sections mid-sentence. *How it shows up:* chunks end mid-section; answers missing the beginning or end of a clause; node metadata has no `section_title`. *Fix:* use `UnstructuredReader` with heading detection, or `LlamaParse` which returns structured JSON with heading levels.
+
+---
+
+### 5. System Design Flavor [Intermediate]
+
+**Parser selection and configuration patterns:**
+
+```python
+# document_parsing_lab.py
+# pip install llama-index-core llama-index-readers-file unstructured[pdf] pdfplumber
+
+from llama_index.core import SimpleDirectoryReader, Document
+from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.schema import TextNode, NodeRelationship, RelatedNodeInfo
+
+# ── Option A: SimpleDirectoryReader (fastest, text-layer only) ────────────────
+# Good for: plain text PDFs, HTML, Word with text layer
+# Bad for: scanned PDFs, financial tables, multi-column layouts
+
+reader = SimpleDirectoryReader(
+    input_dir="./docs/",
+    filename_as_id=True,        # use filename as doc_id for IngestionCache stability
+    required_exts=[".pdf", ".docx", ".html", ".txt"],
+    recursive=True,
+)
+docs = reader.load_data()
+print(f"SimpleDirectoryReader: {len(docs)} documents loaded")
+for d in docs[:3]:
+    print(f"  {d.metadata.get('file_name')} | chars: {len(d.text)} | page: {d.metadata.get('page_label', 'N/A')}")
+
+
+# ── Option B: UnstructuredReader (element-level classification) ───────────────
+# Good for: mixed format, heading detection, basic table extraction
+# Bad for: complex financial tables, scanned PDFs without OCR setup
+# pip install unstructured[pdf]
+
+try:
+    from llama_index.readers.file import UnstructuredReader
+    unstructured_reader = UnstructuredReader()
+
+    # Load a PDF with element-level structure
+    # docs_unstructured = unstructured_reader.load_data(file="./sample.pdf", split_documents=False)
+    # Each element is a Document; metadata includes element_type, page_number, etc.
+    # Example output metadata: {"element_type": "Title", "page_number": 1, "text_as_html": "..."}
+
+    print("UnstructuredReader available")
+except ImportError:
+    print("UnstructuredReader not installed (pip install unstructured[pdf])")
+
+
+# ── Option C: LlamaParse (cloud, highest quality for complex PDFs) ─────────────
+# Good for: financial tables, multi-column, formulas, code blocks
+# Requires: LLAMA_CLOUD_API_KEY (free tier available at cloud.llamaindex.ai)
+# Cost: $0.003/page (free tier: 1000 pages/day)
+
+try:
+    from llama_parse import LlamaParse
+    import os
+
+    # parser = LlamaParse(
+    #     api_key=os.environ["LLAMA_CLOUD_API_KEY"],
+    #     result_type="markdown",      # returns structured Markdown with tables
+    #     num_workers=4,               # parallel page processing
+    #     verbose=True,
+    #     language="en",
+    # )
+    # documents = parser.load_data("./financial_report.pdf")
+    # LlamaParse returns Markdown like:
+    # "# Section 1\n\nSome text...\n\n| Col A | Col B |\n|---|---|\n| 1 | 2 |\n"
+    print("LlamaParse available (set LLAMA_CLOUD_API_KEY to use)")
+except ImportError:
+    print("LlamaParse not installed (pip install llama-parse)")
+
+
+# ── Structure-aware chunking with heading-based splitting ─────────────────────
+# When documents are loaded as Markdown (from LlamaParse), split at headings
+
+def parse_markdown_to_nodes(markdown_text: str, doc_metadata: dict) -> list:
+    """Split Markdown into heading-aware nodes with hierarchy metadata."""
+    import re
+    nodes = []
+    current_h1 = current_h2 = ""
+    current_text = []
+    current_heading = ""
+    current_level = 0
+
+    lines = markdown_text.split("\n")
+    for line in lines:
+        h1_match = re.match(r"^# (.+)$", line)
+        h2_match = re.match(r"^## (.+)$", line)
+        h3_match = re.match(r"^### (.+)$", line)
+
+        if h1_match or h2_match or h3_match:
+            # Flush accumulated text as a node
+            if current_text and current_heading:
+                text = "\n".join(current_text).strip()
+                if text:
+                    metadata = {
+                        **doc_metadata,
+                        "heading_level": current_level,
+                        "section_title": current_heading,
+                        "h1": current_h1,
+                        "h2": current_h2,
+                    }
+                    nodes.append(TextNode(text=text, metadata=metadata))
+                current_text = []
+
+            if h1_match:
+                current_h1 = h1_match.group(1)
+                current_h2 = ""
+                current_heading = current_h1
+                current_level = 1
+            elif h2_match:
+                current_h2 = h2_match.group(1)
+                current_heading = current_h2
+                current_level = 2
+            elif h3_match:
+                current_heading = h3_match.group(1)
+                current_level = 3
+        else:
+            if line.strip():
+                current_text.append(line)
+
+    # Flush last section
+    if current_text and current_heading:
+        text = "\n".join(current_text).strip()
+        if text:
+            metadata = {**doc_metadata, "heading_level": current_level,
+                       "section_title": current_heading, "h1": current_h1}
+            nodes.append(TextNode(text=text, metadata=metadata))
+
+    return nodes
+
+
+# Test the heading-aware parser
+sample_markdown = """
+# Q3 2024 Earnings Report
+
+## Executive Summary
+
+Revenue grew 12% year-over-year to $4.2 billion driven by strong enterprise sales.
+
+## Financial Results
+
+### Revenue Breakdown
+
+| Segment | Q3 2024 | Q3 2023 | Change |
+|---------|---------|---------|--------|
+| Enterprise | $2.8B | $2.3B | +22% |
+| Consumer | $1.4B | $1.5B | -7% |
+
+### Operating Expenses
+
+R&D expense was $450M, up 8% from the prior year period.
+
+## Outlook
+
+We expect Q4 revenue of $4.5B to $4.7B.
+"""
+
+parsed_nodes = parse_markdown_to_nodes(
+    sample_markdown,
+    doc_metadata={"source": "q3_earnings.pdf", "doc_title": "Q3 2024 Earnings Report"}
+)
+print(f"\nHeading-aware parsing: {len(parsed_nodes)} nodes")
+for n in parsed_nodes:
+    print(f"  [L{n.metadata.get('heading_level')}] {n.metadata.get('section_title')!r} | chars: {len(n.text)}")
+    print(f"    {n.text[:80].strip()!r}")
+
+
+# ── Metadata enrichment from structure ────────────────────────────────────────
+# Add structural metadata to every node for filtered retrieval
+
+def enrich_node_metadata(node: TextNode, doc_source: str, doc_title: str, page_number: int = None) -> TextNode:
+    """Standardise metadata schema across all document formats."""
+    node.metadata.update({
+        "source": doc_source,
+        "doc_title": doc_title,
+        "page_number": page_number,
+        "has_table": "|---|" in node.text,   # heuristic: Markdown table present
+        "element_type": "table" if "|---|" in node.text else "narrative",
+        "char_count": len(node.text),
+    })
+    return node
+
+# Apply to all parsed nodes
+enriched = [
+    enrich_node_metadata(n, "q3_earnings.pdf", "Q3 2024 Earnings Report", page_number=idx+1)
+    for idx, n in enumerate(parsed_nodes)
+]
+table_nodes     = [n for n in enriched if n.metadata.get("has_table")]
+narrative_nodes = [n for n in enriched if not n.metadata.get("has_table")]
+print(f"\nEnriched: {len(table_nodes)} table nodes, {len(narrative_nodes)} narrative nodes")
+```
+
+**Key tradeoffs:**
+
+| Tradeoff | Fast (text-layer) | Layout-aware | OCR |
+|----------|------------------|-------------|-----|
+| **Speed** | ~1ms/page | ~2–10s/page | ~1–5s/page |
+| **Cost** | Free | $0.003/page (LlamaParse) | $0.001–0.01/page (cloud OCR) |
+| **Table accuracy** | Poor (loses column alignment) | High | Low–Medium |
+| **Scanned doc support** | None | None (needs text layer) | Full |
+| **Multi-column layout** | Poor | High | Medium |
+| **When to use** | Plain text PDFs, Word docs with simple layout | Financial reports, contracts, technical papers | Scanned archives, legacy docs, certificates |
+
+**Scaling consideration (10x document volume):**
+At 10x, three changes dominate:
+- **Parser parallelisation:** `LlamaParse` supports `num_workers=N` for concurrent page processing. Wrap `SimpleDirectoryReader` with a `ThreadPoolExecutor` or Prefect task for parallel document loading.
+- **Two-tier parsing strategy:** expensive layout-aware parsing (LlamaParse) for documents that contain tables (detected by file size heuristic or keyword scan); cheap text-layer parsing for everything else. Reduces cost by 60–80% at scale.
+- **Parse-once caching:** Store parsed `TextNode` objects (after structure extraction but before embedding) in a document store (`SimpleDocumentStore` or Redis). On re-ingestion, deserialise cached nodes instead of re-parsing. `IngestionCache` handles this automatically when wired into `IngestionPipeline`.
+
+---
+
+### 6. Common Mistakes + Debugging [Beginner → Intermediate]
+
+#### Mistake 1: Using Default PDF Reader for Financial Tables
+
+**Symptom:** A query for *"What was the gross margin in Q3?"* returns narrative text about market conditions instead of the financial table row with the exact number. The model's answer is a plausible-sounding paraphrase, not the actual figure.
+
+**Likely cause:** `SimpleDirectoryReader` with the default `pypdf` backend extracts table content as linearised text — no column headers attached to the values. The table row `"Gross profit ... 12,345 ... 11,200 ... 10,100"` is a flat string; the LLM has no way to map `12,345` to `Q3 2024` without the column header context.
+
+**First debugging step:**
+```python
+# Check what pypdf actually extracted from the financial table
+from pypdf import PdfReader
+reader = PdfReader("financial_report.pdf")
+page = reader.pages[44]   # page 45 (0-indexed)
+text = page.extract_text()
+print(text[:1000])
+# If you see: "Gross profit 12,345 11,200 10,100" with no column headers
+# → pypdf is merging columns. Switch to LlamaParse or pdfplumber:
+import pdfplumber
+with pdfplumber.open("financial_report.pdf") as pdf:
+    page = pdf.pages[44]
+    tables = page.extract_tables()
+    print(tables[0])   # should show [[header_row], [data_row], ...]
+```
+
+---
+
+#### Mistake 2: Splitting Tables Mid-Row with Character-Count Chunking
+
+**Symptom:** Retrieved table nodes are truncated — some rows are in one chunk, others in the next. A query about a specific row retrieves two partial nodes, and the synthesised answer is incomplete or contradictory.
+
+**Likely cause:** `SentenceSplitter(chunk_size=512)` applied to a Markdown table string splits it at 512 characters — mid-table. The split breaks the Markdown format, so the LLM can't read the column structure correctly.
+
+**First debugging step:**
+```python
+# Detect and protect table nodes from mid-row splitting
+from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.schema import TextNode
+
+def split_with_table_protection(text: str, chunk_size: int = 512) -> list:
+    """Split text, but keep Markdown tables as atomic units."""
+    import re
+    # Identify table boundaries
+    table_pattern = re.compile(r'(\|.+\|[\n\r]+)+', re.MULTILINE)
+    tables = list(table_pattern.finditer(text))
+
+    if not tables:
+        # No tables: standard splitting
+        splitter = SentenceSplitter(chunk_size=chunk_size)
+        return splitter.split_text(text)
+
+    # Split non-table sections, keep table sections intact
+    chunks = []
+    last_end = 0
+    for table_match in tables:
+        # Split text before the table
+        pre_text = text[last_end:table_match.start()].strip()
+        if pre_text:
+            splitter = SentenceSplitter(chunk_size=chunk_size)
+            chunks.extend(splitter.split_text(pre_text))
+        # Keep table as one atomic chunk (even if > chunk_size)
+        table_text = table_match.group(0).strip()
+        if table_text:
+            chunks.append(table_text)
+        last_end = table_match.end()
+
+    # Text after last table
+    post_text = text[last_end:].strip()
+    if post_text:
+        splitter = SentenceSplitter(chunk_size=chunk_size)
+        chunks.extend(splitter.split_text(post_text))
+    return chunks
+```
+
+---
+
+#### Mistake 3: No OCR Fallback for Partially Scanned PDFs
+
+**Symptom:** The index has 90% of the document content, but 10% of queries return no results or the answer is missing key information. The missing content is always on specific pages of specific documents.
+
+**Likely cause:** The PDF has mixed content — most pages have a text layer, but some pages (scanned appendices, signature pages, image-heavy sections) don't. The parser skips pages with insufficient text extraction silently.
+
+**First debugging step:**
+```python
+from pypdf import PdfReader
+
+def detect_scanned_pages(pdf_path: str, min_chars_per_page: int = 50) -> list:
+    """Return list of page numbers where text extraction is suspiciously short."""
+    reader = PdfReader(pdf_path)
+    scanned_pages = []
+    for i, page in enumerate(reader.pages):
+        text = page.extract_text() or ""
+        if len(text.strip()) < min_chars_per_page:
+            scanned_pages.append(i + 1)   # 1-indexed
+    return scanned_pages
+
+scanned = detect_scanned_pages("regulatory_filing.pdf")
+print(f"Likely scanned pages: {scanned}")
+# For these pages, trigger OCR (e.g., pdf2image + pytesseract or LlamaParse with OCR mode)
+# LlamaParse handles this automatically:
+# LlamaParse(result_type="markdown", use_vendor_multimodal_model=True) -> OCR via GPT-4V
+```
+
+---
+
+### 7. Hands-On Lab [Pro]
+
+#### Build — Multi-Format Document Parsing with Metadata Enrichment
+
+```python
+# parsing_lab.py
+# pip install llama-index-core llama-index-readers-file pypdf pdfplumber
+
+from llama_index.core import Document
+from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.schema import TextNode
+import re
+
+# ── Simulate parsed documents from 3 formats ──────────────────────────────────
+# (In production, these would come from actual file parsers)
+
+# Format 1: Plain text document (from Word/HTML)
+plain_text_doc = Document(
+    text="""Introduction
+
+This document describes the company's data retention policy.
+
+Section 1: Scope
+
+This policy applies to all employees and contractors who handle customer data.
+
+Section 2: Retention Periods
+
+Customer transaction records must be retained for 7 years.
+Employee records must be retained for 5 years after termination.
+Marketing data may be deleted after 2 years.
+
+Section 3: Deletion Procedures
+
+Data must be securely wiped using DoD 5220.22-M standard.
+""",
+    metadata={"source": "data_retention_policy.docx", "doc_title": "Data Retention Policy"}
+)
+
+# Format 2: Financial table (from LlamaParse output - Markdown with tables)
+table_doc = Document(
+    text="""# Q3 2024 Financial Summary
+
+## Revenue by Segment
+
+| Segment | Q3 2024 ($M) | Q3 2023 ($M) | YoY Change |
+|---------|-------------|-------------|------------|
+| Enterprise | 2,845 | 2,312 | +23% |
+| Consumer | 1,423 | 1,534 | -7% |
+| Total | 4,268 | 3,846 | +11% |
+
+## Operating Expenses
+
+| Category | Q3 2024 ($M) | Q3 2023 ($M) |
+|----------|-------------|-------------|
+| R&D | 450 | 416 |
+| Sales & Marketing | 623 | 589 |
+| G&A | 187 | 178 |
+""",
+    metadata={"source": "q3_earnings.pdf", "doc_title": "Q3 2024 Earnings Report", "page": 8}
+)
+
+# Format 3: Structured HTML (from internal wiki)
+html_doc = Document(
+    text="""Product Catalog Overview
+
+Product: Widget Pro X440
+SKU: WP-X440
+List Price: $299.99
+Category: Industrial Components
+Description: High-torque servo motor for precision manufacturing applications.
+Specifications: Torque 45 Nm, Speed 3000 RPM, Weight 2.3 kg
+
+Product: Widget Basic B100
+SKU: WB-B100
+List Price: $49.99
+Category: Consumer Components
+Description: Standard motor for general purpose applications.
+""",
+    metadata={"source": "product_catalog.html", "doc_title": "Product Catalog"}
+)
+
+docs = [plain_text_doc, table_doc, html_doc]
+
+# ── Structure-aware chunking ───────────────────────────────────────────────────
+def structure_aware_split(doc: Document, chunk_size: int = 512) -> list:
+    """Split a document into nodes, preserving tables as atomic units."""
+    text = doc.text
+    base_metadata = dict(doc.metadata)
+
+    # Identify Markdown tables (protect from mid-row splits)
+    table_re = re.compile(r'(\|[^\n]+\|\n\|[-| ]+\|\n(?:\|[^\n]+\|\n?)+)', re.MULTILINE)
+    tables = list(table_re.finditer(text))
+
+    if not tables:
+        splitter = SentenceSplitter(chunk_size=chunk_size, chunk_overlap=50)
+        raw_splits = splitter.split_text(text)
+        return [
+            TextNode(text=s, metadata={**base_metadata, "has_table": False, "char_count": len(s)})
+            for s in raw_splits if s.strip()
+        ]
+
+    nodes = []
+    last_end = 0
+    splitter = SentenceSplitter(chunk_size=chunk_size, chunk_overlap=50)
+
+    for m in tables:
+        # Split pre-table narrative
+        pre = text[last_end:m.start()].strip()
+        if pre:
+            for s in splitter.split_text(pre):
+                if s.strip():
+                    nodes.append(TextNode(
+                        text=s,
+                        metadata={**base_metadata, "has_table": False, "char_count": len(s)}
+                    ))
+        # Keep table atomic
+        table_text = m.group(0).strip()
+        nodes.append(TextNode(
+            text=table_text,
+            metadata={**base_metadata, "has_table": True,
+                      "element_type": "table", "char_count": len(table_text)}
+        ))
+        last_end = m.end()
+
+    # Post-table narrative
+    post = text[last_end:].strip()
+    if post:
+        for s in splitter.split_text(post):
+            if s.strip():
+                nodes.append(TextNode(
+                    text=s,
+                    metadata={**base_metadata, "has_table": False, "char_count": len(s)}
+                ))
+    return nodes
+
+# Parse all documents
+all_nodes = []
+for doc in docs:
+    nodes = structure_aware_split(doc)
+    all_nodes.extend(nodes)
+    print(f"{doc.metadata['source']}: {len(nodes)} nodes | "
+          f"tables: {sum(1 for n in nodes if n.metadata.get('has_table'))}")
+
+print(f"\nTotal nodes: {len(all_nodes)}")
+
+# ── Metadata statistics ────────────────────────────────────────────────────────
+table_nodes = [n for n in all_nodes if n.metadata.get("has_table")]
+narrative_nodes = [n for n in all_nodes if not n.metadata.get("has_table")]
+print(f"Table nodes: {len(table_nodes)}")
+print(f"Narrative nodes: {len(narrative_nodes)}")
+avg_chars = sum(n.metadata["char_count"] for n in all_nodes) / len(all_nodes)
+print(f"Avg chars per node: {avg_chars:.0f}")
+
+# Show table nodes
+print("\nTable nodes:")
+for n in table_nodes:
+    print(f"  [{n.metadata['source']}] {n.text[:100].strip()!r}...")
+```
+
+---
+
+#### Break — Force the Table-Split Failure
+
+```python
+# BREAK: use standard SentenceSplitter on a financial table → splits mid-row
+
+from llama_index.core.node_parser import SentenceSplitter
+
+# Standard splitter with tiny chunk size to force a split inside the table
+standard_splitter = SentenceSplitter(chunk_size=80, chunk_overlap=0)
+table_text = table_doc.text
+broken_chunks = standard_splitter.split_text(table_text)
+
+print(f"\nBREAK: Standard splitter ({len(broken_chunks)} chunks from table doc):")
+for i, chunk in enumerate(broken_chunks):
+    print(f"  [{i}] {chunk[:120].strip()!r}")
+    # Look for chunks that start with "| ..." but have no header row
+    # → table header and data rows in separate chunks → column context lost
+
+# Now compare with structure-aware splitting
+protected_nodes = structure_aware_split(table_doc, chunk_size=80)
+print(f"\nFIX: Structure-aware splitter ({len(protected_nodes)} nodes):")
+for n in protected_nodes:
+    ttype = "TABLE" if n.metadata.get("has_table") else "TEXT "
+    print(f"  [{ttype}] {n.text[:120].strip()!r}")
+# Table nodes are always complete (even if > 80 chars)
+```
+
+---
+
+#### Measure — Parser Coverage per Document Type
+
+```python
+# Measure text extraction completeness per format
+# (proxy for parse quality: chars extracted / expected chars)
+
+import math
+
+SAMPLE_DOCS = [
+    {"name": "policy.docx",   "format": "word",  "expected_chars": 800,  "extracted": len(plain_text_doc.text)},
+    {"name": "earnings.pdf",  "format": "pdf",   "expected_chars": 500,  "extracted": len(table_doc.text)},
+    {"name": "catalog.html",  "format": "html",  "expected_chars": 400,  "extracted": len(html_doc.text)},
+]
+
+print("\nParser coverage report:")
+print(f"{'Document':<25} {'Format':<8} {'Expected':<12} {'Extracted':<12} {'Coverage':<10} {'Status'}")
+print("-" * 80)
+for d in SAMPLE_DOCS:
+    coverage = d["extracted"] / d["expected_chars"]
+    status = "OK" if coverage > 0.8 else "WARNING: low extraction" if coverage > 0.3 else "FAIL: likely scanned"
+    print(f"{d['name']:<25} {d['format']:<8} {d['expected_chars']:<12} {d['extracted']:<12} {coverage:<10.0%} {status}")
+
+# Count nodes by element type
+from collections import Counter
+type_counts = Counter(n.metadata.get("element_type", "narrative") for n in all_nodes)
+print(f"\nNode type distribution: {dict(type_counts)}")
+# Low table count in financial docs → parser misconfiguration
+```
+
+---
+
+#### Explain — Why Structure Matters More Than Text Volume
+
+The fundamental insight of document parsing for RAG is that *where* information is in a document is often as important as *what* it says. A financial model's claim that revenue was `$4.2B` is only useful if it's associated with `Q3 2024` from the column header. A legal clause's indemnification cap of `$10M` is only meaningful if it's associated with the `Indemnification` section heading — not the `Limitation of Liability` clause next to it.
+
+Flat text extraction destroys this spatial and hierarchical context. When a PDF parser reads left-to-right, top-to-bottom across the whole page, table cells lose their column headers, multi-column layouts interleave sentences from adjacent columns, and footnotes mix with body text. The resulting chunks are syntactically valid text but semantically incoherent — the LLM is trying to answer questions from a cut-and-scrambled document.
+
+Structure-aware parsing preserves the *document grammar* — the heading hierarchy tells the retriever which section a node belongs to; table structure tells the LLM which value belongs to which column; metadata enrichment tells the system which page and section to cite. This is why the difference between `pypdf` and `LlamaParse` for a financial report isn't a minor quality improvement — it's the difference between answering *"What was R&D expense in Q3?"* correctly and hallucinating a nearby number.
+
+---
+
+### 8. Active Recall (Spaced Repetition) [Beginner → Pro]
+
+**Q1 [Beginner]:** What are the three ways content can be encoded in a PDF, and what extraction strategy does each require?
+
+> **A:** (1) **Text layer** — Unicode text embedded in the file; direct text extraction via `pypdf` or `pdfplumber` (fast, free, no AI). (2) **Scanned image** — pages are photographs with no text layer; OCR required (Tesseract, AWS Textract, LlamaParse with multimodal mode). (3) **Structured layout** — text layer exists but spatial relationships carry meaning (tables, columns, forms); layout-aware parsing required (LlamaParse, `pdfplumber.extract_tables()`, Unstructured with `strategy="hi_res"`). A single PDF can contain all three across different pages.
+
+---
+
+**Q2 [Beginner]:** Why does splitting a Markdown table at a character-count boundary break retrieval, and what is the fix?
+
+> **A:** A `SentenceSplitter` that hits its `chunk_size` limit mid-table splits the table into chunks where data rows are separated from their header row. The LLM receives a chunk starting with `| 12,345 | 11,200 |` but no column headers — it can't determine what those numbers represent. Fix: detect Markdown table boundaries (regex on `|---|` rows), mark table spans as atomic units, and split only the non-table narrative sections with the character-count splitter. Tables are kept intact even if they exceed `chunk_size`.
+
+---
+
+**Q3 [Intermediate]:** A financial PDF has 90 pages of text-layer content and 10 pages of scanned tables. `SimpleDirectoryReader` extracts only the 90 text-layer pages. How do you detect and fix the missing 10 pages?
+
+> **A:** Detection: iterate pages with `pypdf`; flag any page where `len(page.extract_text().strip()) < 50` characters as likely scanned. These page numbers go into a `scanned_pages` list. Fix: for those specific pages, trigger OCR — either locally with `pdf2image + pytesseract`, or by re-parsing the whole document with `LlamaParse` (which auto-detects scanned pages and applies OCR). The key is page-level detection rather than all-or-nothing OCR for the whole document (which would waste cost on the 90 text-layer pages).
+
+---
+
+**Q4 [Intermediate]:** What metadata fields should every node carry after document parsing, and why does each matter for retrieval?
+
+> **A:** Minimum required: (1) `source` (file name/path) — for provenance/citation in answers. (2) `page_number` — for page-level citation and debugging. (3) `section_title` — for section-filtered retrieval (*"find only in Section 3"*). (4) `heading_level` — for hierarchical retrieval and chunk-context understanding. (5) `element_type` (narrative/table/list) — for routing queries to the right node type (table nodes for numeric queries, narrative for conceptual). (6) `doc_title` — for cross-document routing and citation display. Optional but valuable: `author`, `date`, `has_table`, `char_count`.
+
+---
+
+**Q5 [Pro]:** Design the parsing strategy for a corpus of 10,000 documents with unknown format distribution (some plain text PDFs, some scanned, some financial tables, some HTML). You have a $500 budget for parsing and need 95% retrieval recall across all document types.
+
+> **A:** **Two-tier strategy with format detection:** (1) Run all documents through `SimpleDirectoryReader` (free, fast). Flag documents where `text_extraction_length / file_size_bytes < 0.1` (likely scanned) and documents where the extracted text contains many short numeric strings adjacent to pipe characters (likely table). (2) Tier 1 (80% of docs, plain text): keep `SimpleDirectoryReader` output. (3) Tier 2 (20% of docs, tables + scanned): re-parse with `LlamaParse` (`$0.003/page`). Estimate: 2,000 documents × 20 pages avg = 40,000 pages × $0.003 = $120 — well within budget. (4) For scanned-only docs with no text layer: `LlamaParse` with `use_vendor_multimodal_model=True` → GPT-4V OCR. Budget: 500 scanned docs × 20 pages × $0.006 (GPT-4V) = $60. Total: $180 << $500. (5) Metadata enrichment: add `parser_type` field to every node for debugging and quality tracking.
+
+---
+
+### 9. Practice
+
+**Mini-exercise:** You're building a knowledge base over a law firm's document archive: 5,000 Word documents (contracts, briefs, memos), 2,000 scanned PDFs (old case files), and 500 Excel spreadsheets (billing records). For each format, specify the parser and chunking strategy.
+
+> **Suggested answer:**
+> - **Word (.docx):** `python-docx` reader via `SimpleDirectoryReader` with `required_exts=[".docx"]`. Heading-based chunking using `filename_as_id=True`. `MetadataExtractor` to pull document date and author from the file's built-in metadata. `SentenceSplitter(chunk_size=512)` within each section.
+> - **Scanned PDFs (.pdf):** Detect text layer first. If `extracted_chars < 50/page` → `LlamaParse(use_vendor_multimodal_model=True)` for OCR. Store `{"element_type": "ocr_text", "ocr_confidence": avg_score}` in metadata. Flag low-confidence pages for manual review.
+> - **Excel (.xlsx):** `PandasCSVReader` or `pandas.read_excel()` per sheet → `df.to_markdown()` → one `TextNode` per sheet. Metadata: `{"sheet_name": name, "columns": col_list, "row_count": n}`. Never split within a sheet — keep as atomic unit. Route numeric queries to sheet nodes via `MetadataFilters({"element_type": "spreadsheet"})`.
+
+---
+
+**Capstone system design question:** A pharmaceutical company needs to index 100,000 regulatory submissions (FDA, EMA). Each submission is a 50–500 page PDF containing: cover pages, table of contents, numbered sections (with CTD format: Module 1–5), embedded clinical trial data tables, chemical formulas, and scanned appendices. Design the full parsing and ingestion pipeline that achieves > 95% retrieval recall at < $0.01/document.
+
+> **Answer outline:**
+> - **Format analysis:** CTD-format regulatory submissions are semi-structured PDFs. Module 1 (cover/ToC) = text layer. Module 3 (chemistry) = mixed text + tables + formulas. Module 5 (clinical) = heavy tables + narrative. Appendices = often scanned.
+> - **Two-tier parsing:** Tier 1 — `pypdf` text extraction. Pages with `chars < 50` → flagged for Tier 2. Docs with table density (heuristic: `| count > 20 per page`) → flagged for Tier 2. Tier 2 — `LlamaParse(result_type="markdown", num_workers=10)` for complex/scanned docs.
+> - **Cost math:** 100K docs × avg 100 pages = 10M pages. Tier 1 (80% = 8M pages): $0 (local pypdf). Tier 2 (20% = 2M pages): $0.003/page × 2M = $6,000 → $0.06/Tier-2 doc. Overall average: $0.012/doc — slightly over target. Optimise by using Tier 2 only for pages that need it (not whole documents): $0.003 × 20 pages/doc × 20% of docs = $0.006/doc average — under budget.
+> - **Structure extraction:** CTD module number from heading → `metadata={"ctd_module": "5.3.5.2"}`. Clinical trial ID from section title regex → `metadata={"trial_id": "NCT01234567"}`. Table type from preceding heading (e.g., "Adverse Events") → `metadata={"table_type": "adverse_events"}`.
+> - **Chunking:** Section-aware split at CTD module/section headings. Tables protected as atomic nodes. Chemical formulas preserved as atomic `<formula>` nodes (LlamaParse returns LaTeX).
+> - **Retrieval routing:** Numeric queries → metadata filter on `element_type=table`. Regulatory citation queries → BM25 on section titles. General narrative → dense semantic retrieval.
+
+---
+
+### 10. Production Reality Check (Mandatory)
+
+**If this fails in prod, what's the first thing we inspect?**
+
+> **Check `nodes_per_document` and `table_node_count` per document in your ingestion logs.**
+>
+> Documents that produce suspiciously few nodes (e.g., a 100-page PDF producing 2 nodes) are almost always parsing failures — the parser extracted nearly nothing. Documents that produce zero table nodes when tables are expected are a sure sign of a wrong parser choice.
+>
+> ```python
+> # Add to your ingestion pipeline's post-parse step:
+> def audit_parse_quality(nodes: list, doc_source: str, expected_min_nodes: int = 5) -> dict:
+>     table_nodes = [n for n in nodes if n.metadata.get("has_table")]
+>     empty_nodes  = [n for n in nodes if len(n.text.strip()) < 20]
+>     report = {
+>         "source": doc_source,
+>         "total_nodes": len(nodes),
+>         "table_nodes": len(table_nodes),
+>         "empty_nodes": len(empty_nodes),
+>         "status": "OK" if len(nodes) >= expected_min_nodes and not empty_nodes else "WARN",
+>     }
+>     if len(nodes) < expected_min_nodes:
+>         report["alert"] = f"Only {len(nodes)} nodes from {doc_source} — possible parse failure"
+>     return report
+>
+> # If status == WARN: re-parse with LlamaParse or OCR fallback
+> # If table_nodes == 0 for a financial doc: switch to layout-aware parser
+> ```
+>
+> The #1 production rule for document parsing: **instrument every document's parse output with node count, table count, and average extraction length. Silent parse failures are the most common cause of retrieval gaps — and they're invisible without this instrumentation.**
+
+---
+
+### 11. Curiosity Bridge (Mandatory)
+
+You now know how to extract text, structure, and metadata from raw documents — preserving tables as atomic nodes, enriching nodes with heading hierarchy, and detecting parse failures via instrumentation.
+
+But extracting text from a table is only the first step. Documents contain tables with dozens of columns, forms with hundreds of key-value pairs, multi-modal content (charts, diagrams, images), and cross-references between sections. The next question is: **how do you extract structured data from those tables and forms reliably — and what happens when the document mixes text with images, charts, or handwriting?**
+
+That's **14.3.b: Table Extraction, Forms, and Multi-Modal Documents** — where parsing gets into the harder cases that most RAG systems hit in production with real enterprise data.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit check:** You're done with 14.3.a when you can explain the three content encoding types in a PDF and which parser each requires, implement structure-aware chunking that protects tables from mid-row splits, enrich nodes with the 6 essential metadata fields, diagnose a parse failure from instrumentation signals, and decide between `SimpleDirectoryReader`, `LlamaParse`, and OCR for a given document type.
+
+---
+
+**Carry-Forward Review (interleaved recall from 14.2.d):**
+
+*Q: A team is using LangChain exclusively for a 50,000-document policy library. They re-index weekly and are spending $8,000/month on embedding API calls. They have 70% document stability (only 30% changes weekly). What LlamaIndex abstraction directly cuts this cost, and by how much?*
+
+> **A:** `IngestionCache`. It stores content hashes of parsed nodes and skips any node whose text hasn't changed since the last run. With 70% document stability, 70% of the 50K documents (= 35K docs × 3 nodes/doc × $0.0001/embedding = $10,500) would be skipped each week. Actual cost drops to 30% × $10,500 = $3,150/week — a saving of $7,350/week → $29,400/month at the current scale. Integration: wrap the retrieval layer in LlamaIndex `IngestionPipeline(cache=IngestionCache())` and wire it as a LangChain `Tool`. The LangChain agent layer is untouched.
+
+
+
+## Subtopic 14.3.b: Tables, Forms, and Structured Extraction Workflows
+
+### Reading Path + Level Tags
+
+- **Beginner:** Read sections 1–2 and the Active Recall.
+- **Intermediate:** Add sections 3–5 and the extraction strategy comparison table.
+- **Pro:** Complete the full Hands-On Lab (Build → Break → Measure → Explain) and the capstone question.
+
+---
+
+### 0. Pre-Question Hook [Beginner]
+
+**Pause:** A PDF contains a pharmaceutical drug trial results table: 8 columns (drug name, dosage, n=patients, efficacy %, p-value, confidence interval, adverse events %, discontinuation rate), 45 rows, spanning 3 pages with a repeated header on each page. You need every row queryable as structured data so a researcher can ask *"Which drugs had efficacy > 80% and adverse event rate < 5%?"* Before reading — what are the three things that could go wrong if you just extract this as plain text?
+
+---
+
+### 1. The Intuition (Plain English) [Beginner]
+
+Tables and forms are the hardest part of document parsing because they encode meaning through *position*, not text. In a table, `29,915` means nothing without its column header (`Research and Development`) and its row context (`FY 2023`). In a form, `☑ Yes` means nothing without the question label (`Has the entity filed for bankruptcy?`) that precedes it.
+
+There are three distinct problems in structured extraction:
+
+| Problem | What it means | Why it's hard |
+|---------|--------------|---------------|
+| **Table extraction** | Find every table in the document, extract rows and columns with headers preserved | Tables span pages, have merged cells, repeat headers, and sit adjacent to narrative text |
+| **Form extraction** | Extract key-value pairs from form fields (text boxes, checkboxes, dropdowns, signatures) | Field labels and values are spatially adjacent but not structurally linked; checkboxes need state detection |
+| **Structured output from free text** | Use an LLM to extract structured fields from unstructured narrative (e.g., extract `drug_name`, `dosage`, `efficacy` from a paragraph describing trial results) | LLM hallucination risk; schema enforcement required; cost scales with text volume |
+
+**Key terms (first use):**
+
+- **`pdfplumber`** — Python library for precise PDF table extraction using bounding-box analysis; returns tables as lists of lists (`[[header_row], [data_row], ...]`); handles most well-formed PDF tables reliably.
+- **`camelot`** — PDF table extraction library with two strategies: `lattice` (tables with visible grid lines) and `stream` (tables without borders, detected by whitespace alignment); returns pandas DataFrames with accuracy scores.
+- **`pandas DataFrame node`** — a `TextNode` whose text is a Markdown-serialised DataFrame (`df.to_markdown()`) with metadata containing column names, row count, and table title; preserves column-header-to-value relationships.
+- **`Pydantic program`** — LlamaIndex abstraction that uses an LLM to extract structured data matching a Pydantic schema from text; equivalent to LLM-guided structured output with schema validation.
+- **`StructuredLLMPredictor`** — LlamaIndex component that calls the LLM with output format enforcement (function calling or JSON mode); ensures extracted fields conform to the defined schema.
+- **Key-value extraction** — identifying field label–value pairs in forms and semi-structured documents (e.g., `"Effective Date: January 1, 2024"` → `{"effective_date": "January 1, 2024"}`); can be rule-based (regex), layout-based (bounding box proximity), or LLM-based.
+- **Merged cell** — a table cell that spans multiple rows or columns; breaks naive row/column parsers that assume a rectangular grid; requires special handling to propagate the merged value across the spanned cells.
+- **Repeated table header** — a table header row that appears on every page when a table spans multiple pages; must be detected and deduplicated during extraction to avoid adding the header as a data row.
+- **Table provenance metadata** — metadata attached to every table node recording: source document, page number, table index on the page, inferred table title (from the preceding heading), row count, and column names.
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+```mermaid
+flowchart TD
+    DOC["Document with structured content\n(PDF / Word / HTML / Excel)"]
+
+    subgraph Detection["Structure Detection"]
+        TD{"Table present?\n(grid lines, pipe chars,\nbounding box density)"}
+        FD{"Form fields present?\n(label:value patterns,\ncheckboxes, input fields)"}
+        ND{"Narrative with\nembedded structure?\n(e.g., 'Drug A showed 82%\nefficacy at 10mg')"}
+    end
+
+    subgraph TableExtraction["Table Extraction Path"]
+        PL["pdfplumber / camelot\nLattice: grid-line tables\nStream: whitespace tables\n→ list-of-lists → DataFrame"]
+        LP["LlamaParse\n→ Markdown table string\nwith column headers intact"]
+        MD["Markdown Table Node\n| Col A | Col B |\n|---|---|\n| v1  | v2  |\nmetadata: {table_title, page,\ncols, row_count}"]
+        DF["DataFrame Node\ndf.to_markdown()\nmetadata: {columns, dtypes,\nnumeric_cols, table_title}"]
+    end
+
+    subgraph FormExtraction["Form Extraction Path"]
+        KV["Key-value extraction\nRegex / proximity / LLM\n→ {field: value} dict\n→ JSON metadata node"]
+        CB["Checkbox / radio detection\nPDF form fields (AcroForm)\nor OCR + symbol detection\n→ {question: bool/str}"]
+    end
+
+    subgraph StructuredLLM["LLM-Guided Structured Extraction"]
+        PP["Pydantic Program\nLLM(text + schema) → validated object\nFunction calling / JSON mode\nHallucination risk: validate outputs"]
+    end
+
+    subgraph Output["Output Nodes"]
+        TN["TextNode (table)\ntext=markdown_table\nmetadata={element_type:'table',\ntable_title, page, cols}"]
+        FN["TextNode (form)\ntext=json.dumps(fields)\nmetadata={element_type:'form',\nform_type, page}"]
+        SN["TextNode (structured)\ntext=extracted_fields_json\nmetadata={element_type:'structured',\nschema_version, confidence}"]
+    end
+
+    DOC --> Detection
+    TD -->|yes| PL & LP
+    PL --> DF
+    LP --> MD
+    DF & MD --> TN
+    FD -->|yes| KV & CB
+    KV & CB --> FN
+    ND -->|yes| PP
+    PP --> SN
+```
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+#### Scenario A: Pharmaceutical Clinical Trial Data — Multi-Page Table Extraction
+
+**Context:** A pharma company indexes FDA submission packages — each a 200-page PDF with multiple clinical trial result tables spanning 2–5 pages each. Regulatory reviewers ask: *"Which trials showed efficacy > 80% with p < 0.05?"* — a structured query that requires numeric filtering across table rows, not semantic similarity search.
+
+**How structured table extraction fits in:**
+
+- **Extraction tool:** `LlamaParse` is used because the tables have complex layouts (merged header cells, superscript footnote markers, multi-line cell content). LlamaParse returns each table as a Markdown string with headers intact.
+- **Node representation:**
+  ```
+  | Drug | Dose (mg) | n | Efficacy (%) | p-value | AE Rate (%) |
+  |------|-----------|---|--------------|---------|-------------|
+  | DrugA | 10 | 234 | 82.3 | 0.001 | 4.2 |
+  | DrugB | 20 | 198 | 71.1 | 0.08  | 6.8 |
+  ```
+  Each table → one `TextNode` with `metadata={"element_type": "clinical_table", "table_title": "Table 3: Efficacy Results", "page": 47, "cols": ["Drug", "Dose (mg)", "n", "Efficacy (%)", "p-value", "AE Rate (%)"], "numeric_cols": ["Dose (mg)", "n", "Efficacy (%)", "p-value", "AE Rate (%)"]}`.
+- **Retrieval routing:** Queries about numeric comparisons (`"efficacy > 80%"`) are routed to a `MetadataFilters(filters=[ExactMatchFilter("element_type", "clinical_table")])` retriever. The LLM reads the full Markdown table from the node and answers the filtering question directly — it doesn't need ANN similarity, it needs to read a structured table. This is where `SummaryIndex` (full-scan) outperforms `VectorStoreIndex` (ANN) for table nodes.
+- **Constraints:**
+  - **Repeated headers:** Table continues across pages 47–49 with the header row repeated on each page. LlamaParse merges the pages and deduplicates the header — but verify with a unit test. If not deduplicated, the header row appears as a data row and numeric parsers fail.
+  - **Footnotes:** `†` and `*` footnote markers in cells (`82.3†`) must be preserved in the text. A follow-up query about the footnote's meaning needs a separate footnote node with `metadata={"parent_table": "Table 3", "footnote": "†"}`.
+  - **What "good" looks like:** A query for *"drugs with efficacy > 80% and AE rate < 5%"* returns the exact table rows meeting that criterion. The answer cites `Table 3, page 47, Drug A`.
+
+---
+
+#### Scenario B: Insurance Claims Forms — Key-Value and Checkbox Extraction
+
+**Context:** An insurance company processes 10,000 claim forms per day. Each form is a PDF with: fillable AcroForm fields (claimant name, date, policy number), checkboxes (type of claim: ☑ Medical / ☐ Property / ☐ Auto), free-text description boxes, and a signature field. Adjusters need the extracted data in a structured JSON to populate a claims management system.
+
+**How form extraction fits in:**
+- **AcroForm fields (programmatic):** PDF AcroForm fields are directly accessible via `pypdf.PdfReader(path).get_fields()` — returns `{field_name: field_value}` without any parsing. No LLM needed. `{"claimant_name": "Jane Smith", "policy_number": "POL-2024-8821", "claim_date": "2024-03-15", "claim_type": "/Medical"}`.
+- **Checkboxes:** AcroForm checkbox state is `"/Yes"` or `"/Off"` in the field value. Convert to `{"medical": True, "property": False, "auto": False}`.
+- **Free-text description box:** The unstructured narrative description (*"Patient fell on icy pavement, fractured wrist, admitted to ER..."*) requires an LLM Pydantic program to extract: `{"injury_type": "fracture", "body_part": "wrist", "incident_location": "outdoor", "requires_hospitalization": True}`.
+- **Scanned (non-AcroForm) forms:** Some legacy forms are scanned. OCR extracts text. Proximity-based key-value detection: find label text ending with `:` and pair with the nearest text to the right or below it on the same line.
+- **Constraints:**
+  - **Speed:** 10,000 forms/day = 7 forms/minute. AcroForm field extraction: ~10ms/form (no LLM). Free-text LLM extraction: ~800ms/form. Async batch: 100 forms simultaneously → overall throughput ~70 forms/minute. Fits within a 2.5-hour processing window.
+  - **Accuracy:** AcroForm extraction is deterministic (100% accurate for typed fields). LLM extraction of injury details: ~90% accuracy on well-formed descriptions. Confidence score required — flag low-confidence extractions for human adjuster review.
+  - **What "good" looks like:** Every submitted form is transformed into a structured JSON within 5 minutes. High-confidence extractions go directly to the claims system. Low-confidence ones enter a review queue.
+
+---
+
+#### Scenario C: Financial Covenant Compliance — Structured Extraction from Legal Prose
+
+**Context:** A bank's credit risk team monitors covenant compliance across 5,000 loan agreements. Covenants are buried in free-text legal prose: *"The Borrower shall maintain a Debt-to-EBITDA ratio of no more than 4.0x, tested quarterly."* No table, no form — just a sentence that encodes a structured constraint. The team needs a database of `{covenant_type, threshold, test_frequency}` across all agreements.
+
+**How LLM-guided structured extraction fits in:**
+- **Pydantic schema definition:**
+  ```python
+  class FinancialCovenant(BaseModel):
+      covenant_type: str         # "Debt-to-EBITDA", "Interest Coverage", "Liquidity"
+      operator: str              # "<=", ">=", "<", ">"
+      threshold: float           # 4.0
+      unit: str                  # "x", "%", "$M"
+      test_frequency: str        # "quarterly", "annually", "monthly"
+      effective_date: str | None
+  ```
+- **LlamaIndex Pydantic program:** The program prompts the LLM with the covenant text + schema and returns a validated `FinancialCovenant` object. Function calling (GPT-4o) or structured JSON mode ensures the LLM can't return a string where a float is expected.
+- **Confidence scoring:** Run the extraction twice with temperature=0 and temperature=0.3. If results match → high confidence. If they differ → flag for legal review.
+- **Constraints:**
+  - **Cost:** 5,000 agreements × avg 10 covenants/agreement = 50,000 extractions × ~$0.002/extraction = $100 one-time. Incremental cost for new agreements: ~$0.02/agreement.
+  - **Hallucination risk:** The LLM may invent a threshold if the text is ambiguous. Validation: check that extracted `threshold` values appear verbatim in the source text (simple string search). If not → reject and flag.
+  - **What "good" looks like:** 95% of covenants are extracted correctly without human review. 5% flagged for legal review. The resulting database enables automated covenant breach alerts.
+
+---
+
+### 4. System View (Think Like a Systems Engineer) [Intermediate]
+
+**The three extraction pipelines and their decision logic:**
+
+```
+PIPELINE 1: PDF TABLE EXTRACTION
+  Input:  PDF bytes
+  Step 1: Try pdfplumber.extract_tables() on each page
+          If result non-empty and accuracy_score > 0.8: use pdfplumber
+  Step 2: Else: send to LlamaParse(result_type="markdown")
+  Step 3: Parse Markdown tables → TextNode per table
+          metadata: {element_type, table_title, page, cols, row_count,
+                     source, has_merged_cells}
+  Step 4: Deduplicate repeated headers (identical rows across consecutive pages)
+  Step 5: Tag numeric columns (all values parseable as float → numeric_col=True)
+  Output: List[TextNode] — one per distinct table
+
+PIPELINE 2: FORM FIELD EXTRACTION
+  Input:  PDF bytes
+  Step 1: Try pypdf.get_fields() — AcroForm fields
+          If non-empty: parse field values, convert checkboxes to bool
+  Step 2: Else: OCR (Tesseract / LlamaParse) + proximity key-value detection
+          Find label: value patterns within bounding-box proximity radius
+  Step 3: Validate required fields against schema
+          Missing required field → flag for manual completion
+  Step 4: Run Pydantic program on free-text fields (description boxes)
+  Output: Dict[str, Any] → serialised as JSON TextNode
+          metadata: {element_type: "form", form_type, page, confidence}
+
+PIPELINE 3: STRUCTURED LLM EXTRACTION
+  Input:  Text paragraph(s) containing embedded structured data
+  Step 1: Identify candidate sentences (keyword detection or semantic similarity
+          to known schema concepts)
+  Step 2: Run LlamaIndex Pydantic program (LLM + schema)
+  Step 3: Validate: all extracted values must be findable in source text
+          (prevents hallucination of non-existent values)
+  Step 4: Run a second extraction at different temperature — compare results
+          If divergent: confidence = low → flag for review
+  Output: Pydantic model instance → serialised as JSON TextNode
+          metadata: {element_type: "structured", schema_name, confidence, source}
+```
+
+**Observability — what to log per extraction run:**
+
+| Signal | What to capture | Why |
+|--------|----------------|-----|
+| `tables_detected` / `tables_extracted` | Per-document table counts | `detected > extracted` → extraction failure |
+| `camelot_accuracy_score` | Per-table confidence from camelot | < 0.8 → use LlamaParse instead |
+| `repeated_header_count` | Headers deduplicated per table | Non-zero → multi-page table detected; verify correct count |
+| `merged_cell_count` | Cells spanning > 1 row or column | High count → flag for manual review or special parser |
+| `form_fields_missing` | Required fields with no extracted value | Trigger manual completion queue |
+| `pydantic_validation_errors` | LLM output failing schema validation | Parser/LLM issue; retry with stricter prompt |
+| `hallucination_flag_rate` | % of extractions where value not in source text | > 5% → schema too complex; simplify or add few-shot examples |
+
+**Failure points:**
+
+1. **Repeated table header treated as data row** — Pages 2+ of a multi-page table each start with the header row. If not deduplicated, the header row appears as a data row in the extracted DataFrame. Numeric parsers fail (`"Efficacy (%)"` is not a float). *How it shows up:* `ValueError: could not convert string to float` when post-processing table nodes; or phantom rows in query results where column headers are returned as drug names.
+
+2. **Merged cells leaving empty cells downstream** — A table has a merged cell spanning 3 rows in the first column (e.g., `"Phase II"` spanning rows 1–3). After extraction, rows 2–3 have an empty string in column 1. The LLM reading the Markdown table sees rows with missing context. *How it shows up:* rows 2 and 3 of the merged-cell group are retrieved but the LLM can't associate them with `"Phase II"` because column 1 is empty. *Fix:* forward-fill empty cells after extraction: `df.fillna(method="ffill")`.
+
+3. **AcroForm extraction missing because form is flattened** — Some PDFs are saved with form fields "flattened" — the field values are baked into the page as static text, removing the AcroForm structure. `pypdf.get_fields()` returns `{}`. *How it shows up:* form extraction returns no fields for documents that visually contain filled-in forms. *Fix:* detect flattened forms by checking if `get_fields()` is empty but the PDF visually contains recognisable label:value patterns; fall back to proximity-based OCR extraction.
+
+4. **Pydantic program hallucinating non-existent values** — The LLM extracts `{"threshold": 3.5}` but the source text says *"no more than four times."* The model converted the word "four" to `4.0` — which is correct — but sometimes it confabulates numbers not present in the source. *How it shows up:* covenant database has threshold values that can't be traced back to specific sentences; legal review finds discrepancies. *Fix:* post-extraction grounding check: `assert str(extracted.threshold) in source_text or threshold_word_map.get(str(extracted.threshold)) in source_text`.
+
+---
+
+### 5. System Design Flavor [Intermediate]
+
+**End-to-end structured extraction workflow:**
+
+```python
+# structured_extraction_lab.py
+# pip install llama-index-core pdfplumber pandas
+
+import json
+import re
+from typing import Optional
+from llama_index.core.schema import TextNode
+from llama_index.core import Document
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PART 1: Table extraction with pdfplumber → Markdown node
+# ─────────────────────────────────────────────────────────────────────────────
+
+def extract_tables_from_pdf(pdf_path: str) -> list:
+    """Extract all tables from a PDF using pdfplumber, return as TextNodes."""
+    try:
+        import pdfplumber
+    except ImportError:
+        print("pip install pdfplumber")
+        return []
+
+    nodes = []
+    with pdfplumber.open(pdf_path) as pdf:
+        for page_num, page in enumerate(pdf.pages, start=1):
+            tables = page.extract_tables()
+            for table_idx, table in enumerate(tables):
+                if not table or len(table) < 2:
+                    continue  # skip empty or header-only tables
+
+                # Row 0 is the header
+                headers = [h or f"col_{i}" for i, h in enumerate(table[0])]
+                data_rows = table[1:]
+
+                # Deduplicate repeated headers (multi-page tables)
+                data_rows = [r for r in data_rows if r != table[0]]
+
+                # Forward-fill empty cells (merged cell handling)
+                for col_idx in range(len(headers)):
+                    last_val = ""
+                    for row in data_rows:
+                        if col_idx < len(row):
+                            if row[col_idx]:
+                                last_val = row[col_idx]
+                            else:
+                                row[col_idx] = last_val  # forward fill
+
+                # Build Markdown table string
+                header_row = "| " + " | ".join(str(h) for h in headers) + " |"
+                sep_row    = "| " + " | ".join("---" for _ in headers) + " |"
+                data_md    = "\n".join(
+                    "| " + " | ".join(str(cell or "") for cell in row) + " |"
+                    for row in data_rows
+                )
+                table_md = f"{header_row}\n{sep_row}\n{data_md}"
+
+                # Detect numeric columns
+                numeric_cols = []
+                for col_idx, col_name in enumerate(headers):
+                    vals = [r[col_idx] for r in data_rows if col_idx < len(r) and r[col_idx]]
+                    try:
+                        [float(v.replace(",", "").replace("%", "")) for v in vals if v]
+                        numeric_cols.append(col_name)
+                    except (ValueError, AttributeError):
+                        pass
+
+                node = TextNode(
+                    text=table_md,
+                    metadata={
+                        "element_type": "table",
+                        "source": pdf_path,
+                        "page_number": page_num,
+                        "table_index": table_idx,
+                        "row_count": len(data_rows),
+                        "columns": headers,
+                        "numeric_cols": numeric_cols,
+                        "has_table": True,
+                    }
+                )
+                nodes.append(node)
+                print(f"  Page {page_num}, Table {table_idx}: {len(data_rows)} rows, cols={headers}")
+
+    return nodes
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PART 2: PDF form field extraction (AcroForm)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def extract_form_fields(pdf_path: str) -> TextNode:
+    """Extract AcroForm fields from a fillable PDF."""
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        print("pip install pypdf")
+        return None
+
+    reader = PdfReader(pdf_path)
+    raw_fields = reader.get_fields() or {}
+
+    if not raw_fields:
+        print(f"  No AcroForm fields found in {pdf_path} (may be flattened)")
+        return None
+
+    extracted = {}
+    for field_name, field_obj in raw_fields.items():
+        value = field_obj.get("/V", "")
+        if hasattr(value, "decode"):
+            value = value.decode("utf-8")
+        value = str(value)
+        # Convert checkbox values
+        if value in ("/Yes", "/On", "/True"):
+            value = True
+        elif value in ("/Off", "/No", "/False"):
+            value = False
+        # Strip PDF object prefix
+        elif value.startswith("/"):
+            value = value[1:]
+        extracted[field_name] = value
+
+    node = TextNode(
+        text=json.dumps(extracted, indent=2),
+        metadata={
+            "element_type": "form",
+            "source": pdf_path,
+            "field_count": len(extracted),
+            "has_table": False,
+        }
+    )
+    print(f"  Extracted {len(extracted)} form fields")
+    return node
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PART 3: Pydantic program — LLM-guided structured extraction
+# ─────────────────────────────────────────────────────────────────────────────
+
+def extract_structured_with_pydantic(
+    text: str,
+    source: str,
+    llm=None
+) -> TextNode:
+    """Use LlamaIndex Pydantic program to extract structured fields from text."""
+    from pydantic import BaseModel, Field
+    from typing import Optional
+
+    class FinancialCovenant(BaseModel):
+        covenant_type: str = Field(description="Type of financial covenant, e.g. Debt-to-EBITDA, Interest Coverage")
+        operator: str      = Field(description="Comparison operator: <=, >=, <, >")
+        threshold: float   = Field(description="Numeric threshold value")
+        unit: str          = Field(description="Unit: x, %, $M, or empty string")
+        test_frequency: str = Field(description="Testing frequency: quarterly, annually, monthly, etc.")
+
+    try:
+        from llama_index.core.program import LLMTextCompletionProgram
+        import json as _json
+
+        if llm is None:
+            from llama_index.core.llms import MockLLM
+            llm = MockLLM()
+
+        # In production: use OpenAI or Anthropic LLM with function calling
+        # program = LLMTextCompletionProgram.from_defaults(
+        #     output_cls=FinancialCovenant,
+        #     prompt_template_str=(
+        #         "Extract the financial covenant details from this text:\n"
+        #         "{text}\n"
+        #         "Return a JSON object with fields: covenant_type, operator, "
+        #         "threshold, unit, test_frequency."
+        #     ),
+        #     llm=llm,
+        #     verbose=True,
+        # )
+        # covenant = program(text=text)
+        # result = covenant.model_dump()
+
+        # Mock extraction for lab (replace with real LLM call in production)
+        result = {
+            "covenant_type": "Debt-to-EBITDA",
+            "operator": "<=",
+            "threshold": 4.0,
+            "unit": "x",
+            "test_frequency": "quarterly"
+        }
+
+        # Grounding check: threshold value must appear in source text (as number or word)
+        threshold_str = str(result["threshold"]).rstrip("0").rstrip(".")
+        word_map = {"4": ["four", "4.0", "4x"], "3": ["three", "3.0"], "2": ["two", "2.0"]}
+        grounded = (threshold_str in text or
+                    any(w in text.lower() for w in word_map.get(threshold_str, [])))
+        result["grounded"] = grounded
+        result["source_text"] = text[:100]
+
+        node = TextNode(
+            text=json.dumps(result, indent=2),
+            metadata={
+                "element_type": "structured",
+                "schema_name": "FinancialCovenant",
+                "source": source,
+                "confidence": "high" if grounded else "low",
+                "has_table": False,
+            }
+        )
+        if not grounded:
+            print(f"  WARNING: threshold {result['threshold']} not found in source text — flagged for review")
+        return node
+
+    except ImportError:
+        print("LlamaIndex LLMTextCompletionProgram not available")
+        return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PART 4: Simulate end-to-end extraction and show results
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Simulate table extraction from a Markdown-formatted source (as LlamaParse would return)
+SAMPLE_TABLE_TEXT = """| Drug | Dose (mg) | n | Efficacy (%) | p-value | AE Rate (%) |
+|------|-----------|---|--------------|---------|-------------|
+| DrugA | 10 | 234 | 82.3 | 0.001 | 4.2 |
+| DrugB | 20 | 198 | 71.1 | 0.080 | 6.8 |
+| DrugC | 5  | 156 | 91.7 | 0.001 | 3.1 |
+| DrugD | 15 | 312 | 68.4 | 0.120 | 8.9 |"""
+
+table_node_sim = TextNode(
+    text=SAMPLE_TABLE_TEXT,
+    metadata={
+        "element_type": "table",
+        "table_title": "Table 3: Efficacy Results — Phase II Trial",
+        "source": "fda_submission_NDA21-5678.pdf",
+        "page_number": 47,
+        "columns": ["Drug", "Dose (mg)", "n", "Efficacy (%)", "p-value", "AE Rate (%)"],
+        "numeric_cols": ["Dose (mg)", "n", "Efficacy (%)", "p-value", "AE Rate (%)"],
+        "row_count": 4,
+        "has_table": True,
+    }
+)
+
+# Simulate form extraction
+form_fields_sim = {
+    "claimant_name": "Jane Smith",
+    "policy_number": "POL-2024-8821",
+    "claim_date": "2024-03-15",
+    "medical": True,
+    "property": False,
+    "auto": False,
+    "description": "Patient fell on icy pavement, fractured wrist, admitted to ER."
+}
+form_node_sim = TextNode(
+    text=json.dumps(form_fields_sim, indent=2),
+    metadata={"element_type": "form", "form_type": "insurance_claim",
+              "source": "claim_form_2024.pdf", "confidence": "high"}
+)
+
+# Simulate structured LLM extraction
+covenant_text = "The Borrower shall maintain a Debt-to-EBITDA ratio of no more than 4.0x, tested quarterly."
+covenant_node = extract_structured_with_pydantic(covenant_text, source="loan_agreement_2024.pdf")
+
+# Summarise output
+all_nodes = [table_node_sim, form_node_sim, covenant_node]
+print("\nExtracted nodes summary:")
+for n in all_nodes:
+    if n:
+        print(f"  [{n.metadata.get('element_type')}] {n.metadata.get('source')} "
+              f"| chars: {len(n.text)} | confidence: {n.metadata.get('confidence', 'N/A')}")
+        print(f"    {n.text[:120].strip()!r}")
+```
+
+**Key tradeoffs:**
+
+| Tradeoff | pdfplumber | LlamaParse | Pydantic program |
+|----------|-----------|------------|-----------------|
+| **Cost** | Free | $0.003/page | $0.002/extraction (LLM call) |
+| **Speed** | ~50ms/page | ~2–5s/page | ~800ms/call |
+| **Complex table accuracy** | Medium (struggles with merged cells, no-border tables) | High (layout model handles complex layouts) | N/A |
+| **Form field extraction** | None | Basic (returns form text) | High (semantic field identification) |
+| **Structured narrative extraction** | None | None | High (schema-guided) |
+| **Hallucination risk** | None | None | Present (requires grounding check) |
+
+**Scaling consideration (10x document volume):**
+At 10x, async extraction becomes mandatory:
+- `pdfplumber` is CPU-bound — use `ProcessPoolExecutor` to parallelise across CPU cores (not `ThreadPoolExecutor`).
+- `LlamaParse` supports `num_workers=N` for concurrent API calls — set `num_workers=10` to process 10 documents in parallel.
+- Pydantic program LLM calls are I/O-bound — use `asyncio.gather()` with `LLMTextCompletionProgram.acall()` for concurrent extractions.
+- Cache table-node `TextNode` objects to a document store after extraction — skip re-extraction for unchanged documents using content hash comparison.
+
+---
+
+### 6. Common Mistakes + Debugging [Beginner → Intermediate]
+
+#### Mistake 1: Repeated Table Header Appearing as a Data Row
+
+**Symptom:** A numeric column in an extracted table contains the column header string (`"Efficacy (%)"`) as a row value. Downstream numeric processing (`float(value)`) raises `ValueError`. Or worse: the header row appears in query results as if it were a drug name.
+
+**Likely cause:** The table spans multiple pages. The PDF has the header row on page 1 and repeats it at the top of pages 2 and 3. The extractor processes each page independently and includes the repeated header as a regular row.
+
+**First debugging step:**
+```python
+import pdfplumber
+
+with pdfplumber.open("multi_page_table.pdf") as pdf:
+    all_rows = []
+    header = None
+    for page in pdf.pages:
+        tables = page.extract_tables()
+        for table in tables:
+            if not table: continue
+            if header is None:
+                header = table[0]
+                all_rows.extend(table[1:])
+            else:
+                # Skip rows that match the header (repeated header detection)
+                for row in table:
+                    if row != header:  # exact match check
+                        all_rows.append(row)
+
+print(f"Unique data rows: {len(all_rows)}")
+print(f"Headers: {header}")
+# Compare with naive extraction to see how many duplicate headers were removed
+```
+
+---
+
+#### Mistake 2: Empty Cells from Merged Columns Not Forward-Filled
+
+**Symptom:** A table with a merged first column (e.g., study phase spanning 3 rows) produces rows 2 and 3 with an empty string in column 0. A retrieval query for *"Phase II results"* matches row 1 but misses rows 2 and 3, even though they belong to Phase II.
+
+**Likely cause:** The table extractor correctly represents the merged cell as empty strings in rows 2 and 3 (since the value only physically appears in row 1). No forward-fill was applied.
+
+**First debugging step:**
+```python
+import pandas as pd
+
+# Raw table (simulating merged first column)
+raw_table = [
+    ["Phase", "Drug", "Efficacy"],
+    ["Phase II", "DrugA", "82%"],
+    ["", "DrugB", "71%"],        # merged cell — should be "Phase II"
+    ["", "DrugC", "91%"],        # merged cell — should be "Phase II"
+    ["Phase III", "DrugD", "85%"],
+]
+
+df = pd.DataFrame(raw_table[1:], columns=raw_table[0])
+print("Before fill:\n", df)
+
+# Forward-fill the merged column
+df["Phase"] = df["Phase"].replace("", pd.NA).ffill()
+print("\nAfter fill:\n", df)
+# Now all Phase II rows have "Phase II" in column 0
+# Markdown: df.to_markdown(index=False)
+```
+
+---
+
+#### Mistake 3: Pydantic Program Not Grounding Values Against Source Text
+
+**Symptom:** The covenant database has threshold values of `3.5x` for agreements where the source text clearly says *"no more than four times"*. The LLM converted *"four times"* correctly to `4.0` but on other documents it confabulated `3.5` for an ambiguous clause.
+
+**Likely cause:** The Pydantic program validates schema types (must be a float) but doesn't validate that the extracted value actually appears in or is derivable from the source text. LLMs occasionally confabulate plausible-sounding numeric values for ambiguous inputs.
+
+**First debugging step:**
+```python
+def grounding_check(extracted_value: float, source_text: str) -> bool:
+    """Check that the extracted numeric value appears in the source text."""
+    # Check direct numeric form
+    for fmt in [str(extracted_value), f"{extracted_value:.1f}", f"{int(extracted_value)}"]:
+        if fmt in source_text:
+            return True
+    # Check word form for common numbers
+    word_map = {
+        1.0: ["one"], 2.0: ["two"], 3.0: ["three"], 4.0: ["four"],
+        5.0: ["five"], 2.5: ["two and a half", "2.5x"], 3.5: ["three and a half"]
+    }
+    for word in word_map.get(extracted_value, []):
+        if word.lower() in source_text.lower():
+            return True
+    return False
+
+# Flag non-grounded extractions for manual legal review
+covenant_text = "The Borrower shall maintain a ratio of no more than four times EBITDA."
+extracted_threshold = 4.0
+grounded = grounding_check(extracted_threshold, covenant_text)
+print(f"Threshold {extracted_threshold} grounded in source: {grounded}")
+# True → safe to auto-accept
+# False → route to manual review queue
+```
+
+---
+
+### 7. Hands-On Lab [Pro]
+
+#### Build — Table Extraction with Merged Cell Handling
+
+```python
+# table_extraction_lab.py
+# pip install llama-index-core pandas
+
+import json
+import pandas as pd
+from llama_index.core.schema import TextNode
+
+# Simulate a multi-page clinical trial table with merged cells and repeated headers
+RAW_TABLE_PAGES = [
+    # Page 1
+    [
+        ["Study Phase", "Drug", "Dose (mg)", "Efficacy (%)", "p-value"],
+        ["Phase II",    "DrugA", "10",        "82.3",         "0.001"],
+        ["",            "DrugB", "20",        "71.1",         "0.080"],
+        ["",            "DrugC",  "5",        "91.7",         "0.001"],
+    ],
+    # Page 2 (repeats header, continues Phase II + starts Phase III)
+    [
+        ["Study Phase", "Drug", "Dose (mg)", "Efficacy (%)", "p-value"],  # repeated header
+        ["",            "DrugD", "15",        "68.4",         "0.120"],   # still Phase II
+        ["Phase III",   "DrugE", "10",        "87.2",         "0.001"],
+        ["",            "DrugF", "25",        "79.8",         "0.005"],
+    ],
+]
+
+def extract_and_clean_table(pages: list) -> pd.DataFrame:
+    """Merge pages, remove repeated headers, forward-fill merged cells."""
+    header = pages[0][0]
+    all_rows = []
+
+    for page_rows in pages:
+        for row in page_rows:
+            if row == header:
+                continue   # skip repeated headers
+            all_rows.append(row)
+
+    df = pd.DataFrame(all_rows, columns=header)
+
+    # Forward-fill merged cells in "Study Phase" column
+    df["Study Phase"] = df["Study Phase"].replace("", pd.NA).ffill()
+
+    # Convert numeric columns
+    for col in ["Dose (mg)", "Efficacy (%)", "p-value"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    return df
+
+df = extract_and_clean_table(RAW_TABLE_PAGES)
+print("Cleaned table:")
+print(df.to_string(index=False))
+
+# Convert to TextNode
+table_md = df.to_markdown(index=False)
+table_node = TextNode(
+    text=table_md,
+    metadata={
+        "element_type": "table",
+        "table_title": "Phase II/III Efficacy Results",
+        "columns": list(df.columns),
+        "numeric_cols": ["Dose (mg)", "Efficacy (%)", "p-value"],
+        "row_count": len(df),
+        "source": "clinical_trial_report.pdf",
+        "pages": "1-2",
+    }
+)
+print(f"\nTable node ({len(table_node.text)} chars):")
+print(table_node.text)
+print(f"\nMetadata: {table_node.metadata}")
+```
+
+---
+
+#### Break — Missing Forward-Fill
+
+```python
+# BREAK: skip forward-fill → query "Phase II drugs" misses rows 2-4
+
+def extract_without_fill(pages: list) -> pd.DataFrame:
+    """Broken: no header dedup, no forward fill."""
+    all_rows = []
+    for page_rows in pages:
+        all_rows.extend(page_rows)   # includes repeated header as data row!
+    if not all_rows: return pd.DataFrame()
+    df = pd.DataFrame(all_rows[1:], columns=all_rows[0])
+    # No ffill → "Study Phase" has empty strings in rows 2, 3, 4
+    return df
+
+broken_df = extract_without_fill(RAW_TABLE_PAGES)
+print("\nBROKEN table (no fill, repeated header included):")
+print(broken_df.to_string(index=False))
+
+# Simulate retrieval: find Phase II drugs
+phase2_rows_broken = broken_df[broken_df["Study Phase"] == "Phase II"]
+phase2_rows_fixed  = df[df["Study Phase"] == "Phase II"]
+
+print(f"\nPhase II rows (broken): {len(phase2_rows_broken)}")   # probably 1
+print(f"Phase II rows (fixed):  {len(phase2_rows_fixed)}")     # should be 4
+# Broken version misses 3 of 4 Phase II rows
+```
+
+---
+
+#### Measure
+
+```python
+# Measure extraction completeness: expected rows vs extracted rows per table
+EXPECTED = {"Phase II": 4, "Phase III": 2}
+ACTUAL   = dict(df.groupby("Study Phase").size())
+
+print("\nExtraction completeness:")
+for phase, expected in EXPECTED.items():
+    actual = ACTUAL.get(phase, 0)
+    pct = actual / expected * 100
+    status = "OK" if pct == 100 else f"MISSING {expected - actual} rows"
+    print(f"  {phase}: expected {expected}, extracted {actual} ({pct:.0f}%) — {status}")
+
+# Also measure numeric column integrity
+print("\nNumeric column check (non-null count):")
+for col in ["Dose (mg)", "Efficacy (%)", "p-value"]:
+    non_null = df[col].notna().sum()
+    print(f"  {col}: {non_null}/{len(df)} non-null")
+# Any column with non_null < len(df) → extraction issue (text in numeric cell)
+```
+
+---
+
+#### Explain — Why Column Context Is the Critical Invariant
+
+The entire value of structured table extraction is preserving the *column header → cell value* binding. A number like `82.3` is meaningless without knowing it's under the `"Efficacy (%)"` column. This binding is destroyed by three common failure modes: (1) plain text extraction reads the table left-to-right, interleaving column values without headers; (2) mid-row splits separate the data rows from the header row; (3) merged cells leave downstream rows with empty values in the first column, breaking group-by queries.
+
+Forward-filling merged cells is the most under-appreciated step. In regulatory and legal documents, it's extremely common for a grouping column (study phase, clause type, department name) to span multiple rows. Without forward-fill, every downstream query that filters by that column misses all but the first row of each group — silently degrading recall without any error message.
+
+The grounding check on Pydantic program outputs addresses a different problem: LLMs are generative models that produce *plausible* outputs, not *accurate* ones. For numeric threshold extraction, a plausible but wrong number (e.g., `3.5` instead of `4.0`) can cause a covenant breach alert to fire at the wrong time — a financial and legal liability. The grounding check is a simple deterministic safeguard that catches the most dangerous class of LLM hallucination in structured extraction workflows.
+
+---
+
+### 8. Active Recall (Spaced Repetition) [Beginner → Pro]
+
+**Q1 [Beginner]:** What are the three distinct structured extraction problems, and what tool is best suited to each?
+
+> **A:** (1) **Table extraction** — finding and extracting tables with column headers intact; best tool: `pdfplumber` for well-formed tables, `LlamaParse` for complex/multi-column tables, `camelot` for lattice/stream tables. (2) **Form extraction** — extracting key-value pairs from form fields and checkboxes; best tool: `pypdf.get_fields()` for AcroForm PDFs, proximity OCR for flattened/scanned forms. (3) **Structured LLM extraction** — extracting structured fields from free-text paragraphs that embed structured data; best tool: LlamaIndex Pydantic program with LLM function calling + mandatory grounding check.
+
+---
+
+**Q2 [Beginner]:** A clinical trial PDF table spans 3 pages. After extraction, you see 2 extra rows that look like column headers. What happened and how do you fix it?
+
+> **A:** The table header row is repeated at the top of pages 2 and 3 (a common PDF convention for multi-page tables). The extractor processed each page independently and included the repeated headers as data rows. Fix: capture the header row from page 1, then for every subsequent page, compare each row against the header row before appending it — skip rows that match exactly.
+
+---
+
+**Q3 [Intermediate]:** A legal document has a `"Covenant Type"` column where the value `"Financial"` spans rows 1–5 (merged cell). After extraction, rows 2–5 have an empty string in that column. A retrieval query for *"all financial covenants"* returns only 1 result instead of 5. What's the fix and where should it be applied?
+
+> **A:** Forward-fill (propagate) the merged cell value downward: replace empty strings with `pd.NA`, then apply `df["Covenant Type"].ffill()`. This must be applied *after* table extraction and *before* the node is created and indexed — it's a post-extraction, pre-indexing transformation step in the ingestion pipeline. If applied after indexing, the already-stored nodes with empty `"Financial"` values are not updated.
+
+---
+
+**Q4 [Intermediate]:** Your Pydantic program extracts `{"threshold": 2.5}` from a loan agreement, but when you re-read the clause it says *"must not exceed 3.0 times EBITDA."* What does this indicate and how do you prevent it?
+
+> **A:** This indicates LLM hallucination — the model produced a plausible numeric value (`2.5`) that doesn't appear in the source text. Prevent it with a grounding check: after extraction, verify that the extracted threshold value (or its word form) appears literally in the source sentence. If not found → set `confidence = "low"` and route to human review. Do NOT auto-accept any numeric extraction that fails the grounding check; wrong covenant thresholds have direct financial and legal consequences.
+
+---
+
+**Q5 [Pro]:** Design the end-to-end extraction pipeline for a corpus of 50,000 insurance claim forms (mix of digital AcroForms and scanned paper forms). The output must be a structured JSON database with fields: claimant_name, policy_number, claim_date, claim_type, injury_description, estimated_amount. Target: < $0.05/form processing cost, > 95% field accuracy.
+
+> **A:** Pipeline: (1) **Format detection:** try `pypdf.get_fields()` — if non-empty → AcroForm (40% of forms, typical); if empty → scanned (60%). (2) **AcroForm path:** `get_fields()` → parse values → direct JSON. Cost: $0/form. Accuracy: 100% for typed fields. (3) **Scanned path:** `LlamaParse` with OCR (`use_vendor_multimodal_model=True`, $0.006/page × 2 pages = $0.012/form). Proximity key-value detection for `claimant_name`, `policy_number`, `claim_date`, `claim_type` labels. (4) **Injury description + amount:** Pydantic program on the free-text description box → `{"injury_description": "...", "estimated_amount": 12500.0}`. Cost: 1 LLM call × $0.002 = $0.002. Grounding check on `estimated_amount`. (5) **Cost total:** AcroForm: ~$0.002/form (LLM only). Scanned: $0.014/form (OCR + LLM). Average (60% scanned): 0.4 × $0.002 + 0.6 × $0.014 = $0.0092/form — well under $0.05 budget. (6) **Accuracy:** AcroForm → 100% typed fields, ~90% LLM narrative. Scanned → ~95% OCR, ~88% LLM. Weight: overall > 93%. To reach 95%: add few-shot examples to the injury extraction prompt + grounding check on amount.
+
+---
+
+### 9. Practice
+
+**Mini-exercise:** A table has 5 columns and 20 rows. After extraction with `pdfplumber`, column `"Amount ($)"` has 3 cells containing the string `"N/A"` instead of a number. Your downstream code does `df["Amount ($)"].sum()`. What happens, what does it indicate, and how do you handle it?
+
+> **Suggested answer:**
+> - **What happens:** `df["Amount ($)"].sum()` raises `TypeError` or silently returns NaN if the column was not cast to numeric. Even if you use `pd.to_numeric(errors="coerce")`, the 3 `"N/A"` cells become `NaN` and are excluded from the sum — possibly causing an under-count.
+> - **What it indicates:** 3 cells in the table genuinely contain `"N/A"` (not applicable/available) rather than a numeric amount. This is valid business data, not an extraction error.
+> - **How to handle:** (1) Cast with `pd.to_numeric(df["Amount ($)"], errors="coerce")`. (2) Add metadata to the node: `"null_count": {"Amount ($)": 3}` so downstream retrieval can surface this to the LLM. (3) In your synthesis prompt, note that 3 rows have `N/A` amounts so the LLM doesn't hallucinate a sum that excludes them silently.
+
+---
+
+**Capstone system design question:** Design a structured extraction pipeline for a bank processing 100,000 loan agreement PDFs per year. Each agreement has: a header section (parties, date, amount — semi-structured prose), 3–7 financial covenant clauses (embedded in legal paragraphs), and a repayment schedule table (2–10 pages, multi-column). The extracted data feeds a covenant compliance monitoring system. Requirements: > 95% covenant extraction accuracy, < $0.10/document processing cost, audit trail for every extraction.
+
+> **Answer outline:**
+> - **Header extraction:** `pypdf` text layer extraction + regex for date (`\d{1,2}/\d{1,2}/\d{4}`) and amount (`\$[\d,]+`). Pydantic program for party names (ambiguous prose). Cost: ~$0.002/doc LLM call.
+> - **Covenant extraction:** Text chunking at section boundaries (regex on numbered headings). For each chunk, LLM classification: is this a financial covenant clause? If yes → `FinancialCovenant` Pydantic program extraction. Grounding check on threshold value. Confidence scoring (run twice at different temperatures). Cost: avg 5 covenants × $0.002 = $0.01/doc.
+> - **Repayment schedule table:** `LlamaParse` for layout-aware extraction (multi-page table, multi-column). Repeated header dedup. Forward-fill merged cells. Convert to `pandas DataFrame` node. Cost: avg 5 pages × $0.003 = $0.015/doc.
+> - **Total cost:** $0.002 + $0.01 + $0.015 = $0.027/doc — well under $0.10.
+> - **Audit trail:** Every extraction → `AuditNode(doc_id, field, extracted_value, source_text_snippet, confidence, timestamp)` written to an append-only audit table. Human review queue for all `confidence = "low"` extractions.
+> - **Accuracy path to 95%:** Pydantic grounding check eliminates most hallucinations. 5-shot examples in covenant prompt covers common phrasings. For the remaining ~5% edge cases → human review queue corrects and feeds back as few-shot examples (active learning loop). After 3 months of corrections, extraction accuracy typically reaches 97%+.
+
+---
+
+### 10. Production Reality Check (Mandatory)
+
+**If this fails in prod, what's the first thing we inspect?**
+
+> **Check `tables_detected` vs `tables_extracted` and `null_rate_per_numeric_column` in your ingestion metrics.**
+>
+> Silent extraction failures are the dominant production failure mode for structured data pipelines. A table that looks correct in the raw PDF but has 30% null values in numeric columns after extraction is not an extraction *error* — it's a silent data quality issue that cascades into wrong answers for numeric queries.
+>
+> ```python
+> def audit_table_node(node: TextNode) -> dict:
+>     """Run data quality checks on every extracted table node."""
+>     import pandas as pd
+>     from io import StringIO
+>
+>     text = node.text
+>     if "|---|" not in text:
+>         return {"status": "not_a_table"}
+>
+>     # Re-parse the Markdown table
+>     try:
+>         df = pd.read_table(StringIO(text), sep="|", skipinitialspace=True)
+>         df = df.iloc[:, 1:-1].dropna(how="all")   # strip outer pipe columns
+>         df.columns = df.columns.str.strip()
+>     except Exception as e:
+>         return {"status": "parse_failed", "error": str(e)}
+>
+>     issues = []
+>     for col in node.metadata.get("numeric_cols", []):
+>         if col in df.columns:
+>             numeric = pd.to_numeric(df[col].str.replace(",", ""), errors="coerce")
+>             null_rate = numeric.isna().mean()
+>             if null_rate > 0.1:
+>                 issues.append(f"{col}: {null_rate:.0%} nulls")
+>
+>     return {
+>         "status": "OK" if not issues else "WARN",
+>         "row_count": len(df),
+>         "issues": issues,
+>         "source": node.metadata.get("source"),
+>     }
+>
+> report = audit_table_node(table_node)
+> print(report)
+> # If status == WARN: re-extract with LlamaParse; check for merged cells;
+> # check for repeated headers not deduplicated
+> ```
+>
+> The number-one production rule for structured extraction: **instrument every table node with numeric column null rates. A null rate > 10% in a column that should be fully populated is a guaranteed extraction failure — treat it as an alert, not a warning.**
+
+---
+
+### 11. Curiosity Bridge (Mandatory)
+
+You now know how to extract tables with column headers intact, handle merged cells and repeated headers, pull form fields from AcroForms, and use Pydantic programs to extract structured fields from legal prose — all with grounding checks and audit trails.
+
+But tables and forms are *within* documents. What if the knowledge you need isn't in any single table, but is *distributed across* documents as relationships between entities — *"Company A acquired Company B in 2019, which previously acquired Company C in 2015, and Company C held patents covering technology now used in Company A's flagship product"*? Answering that question requires not just retrieving documents but *building a graph of entity relationships* from them.
+
+That's **14.3.c: Knowledge Graph Construction from Documents** — where the structured extraction you just built becomes the input to a graph that makes cross-document reasoning tractable.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit check:** You're done with 14.3.b when you can explain the three structured extraction problems and the tool best suited to each, implement merged-cell forward-fill and repeated-header deduplication from memory, write a Pydantic grounding check for LLM-extracted numeric values, and design an end-to-end extraction pipeline with cost and accuracy estimates for a given document type.
+
+---
+
+**Carry-Forward Review (interleaved recall from 14.3.a):**
+
+*Q: A 100-page PDF contains 80 pages of text-layer content and 20 pages of scanned appendices. `SimpleDirectoryReader` extracts 80 pages of content and silently skips the other 20. How do you detect and fix this without re-parsing all 100 pages with a costly OCR tool?*
+
+> **A:** Detection: iterate pages with `pypdf`; flag any page where `len(page.extract_text().strip()) < 50` characters as likely scanned. This gives you a specific list of page numbers (e.g., `[81, 82, ..., 100]`). Fix (page-targeted OCR): extract *only* the scanned page range as images (`pdf2image.convert_from_path(path, first_page=81, last_page=100)`) and run Tesseract OCR on those images only. Alternatively, re-parse the whole document with `LlamaParse` which auto-detects and handles mixed content. The key is *page-level* detection so you don't waste OCR budget on the 80 pages that already have a good text layer.
+
+
+
+## Subtopic 14.3.c: Knowledge Assistants and Research Copilots
+
+### Reading Path + Level Tags
+
+- **Beginner:** Read sections 1–2 and the Active Recall.
+- **Intermediate:** Add sections 3–5 and the chat engine comparison table.
+- **Pro:** Complete the full Hands-On Lab (Build → Break → Measure → Explain) and the capstone system design.
+
+---
+
+### 0. Pre-Question Hook [Beginner]
+
+**Pause:** A researcher opens a chat interface over a 500-document legal corpus. Their first message: *"What are the indemnification caps in the software agreements?"* Their second message: *"What about the ones signed after 2022?"* Their third: *"Compare those to the master service agreements."* Before reading — what are the three conversational challenges that pure retrieval-augmented generation (RAG) cannot handle without additional architecture?
+
+*(Answer: multi-turn context — "those" and "ones" refer to previous answers, not new queries; cross-document synthesis — comparing across multiple separate queries; progressive refinement — narrowing scope without re-stating the full question each time.)*
+
+---
+
+### 1. The Intuition (Plain English) [Beginner]
+
+A knowledge assistant is a **conversational interface over a retrieval system**. The retrieval system (vector index, keyword index, structured extraction) is the engine; the knowledge assistant is the driver's seat.
+
+The key insight: a single-turn query engine answers questions. A knowledge assistant **remembers the conversation, routes across multiple indices, and synthesises from multiple sources** — all while maintaining attribution back to source documents so users can verify answers.
+
+Think of it as the difference between a search engine (Google) and a research analyst. Both can find information. But the analyst remembers what you discussed last week, pulls from multiple databases, compares findings across sources, and tells you *exactly which page* the number came from. A research copilot is that analyst, built on top of the LlamaIndex document AI stack.
+
+**Key terms (first use):**
+
+- **`ContextChatEngine`** — LlamaIndex chat engine that retrieves relevant context nodes for every turn and injects them into the prompt; the retriever runs on every user message regardless of conversation history.
+- **`CondensePlusContextChatEngine`** — chat engine that first condenses the conversation history + current message into a standalone question (using a condensation LLM call), then retrieves context for that standalone question; handles follow-up references ("those", "that") correctly.
+- **`SimpleChatEngine`** — chat engine with no retrieval; pure LLM conversation; useful for chitchat, clarification, and meta-questions about the corpus but cannot answer document-specific questions.
+- **`OpenAIAgent` (LlamaIndex)** — an agent built on OpenAI function calling that holds `QueryEngineTool` objects as tools; the agent decides *which* tool to call and *when*, enabling multi-index research across heterogeneous document types.
+- **`QueryEngineTool`** — wraps any LlamaIndex query engine (vector, summary, structured) as a callable tool with a name and description; the agent selects tools based on those descriptions.
+- **`SubQuestionQueryEngine`** — decomposes a complex multi-part question into sub-questions, routes each to the appropriate query engine, then synthesises all sub-answers into one final response; the go-to for *"compare X and Y across documents A, B, and C"* queries.
+- **`ChatMemoryBuffer`** — token-bounded in-memory chat history; stores recent turns as `ChatMessage` objects; oldest turns are dropped when the buffer exceeds `token_limit`; the simplest and most common memory for research copilots.
+- **`VectorMemory`** — stores conversation turns as vector embeddings; on each turn, retrieves the `top_k` most semantically relevant past turns (not just the most recent); useful for long-running research sessions with many topic switches.
+- **`SimpleComposableMemory`** — combines `ChatMemoryBuffer` (recent turns) + `VectorMemory` (long-term context); gives the best of both: recent conversational context + long-term topic recall.
+- **`CitationQueryEngine`** — wraps any query engine to produce responses where every claim is annotated with a citation `[1]` referencing the exact source node (document name, page, chunk); the production standard for research copilots.
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+```mermaid
+flowchart TD
+    USER["User message N\n'What about the ones signed after 2022?'"]
+
+    subgraph Memory["Conversation Memory"]
+        CMB["ChatMemoryBuffer\nLast K turns\n(token-bounded)"]
+        VM["VectorMemory\nSemantically similar\npast turns (optional)"]
+        COMP["SimpleComposableMemory\n= CMB + VM"]
+    end
+
+    subgraph Routing["Chat Engine / Agent Layer"]
+        CCE["CondensePlusContextChatEngine\n1. Condense(history + msg) → standalone Q\n2. Retrieve(standalone Q) → context nodes\n3. Synthesise(context + history + msg) → reply"]
+        AGENT["OpenAIAgent\n+ QueryEngineTool(contracts_index)\n+ QueryEngineTool(msa_index)\n+ QueryEngineTool(structured_db)\nAgent decides: which tool? which query?"]
+        SQE["SubQuestionQueryEngine\nDecomposes: 'Compare indemnification\ncaps across all agreement types'\n→ sub-Q1: contracts_index\n→ sub-Q2: msa_index\n→ sub-Q3: structured_db\n→ synthesise all answers"]
+    end
+
+    subgraph Retrieval["Retrieval Layer (from earlier topics)"]
+        VI["VectorStoreIndex\ncontracts (by type)"]
+        SI["SummaryIndex\ntable nodes"]
+        KWI["BM25 / Keyword index\nexact clause search"]
+    end
+
+    subgraph Synthesis["Response Synthesis"]
+        CQE["CitationQueryEngine\nAnnotates every claim\nwith [1], [2], [3]\n→ source: doc, page, chunk"]
+        RESP["Response\nAnswer + citations\n+ provenance metadata"]
+    end
+
+    USER --> Memory
+    COMP --> CCE
+    COMP --> AGENT
+    USER --> CCE & AGENT
+
+    CCE --> VI & SI
+    AGENT --> VI & SI & KWI
+    SQE --> VI & SI & KWI
+
+    VI & SI & KWI --> CQE
+    CQE --> RESP
+    RESP --> Memory
+```
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+#### Scenario A: Pharma Regulatory Research Assistant
+
+**Context:** A pharmaceutical company has 10,000 FDA submission documents (NDAs, BLAs, sNDAs). Regulatory affairs scientists spend 4 hours/day manually searching for precedent — *"Has FDA accepted a 6-month stability study for this formulation type?"*, *"What REMS conditions were imposed for drugs in this class?"* The company builds a research copilot that any scientist can query in natural language.
+
+**How the knowledge assistant fits in:**
+
+- **Index topology:** 3 separate indices — `clinical_index` (VectorStoreIndex over clinical study reports), `label_index` (VectorStoreIndex over approved drug labels), `rems_index` (SummaryIndex over REMS program documents, full-scan preferred because REMS docs are short and complete).
+- **Agent routing:** `OpenAIAgent` with 3 `QueryEngineTool` objects. Tool descriptions: *"Use this for clinical study efficacy and safety data"*, *"Use this for approved label language and indication wording"*, *"Use this for REMS program conditions and requirements"*. The agent picks the right tool per sub-question.
+- **Conversational memory:** `CondensePlusContextChatEngine` because scientists ask follow-up questions referencing prior answers: *"What about opioid REMS programs?"* after a previous question about pain medications.
+- **Citation:** `CitationQueryEngine` on every tool — every assertion (`"FDA accepted 6-month stability for X in NDA 21-5678"`) cites the exact source document and section.
+- **Constraints:**
+  - **Latency:** Regulatory scientists tolerate 5–8 seconds for deep research queries. Use streaming (`stream_chat()`) so the first tokens appear in ~1 second while synthesis continues.
+  - **Cost:** An agent call that invokes 3 tools + synthesis costs ~$0.06–$0.12. With 200 queries/day, that's $12–$24/day — well within budget.
+  - **Hallucination risk:** Regulatory decisions have direct patient safety implications. Citation is mandatory, not optional. Every response includes: `Source: NDA 21-5678, Clinical Study Report, Section 4.2, Page 47`. Scientists verify high-stakes claims directly in the source document.
+  - **What "good" looks like:** A scientist's research time for a precedent search drops from 4 hours to 20 minutes. The copilot cites 3–5 specific source documents per answer. Factual accuracy (validated by spot-checks against source documents) > 97%.
+
+---
+
+#### Scenario B: Legal Contract Navigator
+
+**Context:** A law firm indexes 50,000 contracts (NDAs, MSAs, SLAs, employment agreements). Associates spend hours locating specific clauses during due diligence. The copilot answers: *"What are the termination-for-convenience provisions in the 2023 SaaS agreements?"*, *"Which contracts have unlimited liability exposure?"*, and *"Compare the governing law clauses across these 10 agreements."*
+
+**How the knowledge assistant fits in:**
+
+- **Multi-document synthesis:** `SubQuestionQueryEngine` decomposes: *"Compare termination clauses across 10 agreements"* → 10 sub-questions (one per agreement) → 10 retrievals → synthesis into a comparison table. The synthesiser prompt: *"Present the results as a comparison table with columns: Agreement Name, Termination Notice Period, Convenience Termination Allowed, Cure Period."*
+- **Structured extraction integration:** Structured extraction nodes (from 14.3.b) are included in the same index. A question about *"unlimited liability agreements"* routes to nodes tagged `element_type: structured` where Pydantic-extracted `liability_cap: "unlimited"` flags are stored.
+- **Progressive refinement memory:** `SimpleComposableMemory` — the `ChatMemoryBuffer` holds the last 10 turns; `VectorMemory` stores the session's full history as embeddings. When an associate asks *"Now filter those to California-governed contracts"*, the agent retrieves the earlier *"unlimited liability"* turn from `VectorMemory` and combines it with the new filter.
+- **Constraints:**
+  - **Confidentiality:** All documents are client-privileged. The LLM API must be called with data residency guarantees (Azure OpenAI with US region, no training on customer data). Alternatively, use a local LLM (LlamaIndex + Ollama) for zero data egress.
+  - **Explainability:** Law partners require page-level citations for every clause reference. `CitationQueryEngine` with `citation_chunk_size=512` — citations at paragraph granularity, not page.
+  - **What "good" looks like:** A due diligence task that previously took 2 associates 3 days takes 1 associate 4 hours. Every generated clause comparison is verified by citation. Partners can see exactly which contract page any statement came from.
+
+---
+
+#### Scenario C: Enterprise Engineering Knowledge Base
+
+**Context:** A 2,000-engineer tech company indexes its internal knowledge base: architecture decision records (ADRs), runbooks, post-mortems, design docs, RFC proposals, and API documentation. Engineers ask: *"What was the decision for message queue technology in the checkout service?"*, *"What causes the timeout in the payment gateway and how has it been fixed before?"*, *"Summarise the main architectural patterns used in the identity service."*
+
+**How the knowledge assistant fits in:**
+
+- **Hybrid retrieval:** `QueryFusionRetriever` (from 14.2.b) combining BM25 (exact term match for error codes, service names, API methods) + vector similarity (semantic search for intent-based questions). BM25 is essential here because engineers search with exact identifiers (`CHECKOUT-4521`, `kafka-connect`, `auth_service_v2`).
+- **Routing by document type:** `RouterQueryEngine` routes ADR queries to a `SummaryIndex` (full ADR context needed for decision rationale), runbook queries to a `VectorStoreIndex` (keyword-rich; exact procedure lookup), and post-mortem queries to a hybrid retriever (incident numbers + semantic similarity to *"the same issue"*).
+- **Session memory for on-call incidents:** During an active incident, an engineer's session spans an hour. `SimpleComposableMemory` tracks the incident thread — the engineer can ask *"Is this the same root cause as the Kafka issue last quarter?"* and the VectorMemory component surfaces the relevant post-mortem from earlier in the same session.
+- **What "good" looks like:** Mean time to resolution (MTTR) for incidents involving the knowledge base drops 40%. New engineers onboard 30% faster. Every architectural decision referenced in a copilot answer links to the original ADR document.
+
+---
+
+### 4. System View (Think Like a Systems Engineer) [Intermediate]
+
+**The three-layer architecture of a research copilot:**
+
+```
+LAYER 1: MEMORY AND CONTEXT MANAGEMENT
+  Input:  (user_message_N, session_history)
+  Step 1: Retrieve recent turns from ChatMemoryBuffer
+          (last K messages, bounded at token_limit=2048)
+  Step 2: If VectorMemory enabled: embed user_message_N,
+          retrieve top-3 semantically similar past turns
+  Step 3: Merge: [recent_turns] + [semantic_turns] → context_window
+  Output: Condensed standalone question (for CondensePlusContextChatEngine)
+          OR full context bundle (for OpenAIAgent)
+
+LAYER 2: ROUTING AND RETRIEVAL
+  Decision tree:
+    Single-document Q → ContextChatEngine → VectorStoreIndex retriever
+    Multi-document synthesis → SubQuestionQueryEngine →
+        routes sub-Qs to registered query engines per document type
+    Agentic research (multi-step, tool selection) → OpenAIAgent →
+        calls QueryEngineTool(s) based on tool description match
+        agent can make multiple sequential tool calls to gather context
+  Each retriever returns: List[NodeWithScore]
+  (source_node, score, metadata: {doc, page, section})
+
+LAYER 3: SYNTHESIS AND ATTRIBUTION
+  Input:  List[NodeWithScore] + condensed_question + context_window
+  Step 1: CitationQueryEngine wraps base synthesiser
+          assigns [1], [2], [3]... to each source node
+  Step 2: ResponseSynthesizer.synthesise(mode="compact_accumulate")
+          or "tree_summarize" for long multi-document synthesis
+  Step 3: Append citation bibliography:
+          [1] contracts_index/NDA_2023.pdf, page 12, section 4.2
+          [2] contracts_index/MSA_2022.pdf, page 8, section 3.1
+  Output: response_text + citation_list + source_nodes
+          (source_nodes persisted to session for follow-up "show me that"
+           queries that don't need a new retrieval)
+```
+
+**Observability — what to log per chat turn:**
+
+| Signal | What to capture | Why |
+|--------|----------------|-----|
+| `tools_called` | Which QueryEngineTools the agent invoked, in order | Understand routing quality; if wrong tool selected → fix tool description |
+| `sub_questions_generated` | SubQuestionQueryEngine's decomposition | Complex questions decomposed wrong → retrieval misses; log the sub-Q text |
+| `retrieval_scores` | Top-3 node scores per retrieval | Score < 0.5 → low relevance; check index quality or reformulate retrieval |
+| `condenser_output` | The standalone question after condensation | *"those"* not resolved correctly → condenser failing; check memory token limit |
+| `citation_count` | Number of citations per response | 0 citations on a factual answer → response was hallucinated from parametric knowledge |
+| `memory_token_usage` | Tokens consumed by conversation history per turn | Approaching `token_limit` → memory compression or truncation triggered |
+| `p95_latency_ms` | End-to-end per turn | > 5000ms → cache embeddings; reduce `top_k`; enable streaming |
+
+**Failure points:**
+
+1. **The "those" problem — follow-up references break retrieval** — User says *"What about those after 2022?"*. `ContextChatEngine` embeds "those after 2022" and finds semantically unrelated nodes. The retriever has no context from the previous turn.
+   - *How it shows up:* The response answers a completely different question, ignoring the conversational context.
+   - *Fix:* Use `CondensePlusContextChatEngine`. The condenser combines `history + "those after 2022"` → `"What are the indemnification caps in software agreements signed after 2022?"` — a self-contained question the retriever can answer correctly.
+
+2. **Tool description mismatch — agent routes to the wrong index** — The agent calls `contracts_tool` when the question is about REMS conditions, because the tool descriptions are too generic.
+   - *How it shows up:* Low retrieval scores; answers that are factually wrong about the cited topic; agent hallucinating because retrieved nodes are irrelevant.
+   - *Fix:* Write precise, specific tool descriptions that include domain vocabulary: *"Use for FDA REMS program documents containing medication guides, elements to assure safe use (ETASU), and enrollment requirements"* — not *"Use for regulatory documents"*.
+
+3. **Memory overflow silently dropping early turns** — A research session grows beyond `ChatMemoryBuffer(token_limit=2048)`. The buffer drops the oldest turns. A follow-up question that depends on an early part of the session fails because that context is gone.
+   - *How it shows up:* The agent acts as if a previously stated constraint was never mentioned. No error is raised — the memory just silently truncates.
+   - *Fix:* Add `VectorMemory` alongside `ChatMemoryBuffer` via `SimpleComposableMemory`. Long-term context is stored as embeddings and retrieved semantically even after the buffer limit is exceeded.
+
+---
+
+### 5. System Design Flavor [Intermediate]
+
+**Chat engine selection — when to use what:**
+
+| Chat Engine | Best for | Retrieval strategy | Memory | Cost/turn |
+|------------|----------|-------------------|--------|-----------|
+| `SimpleChatEngine` | Clarification, meta-questions, out-of-scope handling | None | ChatMemoryBuffer | Low (LLM only) |
+| `ContextChatEngine` | Single-turn factual Q&A with no follow-up references | Full retriever every turn | ChatMemoryBuffer | Medium |
+| `CondensePlusContextChatEngine` | Multi-turn research with follow-up references ("those", "it", "same") | Condenser (1 LLM call) + retriever | ChatMemoryBuffer | Medium + condenser cost |
+| `OpenAIAgent` + `QueryEngineTool` | Multi-index research; agent decides which tool to call | Per-tool retriever on agent's choice | ChatMemoryBuffer | High (agent loop) |
+| `SubQuestionQueryEngine` | Explicit multi-document synthesis ("compare X across A, B, C") | Parallel sub-question retrievals | N/A (stateless) | High (parallel) |
+
+**Key tradeoffs:**
+
+| Tradeoff | The tension | When to choose which side |
+|----------|------------|--------------------------|
+| **ContextChatEngine vs CondensePlusContextChatEngine** | Cost (1 LLM call) vs correctness of follow-up Q&A | If your users always write standalone questions: `ContextChatEngine` saves money. If they use pronouns and references: `CondensePlusContextChatEngine` is mandatory — the retrieval quality difference is 30–40% on real research sessions |
+| **Agent vs SubQuestionQueryEngine** | Flexibility (agent) vs predictability (SubQuestion) | Agent: user's question format is unpredictable; use agent. SubQuestion: you *know* queries will be multi-document comparisons; SubQuestion is faster (no agent loop) and cheaper (no function-call overhead) |
+| **ChatMemoryBuffer vs VectorMemory** | Recency (buffer) vs relevance (vector) | Buffer for sessions < 20 turns. Add VectorMemory when sessions exceed 20 turns or span multiple topics; semantic retrieval surfaces what's relevant, not just what's recent |
+
+**Scaling consideration (10x query volume):**
+At 10x:
+- Cache the condensed standalone question + its retrieval results for 60 seconds — repeat queries from different users about the same topic hit the cache.
+- Use `streaming=True` universally — reduces perceived latency and server-side connection hold time.
+- Shard indices by document domain (contracts vs REMS vs labels) — avoid retrieval across 100K+ documents when the domain is known from routing.
+- Store chat session state in Redis (serialise `SimpleComposableMemory` as JSON) — enables horizontal scaling of the API layer with stateless workers.
+
+---
+
+### 6. Common Mistakes + Debugging [Beginner → Intermediate]
+
+#### Mistake 1: Using `ContextChatEngine` for Multi-Turn Research
+
+**Symptom:** After a strong first answer about *"indemnification caps in SaaS agreements"*, the user asks *"What about the liability waivers?"* and gets a completely different topic's results — or an answer that ignores the *"SaaS agreements"* constraint.
+
+**Likely cause:** `ContextChatEngine` retrieves using only the current message. *"What about the liability waivers?"* has no mention of "SaaS agreements" — the retriever searches the full index and returns results from any agreement type.
+
+**First debugging step:**
+```python
+# Diagnose: print the condensed question from CondensePlusContextChatEngine
+# to verify it correctly resolves "those" / "it" / "that"
+
+from llama_index.core.chat_engine import CondensePlusContextChatEngine
+
+# After initialising your engine, monkey-patch to log the condensed question
+original_retrieve = engine._retrieve
+
+def debug_retrieve(query, chat_history):
+    condensed = engine._condense_question(query, chat_history)
+    print(f"[DEBUG] Original query: {query!r}")
+    print(f"[DEBUG] Condensed standalone Q: {condensed!r}")
+    return original_retrieve(condensed, chat_history)
+
+# Run a multi-turn session and inspect the condensed questions
+# If condensed Q does not include the prior context → fix: increase memory token_limit
+# or switch to CondensePlusContextChatEngine from ContextChatEngine
+```
+
+---
+
+#### Mistake 2: Vague Tool Descriptions Causing Agent Misrouting
+
+**Symptom:** The agent consistently calls the wrong query engine tool. A question about REMS enrollment conditions routes to the clinical trials tool. Answers are low-quality or cite the wrong document type.
+
+**Likely cause:** Tool descriptions are too general. *"Use for regulatory documents"* matches everything regulatory-related, including clinical trials. The LLM selects based on semantic similarity between the user question and the tool description.
+
+**First debugging step:**
+```python
+from llama_index.core.agent import OpenAIAgent
+from llama_index.core.tools import QueryEngineTool, ToolMetadata
+
+# BAD: generic descriptions
+bad_tools = [
+    QueryEngineTool(query_engine=clinical_qe,
+                    metadata=ToolMetadata(name="clinical", description="Clinical docs")),
+    QueryEngineTool(query_engine=rems_qe,
+                    metadata=ToolMetadata(name="rems", description="Regulatory docs")),
+]
+
+# GOOD: specific descriptions with domain vocabulary
+good_tools = [
+    QueryEngineTool(
+        query_engine=clinical_qe,
+        metadata=ToolMetadata(
+            name="clinical_trials",
+            description=(
+                "Use for clinical trial results: efficacy endpoints, adverse events, "
+                "pharmacokinetics, dose-response relationships, patient populations, "
+                "statistical significance, and comparator data from Phase I/II/III studies."
+            )
+        )
+    ),
+    QueryEngineTool(
+        query_engine=rems_qe,
+        metadata=ToolMetadata(
+            name="rems_programs",
+            description=(
+                "Use ONLY for FDA REMS (Risk Evaluation and Mitigation Strategy) program "
+                "details: ETASU conditions, patient enrollment requirements, prescriber "
+                "certification, pharmacy certification, medication guides, and REMS "
+                "modification history. Do NOT use for clinical efficacy or safety data."
+            )
+        )
+    ),
+]
+
+# Verify routing: print which tool the agent selects for test queries
+agent = OpenAIAgent.from_tools(good_tools, verbose=True)
+response = agent.chat("What REMS enrollment conditions apply to opioid pain medications?")
+# verbose=True shows which tool was called — verify it's rems_programs, not clinical_trials
+```
+
+---
+
+#### Mistake 3: `CitationQueryEngine` Returning Zero Citations
+
+**Symptom:** Every response from the citation-enabled copilot ends with *"[No citations found]"* or the citation annotations `[1]`, `[2]` appear in the text but the bibliography is empty. The copilot is generating answers from the LLM's parametric knowledge, not from the retrieved documents.
+
+**Likely cause:** Two possibilities: (1) The `CitationQueryEngine` is wrapping the wrong layer — it wraps the `ResponseSynthesizer` directly but the nodes never reach it because the chat engine's retrieval returns empty results. (2) The `citation_chunk_size` is larger than most retrieved nodes, so no node qualifies for citation.
+
+**First debugging step:**
+```python
+from llama_index.core.query_engine import CitationQueryEngine
+
+# Verify nodes are being retrieved — run the base query engine first
+base_response = base_query_engine.query("What are the indemnification caps?")
+print(f"Source nodes retrieved: {len(base_response.source_nodes)}")
+for n in base_response.source_nodes:
+    print(f"  Score: {n.score:.3f} | len: {len(n.node.text)} chars | "
+          f"source: {n.node.metadata.get('source', '?')}")
+
+# If source_nodes is 0: retrieval failure — debug index or query
+# If source_nodes > 0 but CitationQueryEngine still shows no citations:
+citation_qe = CitationQueryEngine.from_defaults(
+    index=your_index,
+    citation_chunk_size=256,   # REDUCE from default 512; some nodes are short
+    citation_chunk_overlap=20,
+)
+cited_response = citation_qe.query("What are the indemnification caps?")
+print(f"\nCitation response:\n{cited_response.response}")
+print(f"\nSources: {[n.node.metadata for n in cited_response.source_nodes]}")
+```
+
+---
+
+### 7. Hands-On Lab [Pro]
+
+#### Build — Multi-Turn Research Copilot with Citations
+
+```python
+# research_copilot_lab.py
+# pip install llama-index-core llama-index-llms-openai llama-index-embeddings-openai
+
+import json
+from llama_index.core import VectorStoreIndex, Document, Settings
+from llama_index.core.chat_engine import CondensePlusContextChatEngine
+from llama_index.core.memory import ChatMemoryBuffer
+from llama_index.core.query_engine import CitationQueryEngine
+from llama_index.core.schema import TextNode, NodeRelationship, RelatedNodeInfo
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Mock LLM and Embeddings for offline lab (no API key needed for structure test)
+# In production: use OpenAI("gpt-4o") and OpenAIEmbedding()
+# ─────────────────────────────────────────────────────────────────────────────
+try:
+    from llama_index.llms.openai import OpenAI
+    from llama_index.embeddings.openai import OpenAIEmbedding
+    Settings.llm = OpenAI(model="gpt-4o", temperature=0)
+    Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-small")
+    LIVE_MODE = True
+except ImportError:
+    from llama_index.core.llms import MockLLM
+    from llama_index.core.embeddings import MockEmbedding
+    Settings.llm = MockLLM(max_tokens=512)
+    Settings.embed_model = MockEmbedding(embed_dim=1536)
+    LIVE_MODE = False
+    print("Running in MOCK mode — no API key needed. Responses will be generic.")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sample documents: 3 contracts with different indemnification terms
+# ─────────────────────────────────────────────────────────────────────────────
+CONTRACTS = [
+    {
+        "source": "SaaS_Agreement_Acme_2023.pdf",
+        "content": (
+            "Section 12. Indemnification. Each party shall indemnify and hold harmless "
+            "the other party from any third-party claims. Indemnification is capped at "
+            "the fees paid in the 12 months preceding the claim. Consequential damages "
+            "are excluded. Effective date: March 1, 2023."
+        ),
+        "type": "SaaS",
+        "year": 2023,
+    },
+    {
+        "source": "MSA_GlobalCorp_2022.pdf",
+        "content": (
+            "Article 9. Mutual Indemnification. GlobalCorp shall indemnify Client against "
+            "IP infringement claims. Client shall indemnify GlobalCorp against misuse of "
+            "services. Aggregate liability cap: USD 500,000. Effective date: June 15, 2022."
+        ),
+        "type": "MSA",
+        "year": 2022,
+    },
+    {
+        "source": "SaaS_Agreement_TechStart_2024.pdf",
+        "content": (
+            "Section 8. Indemnification and Liability. TechStart indemnifies Customer "
+            "against claims arising from software defects. Liability is uncapped for IP "
+            "indemnification obligations only; all other liability capped at fees paid "
+            "in prior 6 months. Effective date: January 10, 2024."
+        ),
+        "type": "SaaS",
+        "year": 2024,
+    },
+]
+
+# Build TextNode list with provenance metadata
+nodes = []
+for c in CONTRACTS:
+    node = TextNode(
+        text=c["content"],
+        metadata={
+            "source": c["source"],
+            "contract_type": c["type"],
+            "year": c["year"],
+            "element_type": "clause",
+            "section": "Indemnification",
+        }
+    )
+    nodes.append(node)
+
+# Build VectorStoreIndex
+index = VectorStoreIndex(nodes)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PART 1: Basic CitationQueryEngine (single-turn, with citations)
+# ─────────────────────────────────────────────────────────────────────────────
+
+citation_qe = CitationQueryEngine.from_defaults(
+    index=index,
+    citation_chunk_size=256,
+    similarity_top_k=3,
+)
+
+print("=== Single-turn CitationQueryEngine ===")
+q1 = "What are the indemnification caps across the agreements?"
+response1 = citation_qe.query(q1)
+print(f"\nQ: {q1}")
+print(f"\nA: {response1.response}")
+print(f"\nCitations ({len(response1.source_nodes)}):")
+for i, n in enumerate(response1.source_nodes, 1):
+    print(f"  [{i}] {n.node.metadata.get('source', '?')} "
+          f"(type={n.node.metadata.get('contract_type')}, "
+          f"year={n.node.metadata.get('year')}) "
+          f"score={n.score:.3f}")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PART 2: CondensePlusContextChatEngine (multi-turn, follow-up references)
+# ─────────────────────────────────────────────────────────────────────────────
+
+memory = ChatMemoryBuffer.from_defaults(token_limit=3000)
+base_retriever = index.as_retriever(similarity_top_k=3)
+
+chat_engine = CondensePlusContextChatEngine.from_defaults(
+    retriever=base_retriever,
+    memory=memory,
+    verbose=True,         # prints condensed question for debugging
+)
+
+print("\n\n=== Multi-turn CondensePlusContextChatEngine ===")
+turns = [
+    "What are the indemnification caps in the SaaS agreements?",
+    "What about the ones signed after 2023?",     # follow-up: references prior context
+    "Does any of them have an uncapped liability provision?",  # another follow-up
+]
+
+for turn in turns:
+    print(f"\n--- USER: {turn}")
+    response = chat_engine.chat(turn)
+    print(f"--- ASSISTANT: {response.response}")
+    # In verbose mode: the condensed standalone question is printed above
+    # Verify: 2nd and 3rd turns should show condensed Q with "SaaS agreement" context
+
+print(f"\nSession turns in memory: {len(memory.get())}")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PART 3: SubQuestionQueryEngine (multi-document comparison)
+# ─────────────────────────────────────────────────────────────────────────────
+
+from llama_index.core.query_engine import SubQuestionQueryEngine
+from llama_index.core.tools import QueryEngineTool, ToolMetadata
+
+# Build per-type query engines
+saas_nodes = [n for n in nodes if n.metadata["contract_type"] == "SaaS"]
+msa_nodes  = [n for n in nodes if n.metadata["contract_type"] == "MSA"]
+
+saas_index = VectorStoreIndex(saas_nodes)
+msa_index  = VectorStoreIndex(msa_nodes)
+
+tools = [
+    QueryEngineTool(
+        query_engine=saas_index.as_query_engine(similarity_top_k=3),
+        metadata=ToolMetadata(
+            name="saas_agreements",
+            description=(
+                "Use for SaaS software agreements. Contains indemnification terms, "
+                "liability caps, IP ownership, SLA provisions, and data processing "
+                "clauses in software-as-a-service contracts."
+            )
+        )
+    ),
+    QueryEngineTool(
+        query_engine=msa_index.as_query_engine(similarity_top_k=3),
+        metadata=ToolMetadata(
+            name="master_service_agreements",
+            description=(
+                "Use for Master Service Agreements (MSAs). Contains broad "
+                "indemnification, liability caps, IP indemnification obligations, "
+                "and aggregate liability limits across service engagements."
+            )
+        )
+    ),
+]
+
+sub_qe = SubQuestionQueryEngine.from_defaults(
+    query_engine_tools=tools,
+    verbose=True,   # shows how the complex Q is decomposed into sub-Qs
+)
+
+print("\n\n=== SubQuestionQueryEngine (multi-document comparison) ===")
+complex_q = "Compare the indemnification caps between SaaS agreements and master service agreements."
+print(f"\nQ: {complex_q}")
+response3 = sub_qe.query(complex_q)
+print(f"\nA: {response3.response}")
+# verbose output shows the sub-questions and their individual answers
+```
+
+---
+
+#### Break — Using `ContextChatEngine` Instead of `CondensePlusContextChatEngine`
+
+```python
+# BREAK: use ContextChatEngine — follow-up queries lose prior context
+
+from llama_index.core.chat_engine import ContextChatEngine
+
+broken_engine = ContextChatEngine.from_defaults(
+    retriever=base_retriever,
+    memory=ChatMemoryBuffer.from_defaults(token_limit=3000),
+    verbose=True,
+)
+
+print("\n=== BROKEN: ContextChatEngine with follow-up reference ===")
+r_broken_1 = broken_engine.chat("What are the indemnification caps in the SaaS agreements?")
+print(f"Turn 1: {r_broken_1.response[:200]}")
+
+# Follow-up with pronoun reference — ContextChatEngine does NOT condense history
+r_broken_2 = broken_engine.chat("What about the ones signed after 2023?")
+print(f"\nTurn 2 (broken): {r_broken_2.response[:200]}")
+# The retriever searched for "the ones signed after 2023" with no "SaaS" context
+# Result: may retrieve MSA or general contract content, or fail entirely
+print("\n[BROKEN] The second answer likely omits the SaaS context from turn 1.")
+print("[FIX] Use CondensePlusContextChatEngine to condense history + current message.")
+```
+
+---
+
+#### Measure
+
+```python
+# Measure citation quality and memory effectiveness
+print("\n=== Measurement ===")
+
+# 1. Citation coverage: what % of source nodes have metadata for provenance?
+total_nodes = len(nodes)
+nodes_with_source = sum(1 for n in nodes if "source" in n.metadata)
+print(f"Citation coverage: {nodes_with_source}/{total_nodes} nodes have 'source' metadata "
+      f"({nodes_with_source/total_nodes*100:.0f}%)")
+
+# 2. Memory state after conversation
+memory_msgs = memory.get()
+print(f"\nMemory after {len(turns)} turns: {len(memory_msgs)} messages stored")
+print(f"Memory token estimate: {sum(len(m.content) for m in memory_msgs) // 4} tokens")
+
+# 3. Sub-question count from SubQuestionQueryEngine
+# (visible in verbose output; capture programmatically via callback)
+# In a production system: log sub_qe._query_engine._sub_questions_count per query
+
+# 4. Tool routing accuracy test (for agent-based systems)
+tool_routing_tests = [
+    ("What are the SLA uptime guarantees?", "saas_agreements"),
+    ("What is the aggregate liability cap?", "master_service_agreements"),
+]
+print("\nTool routing accuracy (manual check — run in verbose=True mode):")
+for q, expected_tool in tool_routing_tests:
+    print(f"  Q: {q!r} → expected tool: {expected_tool}")
+```
+
+---
+
+#### Explain — Why Condensation Is Not Optional for Research Copilots
+
+The fundamental gap between a query engine and a research copilot is **contextual resolution**. A query engine treats every query as an independent search request. A research copilot maintains a thread — each message is interpreted in the context of all previous messages.
+
+`CondensePlusContextChatEngine` solves this with a two-step approach: a cheap condensation LLM call (~$0.0005) that converts the ambiguous follow-up message into a self-contained standalone question, then a normal retrieval on that standalone question. Without condensation, a follow-up like *"What about the ones after 2022?"* retrieves documents matching the word "2022" across all document types — the constraint *"SaaS agreements"* from the prior turn is lost.
+
+In production research copilots, missing conversational context is the most user-visible failure mode. Unlike a hallucination (which can be caught by citation), a topic-drift failure feels like the assistant *forgot* what you were discussing — which destroys trust immediately. The condensation call costs roughly $0.0005 per turn; the user trust cost of getting it wrong is far higher.
+
+Citation is similarly non-negotiable for professional research workflows. An answer without attribution is an assertion the user cannot verify. In regulatory, legal, and financial contexts, an unverifiable assertion is worse than no answer — it creates liability. `CitationQueryEngine` ensures every claim is traceable to a source node with page and section metadata.
+
+---
+
+### 8. Active Recall (Spaced Repetition) [Beginner → Pro]
+
+**Q1 [Beginner]:** What is the difference between `ContextChatEngine` and `CondensePlusContextChatEngine`? When does the difference matter?
+
+> **A:** `ContextChatEngine` retrieves using only the current user message — no history-awareness in retrieval. `CondensePlusContextChatEngine` first makes a cheap LLM call to condense `history + current_message` into a standalone question, then retrieves using that standalone question. The difference matters whenever users use pronouns or references that depend on prior turns ("those", "same", "it", "that agreement"). For users who always write standalone, context-complete queries, the simpler `ContextChatEngine` works and costs less.
+
+---
+
+**Q2 [Beginner]:** What does `CitationQueryEngine` add to a standard query engine, and why is citation important for research copilots specifically?
+
+> **A:** `CitationQueryEngine` wraps the response synthesiser to annotate every claim with a numbered citation `[1]` linked to the exact source node (document name, page, section). For research copilots, citation is critical because: (1) it enables users to verify answers — the LLM can still hallucinate, but with citations the user knows which statements are grounded in the corpus; (2) in professional contexts (legal, regulatory, financial) unattributed claims create liability; (3) it builds user trust — a copilot that always cites sources trains users to use it as a starting point for research, not a final authority.
+
+---
+
+**Q3 [Intermediate]:** When would you choose `SubQuestionQueryEngine` over `OpenAIAgent` for multi-document research queries?
+
+> **A:** Choose `SubQuestionQueryEngine` when: the query structure is predictably multi-document comparison ("compare X across indices A, B, C") and the number of tools is known in advance. It's faster (parallel sub-question execution, no agent loop overhead) and cheaper (no function-call token overhead). Choose `OpenAIAgent` when: the user's questions are varied and unpredictable, the agent may need to call tools sequentially (output of tool 1 informs tool 2's query), or the routing decision requires reasoning that a fixed decomposition template can't handle.
+
+---
+
+**Q4 [Intermediate]:** A research session spans 50 turns. `ChatMemoryBuffer(token_limit=2048)` was used. A user asks a question that requires context from turn 3. What goes wrong and how do you fix it?
+
+> **A:** `ChatMemoryBuffer` drops the oldest turns when the token limit is exceeded. By turn 50, turn 3 has long been evicted from the buffer. The condensation call has no access to turn 3's context, so the follow-up question loses that context. Fix: use `SimpleComposableMemory` which combines `ChatMemoryBuffer` (recent K turns) with `VectorMemory` (stores all turns as embeddings). `VectorMemory` retrieves the semantically relevant turns from the full session history, including early turns, even after they've been evicted from the buffer.
+
+---
+
+**Q5 [Pro]:** Design the memory architecture for a legal research copilot used by 500 concurrent attorneys, each with sessions lasting 2–4 hours. What would you use for per-session memory storage, and how would you handle horizontal scaling of the API layer?
+
+> **A:** Per-session memory: `SimpleComposableMemory` (recent turns via `ChatMemoryBuffer` + long-term via `VectorMemory`). Serialise the memory object as JSON to **Redis** after every turn (key: `session:{user_id}:{session_id}`). API workers are stateless — they deserialise memory from Redis at the start of each turn, update it, and re-serialise. This enables horizontal scaling: any worker can handle any turn of any session. Redis TTL: 4 hours (session expiry). For the `VectorMemory` component: store embeddings in Redis as well (using Redis Vector Search / `redis-py` with `RediSearch`) or in a per-session in-memory store that's serialised to S3 for recovery. Important: mark sessions as client-privileged — Redis must be in a private VPC with no external access, and the session data must be encrypted at rest.
+
+---
+
+### 9. Practice
+
+**Mini-exercise:** A colleague says: *"I'll just use `SimpleChatEngine` — it's simpler and cheaper."* The use case is a 2,000-document enterprise knowledge base where engineers ask questions about architecture decisions, runbooks, and past incidents. What do you tell them, and what specific failure would you predict in the first 10 minutes of use?
+
+> **Suggested answer:**
+> `SimpleChatEngine` has no retrieval — it answers purely from the LLM's parametric knowledge. In a domain-specific internal knowledge base, the LLM has no knowledge of your specific ADRs, runbooks, or incidents. Within the first 10 minutes:
+> - An engineer asks *"What was decided about message queue technology in checkout?"* — the LLM will either say it doesn't know, or worse, confabulate a plausible-sounding but fabricated decision.
+> - An on-call engineer asks *"What's the fix for the payment gateway timeout?"* — the LLM has no knowledge of your specific service; it may suggest generic TCP timeout debugging steps that are irrelevant to your actual system.
+> Use `CondensePlusContextChatEngine` (for follow-up question support) with a `QueryFusionRetriever` (BM25 + vector for exact service names + semantic search). `SimpleChatEngine` is only appropriate for meta-questions about the copilot itself, not for domain knowledge retrieval.
+
+---
+
+**Capstone system design question:** Design a research copilot for a hedge fund that needs to answer questions about 10,000 SEC filings (10-K, 10-Q, 8-K). Questions include: *"What are the risk factors related to currency exposure in tech companies?"* (semantic, multi-document), *"What did Apple report as their FY2023 revenue?"* (exact, single-document), *"How has Nvidia's gross margin trended over 8 quarters?"* (structured, time-series query). Design the index topology, chat engine strategy, memory architecture, and citation approach. Address cost, latency, and hallucination risk.
+
+> **Answer outline:**
+> - **Index topology (3 indices):**
+>   1. `risk_factor_index` — `VectorStoreIndex` over 10-K/10-Q risk factor sections; enables semantic search across companies and topics.
+>   2. `financials_index` — `SummaryIndex` over structured financial statement nodes (from table extraction, 14.3.b); tagged with `{company, period, metric}` metadata; enables exact metric lookup.
+>   3. `events_index` — `VectorStoreIndex` + BM25 hybrid over 8-K filing text; enables exact and semantic search over material events (earnings surprises, acquisitions, regulatory notices).
+> - **Chat engine strategy:** `OpenAIAgent` with 3 `QueryEngineTool` objects (one per index). Tool descriptions are highly specific. For the time-series query (Nvidia gross margin), the agent calls `financials_index` twice: once for most recent quarter, once with a date range filter. `SubQuestionQueryEngine` is used as a sub-component when the agent detects multi-document comparison intent.
+> - **Memory:** `SimpleComposableMemory` — buffer for recent context (analyst refers back to companies discussed 5 turns ago) + vector memory for full session (2-hour research sessions are common for fund analysts).
+> - **Citation:** `CitationQueryEngine` on all three tools. For financial metrics: citation includes `{company, form_type, filing_date, section, page}` — essential for regulatory compliance (investment decisions must be traceable to source filings).
+> - **Cost per session:** ~50 turns × avg 3 tool calls × $0.03/call = $4.50. Acceptable for hedge fund use case.
+> - **Latency:** Streaming enabled. Agent loop: ~3–5s for complex multi-tool queries. Time-series query (multiple tool calls): ~8–12s. Streaming gives the analyst the first tokens within 1s.
+> - **Hallucination safeguards:** Citation is mandatory. Financial metrics (revenue, EPS, gross margin) undergo a grounding check: extracted numeric values must appear in the retrieved node text. Metrics that fail grounding are flagged with *"Unverified — please check source filing"* in the response.
+
+---
+
+### 10. Production Reality Check (Mandatory)
+
+**If this fails in prod, what's the first thing we inspect?**
+
+> **Check the condensed standalone question and the tool routing decision — log both on every turn.**
+>
+> The two highest-impact failure modes in production research copilots are both silent: the conversational context is lost (condensation failed) and the wrong index is searched (tool routing failed). Neither failure raises an exception — the system produces a response, but it's about the wrong topic.
+>
+> ```python
+> # Minimal production observability wrapper for CondensePlusContextChatEngine
+> import time
+> import logging
+>
+> logger = logging.getLogger("research_copilot")
+>
+> class InstrumentedChatEngine:
+>     def __init__(self, engine, session_id: str):
+>         self.engine = engine
+>         self.session_id = session_id
+>         self.turn = 0
+>
+>     def chat(self, message: str):
+>         self.turn += 1
+>         t0 = time.time()
+>
+>         response = self.engine.chat(message)
+>
+>         latency_ms = (time.time() - t0) * 1000
+>         citation_count = len(getattr(response, "source_nodes", []))
+>
+>         logger.info(json.dumps({
+>             "session_id": self.session_id,
+>             "turn": self.turn,
+>             "query": message[:100],
+>             "response_chars": len(response.response),
+>             "citation_count": citation_count,
+>             "latency_ms": round(latency_ms),
+>             # Log condensed question if accessible (engine internals vary by version)
+>             # "condensed_q": engine._last_condensed_query,
+>         }))
+>
+>         # Alert: no citations on a factual research query
+>         if citation_count == 0 and len(response.response) > 100:
+>             logger.warning(f"session={self.session_id} turn={self.turn}: "
+>                            f"ZERO citations on {len(response.response)}-char response — "
+>                            f"possible hallucination from parametric knowledge")
+>
+>         return response
+> ```
+>
+> **The production rule:** Any response longer than 100 characters with zero citations in a document-grounded research copilot is either a retrieval failure or a hallucination. Log it, alert on it, and if the rate exceeds 5% of turns, investigate the retrieval quality immediately — do not wait for users to report wrong answers.
+
+---
+
+### 11. Curiosity Bridge (Mandatory)
+
+You've now built the conversational layer: chat engines that handle follow-up references, agents that route across multiple indices, citation that keeps every answer traceable, and memory that persists context across long research sessions.
+
+But how do you know if any of this is actually *working*? A research copilot that cites sources confidently can still be systematically wrong — retrieving the right documents but synthesising the wrong conclusion, or citing a clause that doesn't actually support the answer. You need a way to measure quality automatically, at scale, before users tell you the system is broken.
+
+That's **14.3.d: Evaluation for Document Understanding Systems** — where you'll build automated evaluation pipelines using LlamaIndex's `Evaluator` framework, `RAGAs` metrics, and faithfulness/relevancy/context-precision scoring to continuously validate that the research copilot you just built is actually answering correctly.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit check:** You're done with 14.3.c when you can explain the difference between `ContextChatEngine` and `CondensePlusContextChatEngine` and give the exact scenario where each breaks, configure `OpenAIAgent` with precise tool descriptions for multi-index routing, implement `CitationQueryEngine` and diagnose zero-citation failures, choose between `SubQuestionQueryEngine` and `OpenAIAgent` for a given query pattern, and design the memory architecture for a stateless horizontally-scaled research copilot.
+
+---
+
+**Carry-Forward Review (interleaved recall from 14.3.b):**
+
+*Q: A table spans 3 pages in a PDF. After extraction with pdfplumber, you count 9 data rows. But the original table has 12 rows — you're missing 3. The first column "Phase" has empty strings in rows 4, 7, and 10. What is the most likely cause and what is the fix?*
+
+> **A:** Most likely cause: merged cells. Rows 4, 7, and 10 are part of a merged group where the Phase value (e.g., "Phase II") spans multiple rows — it appears once in the first row of the group, leaving the other rows with empty strings in the "Phase" column. This is not a missing-row problem — the 12 rows are all present, but 3 have empty Phase values due to the merge. **Fix:** forward-fill the Phase column after extraction: `df["Phase"] = df["Phase"].replace("", pd.NA).ffill()`. This propagates "Phase II" (or whatever the merged value is) to all rows in the group. The 3 rows aren't missing — they just had empty context, which the forward-fill restores.
+
+
+## Subtopic 14.3.d: Evaluation for Document Understanding Systems
+
+### Reading Path + Level Tags
+
+- **Beginner:** Read sections 1-2 and the Active Recall.
+- **Intermediate:** Add sections 3-5 and the evaluator comparison table.
+- **Pro:** Complete the full Hands-On Lab and the capstone system design. This is the Module 14 checkpoint — the capstone integrates all prior subtopics.
+
+---
+
+### 0. Pre-Question Hook [Beginner]
+
+**Pause:** Your research copilot has been in production for 3 weeks. It cites sources on every response. Engineers seem happy. No one is complaining. But your PM asks: *"Is it actually answering correctly?"* You have no way to answer that question. Before reading — what are the three ways a research copilot can fail silently, producing confident-looking responses that are wrong, and how would you detect each without reading every response manually?
+
+*(Answer: (1) Faithfulness failure — the response asserts something not in the retrieved context; detected by automated faithfulness scoring. (2) Retrieval failure — wrong chunks were retrieved; detected by context precision/recall scoring against a golden set. (3) Citation failure — the response cites a source that doesn't contain the claimed fact; detected by citation precision checks. None of these raise exceptions. All produce normal-looking responses.)*
+
+---
+
+### 1. The Intuition (Plain English) [Beginner]
+
+Evaluation is the discipline of asking: *does the system actually work?* In document AI, this question is harder than in standard ML because there is no single scalar loss function. A research copilot can be:
+
+- Retrieving the right documents but hallucinating the answer
+- Answering correctly but from parametric knowledge, not the corpus (no citation, not grounded)
+- Extracting the right fields but from the wrong table on the wrong page
+- Answering the direct question perfectly but losing context across multi-turn conversation
+
+Each failure mode requires a different metric. The five evaluation dimensions for document AI systems are:
+
+| Dimension | Question | Tool |
+|-----------|----------|------|
+| **Faithfulness** | Is every claim in the response supported by the retrieved context? | `FaithfulnessEvaluator` |
+| **Answer relevancy** | Does the response actually address the question asked? | `AnswerRelevancyEvaluator` |
+| **Context precision** | Are the retrieved chunks the *right* chunks? (no noise) | `ContextPrecisionEvaluator` |
+| **Context recall** | Did retrieval capture *all* the information needed? (no gaps) | `ContextRecallEvaluator` |
+| **Extraction accuracy** | For structured extraction: are field values correct? | Field-level F1, grounding check pass rate |
+
+**Key terms (first use):**
+
+- **`FaithfulnessEvaluator`** — LlamaIndex evaluator that checks whether each claim in a response is supported by the provided source nodes; returns a score from 0.0 to 1.0 (fraction of claims that are grounded); the primary guard against hallucination.
+- **`RelevancyEvaluator`** — checks whether the retrieved context is relevant to the query; detects retrieval noise (pulling irrelevant chunks that confuse the synthesiser).
+- **`AnswerRelevancyEvaluator`** — checks whether the response answers the question (a response can be faithful-but-irrelevant — e.g., it accurately quotes a clause but doesn't answer *"what is the cap?"*).
+- **`ContextPrecisionEvaluator`** — of all retrieved chunks, what fraction are actually relevant to the query? Low precision = too much noise in the context window, diluting the answer.
+- **`ContextRecallEvaluator`** — requires a reference answer; checks whether the retrieved context contains all the information needed to produce the correct answer. Low recall = missing chunks, incomplete answers.
+- **`BatchEvalRunner`** — LlamaIndex utility that runs multiple evaluators in parallel over a dataset of (query, response, source_nodes) triples; the standard for offline batch evaluation.
+- **`DatasetGenerator`** — generates synthetic evaluation Q&A pairs from a document corpus using an LLM; essential when no ground-truth evaluation dataset exists yet.
+- **`EvaluationResult`** — the output of every LlamaIndex evaluator: `passing` (bool), `score` (0–1), `feedback` (why it passed/failed), `query`, `response`.
+- **RAGAS** — open-source evaluation framework for RAG systems; computes `faithfulness`, `answer_relevancy`, `context_precision`, `context_recall` as a unified suite; integrates with LlamaIndex via `llama_index.evaluation`.
+- **Eval golden dataset** — a fixed set of (query, expected_answer, relevant_source_docs) triples used as ground truth for offline batch evaluation; created by domain experts and used as a regression baseline.
+- **Online evaluation** — sampling a fraction of live production queries (5–10%) and running evaluators asynchronously on them; produces continuous signal on production quality without human review of every response.
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+```mermaid
+flowchart TD
+    subgraph DocAIStack["Document AI Stack (Built in 14.1–14.3c)"]
+        ING["Ingestion + Parsing\n(14.1a, 14.3a)"]
+        EXT["Structured Extraction\n(14.3b: tables, forms, Pydantic)"]
+        IDX["Indexing + Retrieval\n(14.1c, 14.2a-b)"]
+        COP["Research Copilot\n(14.3c: chat engine + citation)"]
+    end
+
+    subgraph EvalLayer["Evaluation Layer (14.3d)"]
+        direction LR
+        GENSET["Dataset Generation\nDatasetGenerator\ngenerate_question_context_pairs\nGolden set (manual labels)"]
+
+        subgraph OfflineEval["Offline Batch Evaluation (nightly)"]
+            FE["FaithfulnessEvaluator\nIs every claim grounded?"]
+            AE["AnswerRelevancyEvaluator\nDoes it address the Q?"]
+            CP["ContextPrecisionEvaluator\nAre retrieved chunks relevant?"]
+            CR["ContextRecallEvaluator\nAre all needed chunks found?"]
+            EXE["Extraction Accuracy\nField-level F1\nGrounding check pass rate"]
+            BR["BatchEvalRunner\nRuns all evaluators in parallel\nover full golden dataset"]
+        end
+
+        subgraph OnlineEval["Online Evaluation (5-10% sample)"]
+            SAMP["Query sampler\n(5-10% of live traffic)"]
+            ASYNC["Async evaluator\n(non-blocking, post-response)"]
+            ALERT["Alert on degradation\n> 5% drop in faithfulness\nor precision vs baseline"]
+        end
+
+        DASH["Eval Dashboard\nMetrics over time\nPer-query failure log\nRegression diff after deploys"]
+    end
+
+    ING --> IDX
+    EXT --> IDX
+    IDX --> COP
+    GENSET --> BR
+    COP --> BR & SAMP
+    BR --> DASH
+    SAMP --> ASYNC --> DASH
+    DASH --> ALERT
+```
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+#### Scenario A: Pharma Research Copilot — Faithfulness at Scale
+
+**Context:** The pharma research copilot from 14.3.c processes 200 queries/day. The regulatory affairs team trusts the answers for early research but always double-checks before submission. The team wants to reduce double-checks by 80% — but only if the system can prove its faithfulness score is > 0.95 on a held-out validation set of 100 known Q&A pairs.
+
+**How evaluation fits in:**
+
+- **Golden dataset:** Regulatory scientists labeled 100 query-answer pairs over 3 days: each query, the correct answer, and which specific source document + section contains the supporting evidence.
+- **Offline batch eval (nightly):** `BatchEvalRunner` runs `FaithfulnessEvaluator` + `AnswerRelevancyEvaluator` + `ContextPrecisionEvaluator` on all 100 pairs each night. Any deployment that causes faithfulness < 0.95 is flagged and rolled back automatically.
+- **Citation precision check:** For each cited source, extract the cited text from the source document and verify the LLM's claim appears in it. Custom check (not a standard LlamaIndex evaluator): compares the response claim with the source chunk's text.
+- **What the scores mean in practice:**
+  - `faithfulness = 1.0` — every claim in the response is directly supported by a retrieved chunk. Confidence = high. Skip manual verification.
+  - `faithfulness = 0.7–0.9` — some claims are inferred beyond what the sources directly state. Flag for scientist review.
+  - `faithfulness < 0.7` — significant hallucination risk. Block response from being shown; return *"I couldn't find a reliable answer in the corpus — please search manually."*
+- **What "good" looks like:** Faithfulness stabilises at 0.97 across 200 daily queries. Scientists reduce manual verification from 100% to 15% (only low-faithfulness responses). Regulatory submission accuracy is unchanged. Copilot trust score (internal survey) rises from 3.1/5 to 4.6/5.
+
+---
+
+#### Scenario B: Legal Contract Navigator — Extraction Accuracy
+
+**Context:** The legal contract navigator (14.3.c) has structured extraction of indemnification terms powering a covenant breach alert system. An incorrect extraction (wrong liability cap value) could trigger a false alert, causing a portfolio company to unnecessarily renegotiate terms. The legal team needs automated extraction accuracy reporting.
+
+**How evaluation fits in:**
+
+- **Extraction golden set:** 200 contracts manually labeled by paralegals: `{contract_id, field, expected_value, source_page, source_section}` for 12 key fields (liability_cap, governing_law, termination_notice_days, etc.).
+- **Field-level F1 per field type:**
+  - Numeric fields (liability_cap): exact match or within 5% tolerance (handles `$500K` vs `$500,000`).
+  - Text fields (governing_law): normalised string match (`"New York"` == `"state of New York"`).
+  - Boolean fields (unlimited_liability): strict exact match.
+- **Grounding check pass rate:** For every numeric extraction, run the grounding check from 14.3.b: does the extracted value appear in the source text? Target: > 98% pass rate.
+- **Pydantic schema validation rate:** % of extractions that pass Pydantic schema validation without errors. A validation error means the LLM returned a type that doesn't match the schema (e.g., a string where a float is required). Target: 100% (function calling guarantees this with GPT-4o; JSON mode may have < 1% failures with weaker models).
+- **What "good" looks like:** Field-level F1 > 0.95 for numeric fields, > 0.92 for text fields. Grounding check pass rate 99.2%. False alert rate for covenant breach monitoring drops to < 0.5% (from 8% with unvalidated extractions).
+
+---
+
+#### Scenario C: Enterprise KB Copilot — Regression Testing After Model Upgrades
+
+**Context:** The engineering KB copilot (14.3.c) runs on GPT-4o. The team wants to upgrade to a new model version but needs to verify the upgrade doesn't degrade answer quality. They have 3 months of production query logs with post-hoc satisfaction ratings (thumbs up/down from engineers). They use this as a proxy evaluation dataset.
+
+**How evaluation fits in:**
+
+- **Synthetic dataset augmentation:** `DatasetGenerator.from_documents(docs, num_questions_per_chunk=3)` generates an additional 500 Q&A pairs from the KB content, expanding the evaluation set beyond the 300 logged queries.
+- **Before/after regression:** Run `BatchEvalRunner` with `FaithfulnessEvaluator` + `AnswerRelevancyEvaluator` on the full 800-query dataset using both the old model (GPT-4o baseline) and the new model. Compare metric distributions.
+- **Statistical significance:** With n=800, a 0.02 drop in faithfulness (0.94 → 0.92) is statistically significant (p < 0.01, two-sample t-test on binary passing/failing). The team uses this as the decision criterion for the upgrade.
+- **Retrieval eval separation:** The same golden dataset runs against the retriever layer independently — with `ContextPrecisionEvaluator` and `ContextRecallEvaluator` — to separate *retrieval failures* from *synthesis failures*. If context precision drops 3% after a model upgrade but faithfulness doesn't change, the model change is fine but the embedding model rerank might need attention.
+- **What "good" looks like:** The new model shows +1.5% faithfulness, +0.8% answer relevancy, no regression in context precision. Upgrade approved in 2 days instead of the previous 2-week manual review cycle.
+
+---
+
+### 4. System View (Think Like a Systems Engineer) [Intermediate]
+
+**The two evaluation loops in production:**
+
+```
+LOOP 1: OFFLINE BATCH EVALUATION (runs nightly or on every deploy)
+  Input:  golden_dataset = List[{query, expected_answer, source_doc_ids}]
+  Step 1: For each (query, expected_answer) in golden_dataset:
+            response = copilot.query(query)
+            source_nodes = response.source_nodes
+  Step 2: Run BatchEvalRunner(
+            queries=[...], responses=[...], contexts=[source_nodes_per_query],
+            evaluators=[
+                FaithfulnessEvaluator(),      # is response grounded?
+                AnswerRelevancyEvaluator(),    # does it address the question?
+                ContextPrecisionEvaluator(),   # are retrieved chunks relevant?
+                ContextRecallEvaluator(),      # are all needed chunks found?
+            ]
+          )
+  Step 3: Aggregate: mean_faithfulness, mean_relevancy, mean_precision, mean_recall
+  Step 4: Compare against baseline (previous deploy's scores)
+          If any metric drops > threshold → alert + block deploy
+  Output: EvalReport{metrics, per_query_failures, regression_diff}
+
+LOOP 2: ONLINE EVALUATION (async, 5-10% of live queries)
+  Input:  production_query, production_response, production_source_nodes
+  Step 1: Sample 1 in 10 production turns
+  Step 2: Async task: FaithfulnessEvaluator.aevaluate(query, response, contexts)
+  Step 3: Write result to metrics store
+  Step 4: Rolling 24h alert:
+          if rolling_faithfulness_24h < baseline_faithfulness - 0.05:
+              alert(channel="slack", severity="high")
+  Output: {timestamp, query_hash, faithfulness_score, passing}
+          (no PII stored — query hash only)
+```
+
+**Observability — what to log per evaluation run:**
+
+| Signal | What to capture | Alert threshold |
+|--------|----------------|-----------------|
+| `mean_faithfulness` | Avg faithfulness score over golden set | < 0.90 → investigate; < 0.85 → block deploy |
+| `mean_answer_relevancy` | Avg answer relevancy over golden set | < 0.85 → check synthesis prompt |
+| `mean_context_precision` | Avg precision of retrieved chunks | < 0.70 → retriever noise; check `top_k` or reranker |
+| `mean_context_recall` | Avg recall of retrieved chunks | < 0.70 → missing chunks; check chunking strategy |
+| `faithfulness_p10` | 10th-percentile score (worst responses) | < 0.50 → tail failures; inspect low-scoring queries |
+| `extraction_field_f1` | Per-field F1 for structured extraction | < 0.90 → fix extraction prompt or add few-shot examples |
+| `grounding_check_pass_rate` | % of numeric extractions that pass grounding | < 0.98 → hallucination risk; add grounding examples |
+
+**Failure points:**
+
+1. **Evaluator uses the same LLM as the system under test** — Using GPT-4o to both generate responses and evaluate them creates a self-grading bias: GPT-4o tends to rate GPT-4o responses as highly faithful even when they're not. This is the most common evaluation mistake.
+   - *How it shows up:* Faithfulness scores are uniformly high (0.95+) but users still report wrong answers. The eval is not catching failures because the judge LLM shares the same biases as the generating LLM.
+   - *Fix:* Use a different (and ideally stronger) LLM as the judge — e.g., use `claude-3-5-sonnet` as judge when the system runs on `gpt-4o`, or use a specialised smaller model fine-tuned as a faithfulness judge.
+
+2. **Golden dataset not representative of production queries** — The golden set was created by the team using "obvious" queries. Production users ask edge cases, ambiguous questions, and queries that span multiple documents in ways the eval set doesn't cover.
+   - *How it shows up:* Offline eval shows 0.97 faithfulness. But online eval shows 0.81 faithfulness on sampled production queries. The golden set is too easy.
+   - *Fix:* Generate diverse synthetic queries using `DatasetGenerator` (adversarial prompts, multi-hop questions, time-bounded questions). Augment with real production queries that received low satisfaction ratings. Continuously update the golden set as new edge cases emerge.
+
+3. **Context recall can't be computed without a reference answer** — `ContextRecallEvaluator` requires a ground-truth answer to compare against. Teams skip it because building a ground-truth answer set requires manual labeling effort.
+   - *How it shows up:* Retrieval failures (missing the right chunks) are invisible. The system looks like it's working well on faithfulness and relevancy, but it's answering the wrong question because critical chunks were not retrieved.
+   - *Fix:* For the top-20 most common query types, manually write reference answers (30–60 minutes of work). Use `DatasetGenerator` for the rest. Even a 50-query ground-truth set for context recall reveals whether the retriever is missing key information.
+
+---
+
+### 5. System Design Flavor [Intermediate]
+
+**End-to-end evaluation pipeline:**
+
+```python
+# eval_pipeline.py — offline batch evaluation
+# pip install llama-index-core llama-index-llms-openai
+
+from llama_index.core.evaluation import (
+    FaithfulnessEvaluator,
+    RelevancyEvaluator,
+    BatchEvalRunner,
+    DatasetGenerator,
+    generate_question_context_pairs,
+)
+from llama_index.core.evaluation import EvaluationResult
+import asyncio, json
+
+# 1. Evaluators — use a DIFFERENT model as judge
+from llama_index.llms.openai import OpenAI
+judge_llm = OpenAI(model="gpt-4o", temperature=0)
+
+faithfulness_evaluator = FaithfulnessEvaluator(llm=judge_llm)
+relevancy_evaluator    = RelevancyEvaluator(llm=judge_llm)
+
+# 2. Run batch evaluation over a golden dataset
+runner = BatchEvalRunner(
+    evaluators={"faithfulness": faithfulness_evaluator,
+                "relevancy":    relevancy_evaluator},
+    workers=8,   # parallel eval calls
+)
+
+# golden_queries, golden_responses, golden_contexts come from your golden set
+# eval_results: dict[metric_name, List[EvaluationResult]]
+eval_results = asyncio.run(runner.aevaluate_responses(
+    queries=golden_queries,
+    responses=golden_responses,
+    contexts=golden_contexts,
+))
+
+# 3. Aggregate
+for metric, results in eval_results.items():
+    scores = [r.score for r in results if r.score is not None]
+    passing = [r.passing for r in results]
+    print(f"{metric}: mean={sum(scores)/len(scores):.3f}, "
+          f"pass_rate={sum(passing)/len(passing):.1%}, n={len(results)}")
+```
+
+**Key tradeoffs:**
+
+| Tradeoff | The tension | Guidance |
+|----------|------------|---------|
+| **LLM-as-judge vs deterministic checks** | LLM judges are flexible but expensive and biased; deterministic checks (grounding, schema validation, string match) are cheap and objective | Use deterministic checks for structured extraction (exact-match, grounding). Use LLM judges for open-ended synthesis faithfulness. Never use only one; use both |
+| **Offline eval vs online eval** | Offline is thorough and uses a golden set; online is representative of real traffic but has no ground truth | Offline eval catches regressions before deploy. Online eval catches drift in real-world usage. Both are mandatory in production |
+| **Large golden set vs small curated set** | More queries = more statistical power; but large sets are expensive to label | 100-500 manually curated high-quality pairs beats 5,000 auto-generated mediocre pairs. Quality of golden set > quantity |
+
+**Scaling (10x query volume):**
+At 10x traffic, online eval (5–10% sampling) scales linearly — just run evaluators faster via async batch. Offline eval: shard the golden set across workers (`BatchEvalRunner(workers=16)`). For extraction accuracy, run field-level F1 as a deterministic pipeline (no LLM calls needed for exact-match fields) — scales to millions of documents without LLM costs.
+
+---
+
+### 6. Common Mistakes + Debugging [Beginner → Intermediate]
+
+#### Mistake 1: Using the Same LLM as Both Generator and Evaluator
+
+**Symptom:** Faithfulness scores are consistently 0.95+ across all queries, but domain experts find wrong answers when they spot-check. The eval appears to be passing everything.
+
+**Likely cause:** The same model (GPT-4o) is generating the responses and evaluating them. GPT-4o has a self-consistency bias — it tends to evaluate its own reasoning as sound even when it has hallucinated.
+
+**First debugging step:**
+```python
+# Check: re-evaluate a known-bad response with a different judge model
+
+# A response you know is hallucinated (ground truth says "4.0x" but response says "3.5x")
+bad_response = "The Debt-to-EBITDA covenant threshold is 3.5x, tested quarterly."
+source_nodes_text = "The Borrower shall maintain a Debt-to-EBITDA ratio of no more than 4.0x."
+
+from llama_index.core.evaluation import FaithfulnessEvaluator
+from llama_index.core.schema import TextNode, NodeWithScore
+
+source_node = NodeWithScore(node=TextNode(text=source_nodes_text), score=0.9)
+
+# Evaluate with SAME model as generator
+same_model_judge = FaithfulnessEvaluator(llm=OpenAI(model="gpt-4o"))
+result_same = same_model_judge.evaluate(
+    query="What is the Debt-to-EBITDA covenant threshold?",
+    response=bad_response,
+    contexts=[source_nodes_text],
+)
+print(f"Same-model judge: passing={result_same.passing}, score={result_same.score}")
+# Likely: passing=True, score=0.9 (wrong — it SHOULD fail)
+
+# Evaluate with DIFFERENT model as judge
+diff_model_judge = FaithfulnessEvaluator(llm=OpenAI(model="gpt-4-turbo"))  # or Claude
+result_diff = diff_model_judge.evaluate(
+    query="What is the Debt-to-EBITDA covenant threshold?",
+    response=bad_response,
+    contexts=[source_nodes_text],
+)
+print(f"Diff-model judge: passing={result_diff.passing}, score={result_diff.score}")
+# Expected: passing=False (3.5x is NOT in the source — 4.0x is)
+# If this ALSO passes: add an explicit prompt instruction:
+# "If the response value does not appear in the context, mark as not faithful."
+```
+
+---
+
+#### Mistake 2: Evaluating Only Faithfulness and Missing Retrieval Failures
+
+**Symptom:** Faithfulness is 0.97. Answer relevancy is 0.93. Users are still complaining about wrong answers. The system appears excellent on eval.
+
+**Likely cause:** You're only evaluating faithfulness (is the response grounded in retrieved context?) and answer relevancy (does the response address the question?). But if the retrieved context was the wrong context, the response can be perfectly faithful to wrong information. Retrieval failures are invisible to faithfulness evaluation.
+
+**First debugging step:**
+```python
+# Diagnose: measure context precision separately from faithfulness
+from llama_index.core.evaluation import ContextPrecisionEvaluator, ContextRecallEvaluator
+
+precision_evaluator = ContextPrecisionEvaluator(llm=judge_llm)
+
+# Example: query about SaaS agreements, but retriever returned MSA chunks
+query = "What is the liability cap in the SaaS agreements signed in 2023?"
+response_text = "The aggregate liability cap is USD 500,000."  # from MSA, not SaaS
+retrieved_chunks = [
+    "Article 9. GlobalCorp liability cap: USD 500,000. Effective June 15, 2022."  # MSA!
+]
+# Faithfulness check: response is supported by context → passing=True
+# But the retrieved context is WRONG (MSA, not SaaS, not 2023)
+
+precision_result = precision_evaluator.evaluate(
+    query=query,
+    contexts=retrieved_chunks,
+)
+print(f"Context precision: {precision_result.score:.2f}")
+# Should be low — the MSA chunk is NOT a relevant context for a SaaS 2023 query
+# This exposes the retrieval failure that faithfulness missed
+
+# Fix: add metadata filters in the retriever:
+# MetadataFilters([ExactMatchFilter("contract_type", "SaaS"),
+#                  ExactMatchFilter("year", 2023)])
+```
+
+---
+
+#### Mistake 3: No Online Evaluation — Only Offline Golden Set
+
+**Symptom:** Offline eval on the 100-query golden set shows 0.96 faithfulness consistently. After 2 months, users start complaining that the copilot gives outdated information after the corpus was refreshed with 500 new documents.
+
+**Likely cause:** The golden set was built before the corpus refresh. The new documents have a different writing style, different terminology, or different document structure. The old golden set doesn't cover the new failure modes. Offline eval keeps passing because the golden queries don't exercise the new documents.
+
+**First debugging step:**
+```python
+# Implement minimal online eval: sample 10% of live queries and log faithfulness
+
+import random
+import asyncio
+
+async def evaluate_live_query(query: str, response_text: str, source_nodes):
+    """Non-blocking faithfulness check on 10% of live queries."""
+    if random.random() > 0.10:
+        return  # skip 90%
+
+    contexts = [n.node.text for n in source_nodes]
+    result = await faithfulness_evaluator.aevaluate(
+        query=query,
+        response=response_text,
+        contexts=contexts,
+    )
+    # Write to metrics store (replace with your actual metrics sink)
+    metrics = {
+        "timestamp": __import__("time").time(),
+        "query_hash": hash(query) % 10**8,  # no PII
+        "faithfulness_score": result.score,
+        "passing": result.passing,
+    }
+    # In production: write to your metrics DB or monitoring system
+    print(f"Online eval: {metrics}")
+
+    # Alert if rolling 100-query avg drops below baseline
+    # (implement with a sliding window in your metrics store)
+```
+
+---
+
+### 7. Hands-On Lab [Pro]
+
+#### Build — Multi-Layer Eval Pipeline with Synthetic Dataset
+
+```python
+# eval_lab.py
+# pip install llama-index-core
+
+import json
+import asyncio
+from llama_index.core import VectorStoreIndex, Document
+from llama_index.core.schema import TextNode, NodeWithScore
+from llama_index.core.evaluation import (
+    FaithfulnessEvaluator,
+    RelevancyEvaluator,
+    BatchEvalRunner,
+)
+from llama_index.core.llms import MockLLM
+from llama_index.core.embeddings import MockEmbedding
+from llama_index.core import Settings
+
+# Use MockLLM for offline lab (no API key)
+Settings.llm = MockLLM(max_tokens=512)
+Settings.embed_model = MockEmbedding(embed_dim=1536)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PART 1: Synthetic Eval Dataset Generation (simulate DatasetGenerator output)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# In production:
+#   dataset_generator = DatasetGenerator.from_documents(docs, llm=judge_llm,
+#                                                        num_questions_per_chunk=3)
+#   eval_dataset = dataset_generator.generate_dataset_from_nodes()
+#   queries = eval_dataset.queries       # dict: id -> query_text
+#   relevant_docs = eval_dataset.relevant_docs  # dict: id -> [doc_id, ...]
+
+# Simulate 5 Q&A pairs from our contract corpus (14.3b / 14.3c)
+GOLDEN_DATASET = [
+    {
+        "query":    "What is the indemnification cap in the Acme SaaS agreement?",
+        "expected": "The cap is the fees paid in the 12 months preceding the claim.",
+        "context":  (
+            "Section 12. Indemnification. Each party shall indemnify and hold harmless "
+            "the other party from any third-party claims. Indemnification is capped at "
+            "the fees paid in the 12 months preceding the claim. Effective: March 2023."
+        ),
+    },
+    {
+        "query":    "What is GlobalCorp's aggregate liability limit?",
+        "expected": "USD 500,000.",
+        "context":  (
+            "Article 9. Mutual Indemnification. GlobalCorp liability cap: USD 500,000. "
+            "Effective date: June 15, 2022."
+        ),
+    },
+    {
+        "query":    "Does TechStart have any uncapped liability provisions?",
+        "expected": "Yes — liability is uncapped for IP indemnification only.",
+        "context":  (
+            "Section 8. Liability is uncapped for IP indemnification obligations only; "
+            "all other liability capped at fees paid in prior 6 months. Jan 2024."
+        ),
+    },
+    # Intentionally wrong response for testing (faithfulness should FAIL)
+    {
+        "query":    "What governing law applies to the Acme SaaS agreement?",
+        "expected": "California.",   # not stated in source — expected to fail faithfulness
+        "context":  (
+            "Section 12. Indemnification. Each party shall indemnify and hold harmless "
+            "the other party. Effective: March 1, 2023."  # no governing law in context
+        ),
+    },
+    {
+        "query":    "When was the MSA with GlobalCorp signed?",
+        "expected": "June 15, 2022.",
+        "context":  (
+            "Article 9. Aggregate liability cap: USD 500,000. "
+            "Effective date: June 15, 2022."
+        ),
+    },
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PART 2: Simulate system responses (in production: run real copilot)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Simulate responses — some faithful, some not
+SIMULATED_RESPONSES = [
+    "The indemnification cap is the fees paid in the 12 months preceding the claim.",  # faithful
+    "GlobalCorp's aggregate liability limit is USD 500,000.",                            # faithful
+    "Yes, TechStart has uncapped liability for IP indemnification obligations.",          # faithful
+    "The Acme SaaS agreement is governed by California law.",   # HALLUCINATED (not in context)
+    "The MSA with GlobalCorp was signed on June 15, 2022.",                              # faithful
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PART 3: Run evaluators (using MockLLM for structure demo)
+# In production: use judge_llm = OpenAI(model="gpt-4o") or Anthropic Claude
+# ─────────────────────────────────────────────────────────────────────────────
+
+faithfulness_eval = FaithfulnessEvaluator(llm=Settings.llm)
+relevancy_eval    = RelevancyEvaluator(llm=Settings.llm)
+
+print("=== Per-Query Evaluation ===")
+results = []
+for i, item in enumerate(GOLDEN_DATASET):
+    query    = item["query"]
+    response = SIMULATED_RESPONSES[i]
+    context  = item["context"]
+
+    f_result = faithfulness_eval.evaluate(
+        query=query,
+        response=response,
+        contexts=[context],
+    )
+    r_result = relevancy_eval.evaluate(
+        query=query,
+        response=response,
+        contexts=[context],
+    )
+
+    results.append({
+        "query":       query[:60],
+        "faithful":    f_result.passing,
+        "f_score":     f_result.score,
+        "relevant":    r_result.passing,
+        "r_score":     r_result.score,
+    })
+    print(f"\n[{i+1}] {query[:60]!r}")
+    print(f"     Response: {response[:80]!r}")
+    print(f"     Faithful: {f_result.passing} (score={f_result.score}) | "
+          f"Relevant: {r_result.passing} (score={r_result.score})")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PART 4: Aggregate metrics
+# ─────────────────────────────────────────────────────────────────────────────
+
+print("\n=== Aggregated Evaluation Report ===")
+faithful_scores = [r["f_score"] for r in results if r["f_score"] is not None]
+relevant_scores = [r["r_score"] for r in results if r["r_score"] is not None]
+faithful_pass   = [r["faithful"] for r in results]
+relevant_pass   = [r["relevant"] for r in results]
+
+if faithful_scores:
+    print(f"Faithfulness: mean={sum(faithful_scores)/len(faithful_scores):.3f}, "
+          f"pass_rate={sum(faithful_pass)/len(faithful_pass):.1%}, n={len(results)}")
+if relevant_scores:
+    print(f"Relevancy:    mean={sum(relevant_scores)/len(relevant_scores):.3f}, "
+          f"pass_rate={sum(relevant_pass)/len(relevant_pass):.1%}, n={len(results)}")
+
+# Expected with MockLLM: all scores will be mocked (0.5 or similar)
+# In production with real LLM: query 4 (California law) should FAIL faithfulness
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PART 5: Extraction accuracy metrics (deterministic — no LLM needed)
+# ─────────────────────────────────────────────────────────────────────────────
+
+print("\n=== Structured Extraction Accuracy (Deterministic) ===")
+
+# Golden set: expected values per contract and field
+EXTRACTION_GOLDEN = [
+    {"contract": "Acme_SaaS_2023",    "field": "liability_cap_type",  "expected": "12_months_fees"},
+    {"contract": "GlobalCorp_MSA_22", "field": "liability_cap_usd",   "expected": 500000.0},
+    {"contract": "TechStart_SaaS_24", "field": "ip_uncapped",         "expected": True},
+    {"contract": "Acme_SaaS_2023",    "field": "effective_year",      "expected": 2023},
+    {"contract": "GlobalCorp_MSA_22", "field": "effective_year",      "expected": 2022},
+]
+
+# Simulated extracted values (some correct, one wrong)
+EXTRACTED_VALUES = [
+    {"contract": "Acme_SaaS_2023",    "field": "liability_cap_type",  "extracted": "12_months_fees"},
+    {"contract": "GlobalCorp_MSA_22", "field": "liability_cap_usd",   "extracted": 500000.0},
+    {"contract": "TechStart_SaaS_24", "field": "ip_uncapped",         "extracted": False},  # WRONG
+    {"contract": "Acme_SaaS_2023",    "field": "effective_year",      "extracted": 2023},
+    {"contract": "GlobalCorp_MSA_22", "field": "effective_year",      "extracted": 2022},
+]
+
+correct = 0
+total   = len(EXTRACTION_GOLDEN)
+
+for golden, extracted in zip(EXTRACTION_GOLDEN, EXTRACTED_VALUES):
+    match = golden["expected"] == extracted["extracted"]
+    correct += int(match)
+    status = "PASS" if match else "FAIL"
+    print(f"  [{status}] {golden['contract']} | {golden['field']}: "
+          f"expected={golden['expected']!r}, got={extracted['extracted']!r}")
+
+field_f1 = correct / total
+print(f"\nField-level accuracy: {correct}/{total} = {field_f1:.1%}")
+if field_f1 < 0.90:
+    print("ALERT: Field accuracy below 90% threshold — review extraction prompts.")
+```
+
+---
+
+#### Break — Evaluating with Same Model as Generator
+
+```python
+# BREAK: use the same MockLLM for both generation and evaluation
+# In production: use the same model for both → self-grading bias
+
+# Simulate a hallucinated response + grading with same model
+hallucinated_response = "The Acme SaaS agreement is governed by California law."
+source_context = "Section 12. Indemnification. Effective: March 1, 2023."  # No governing law!
+
+same_model_eval = FaithfulnessEvaluator(llm=Settings.llm)
+result = same_model_eval.evaluate(
+    query="What governing law applies to the Acme SaaS agreement?",
+    response=hallucinated_response,
+    contexts=[source_context],
+)
+print(f"\nSame-model eval on hallucinated response:")
+print(f"  passing={result.passing}, score={result.score}")
+print(f"  feedback={result.feedback!r}")
+# With MockLLM: result is deterministic/mocked — not the real problem
+# In production: same-model eval tends to grade its own hallucinations as faithful
+# FIX: use a different LLM model as judge (see Mistake 1 debugging section)
+
+# Demonstrate the deterministic grounding check instead:
+def grounding_check(response: str, context: str) -> dict:
+    """Deterministic check: does the response contain claims from the context?"""
+    # Extract meaningful tokens from response (simple approximation)
+    response_words = set(response.lower().split())
+    context_words  = set(context.lower().split())
+    # Key numeric/named entities that should appear in context if claimed
+    import re
+    numbers_in_response = set(re.findall(r'\b\d{4,}\b|\b\d+\.\d+\b|\b\d+%', response))
+    numbers_in_context  = set(re.findall(r'\b\d{4,}\b|\b\d+\.\d+\b|\b\d+%', context))
+    ungrounded_numbers = numbers_in_response - numbers_in_context
+    return {
+        "has_ungrounded_numbers": bool(ungrounded_numbers),
+        "ungrounded_numbers": list(ungrounded_numbers),
+        "deterministic_verdict": "FAIL" if ungrounded_numbers else "PASS (numeric)",
+    }
+
+result = grounding_check(hallucinated_response, source_context)
+print(f"\nDeterministic grounding check on hallucinated response: {result}")
+# For text-based hallucinations (no numbers): needs LLM judge
+# For numeric hallucinations: deterministic check catches them reliably
+```
+
+---
+
+#### Measure
+
+```python
+# Summary metrics dashboard (what you'd send to a monitoring system)
+print("\n=== Evaluation Dashboard Summary ===")
+
+summary = {
+    "eval_run_id":        "run_2024_03_15_v1",
+    "golden_set_size":    len(GOLDEN_DATASET),
+    "faithfulness": {
+        "mean":      sum(faithful_scores)/len(faithful_scores) if faithful_scores else None,
+        "pass_rate": sum(faithful_pass)/len(faithful_pass),
+        "threshold": 0.90,
+        "status":    "PASS" if (sum(faithful_pass)/len(faithful_pass) >= 0.90) else "FAIL",
+    },
+    "extraction": {
+        "field_f1":  field_f1,
+        "threshold": 0.90,
+        "status":    "PASS" if field_f1 >= 0.90 else "FAIL",
+    },
+}
+
+print(json.dumps(summary, indent=2))
+
+# Regression gate: compare against baseline
+BASELINE = {"faithfulness_pass_rate": 0.95, "field_f1": 0.96}
+print("\n=== Regression Check ===")
+for metric, baseline_val in BASELINE.items():
+    # Map metric names to current values
+    current = {
+        "faithfulness_pass_rate": sum(faithful_pass)/len(faithful_pass),
+        "field_f1": field_f1,
+    }.get(metric)
+    delta = (current - baseline_val) if current is not None else None
+    status = "OK" if (delta is not None and delta >= -0.05) else "REGRESSION"
+    print(f"  {metric}: baseline={baseline_val:.3f}, current={current:.3f}, "
+          f"delta={delta:+.3f} → {status}")
+```
+
+---
+
+#### Explain — Why Evaluation Is the Most Neglected Layer in Production RAG
+
+Evaluation is the last thing teams build and the first thing they need when something goes wrong. The failure mode is predictable: teams launch a RAG system, it works on their 20 hand-tested queries, and they call it "tested." Three months later, a stakeholder finds a hallucinated answer that made it into a report. The retrospective always finds the same root cause: no automated faithfulness checking, no golden set, no regression gate.
+
+The key insight is that document AI systems fail in ways that don't produce exceptions or errors. A response that is confidently wrong looks identical to a response that is confidently right — same latency, same structure, same citation format. Only evaluation can distinguish them. The cost of building a 100-query golden set and `BatchEvalRunner` is 2–3 hours. The cost of not having it is measured in user trust, manual review overhead, and incident retrospectives.
+
+The second insight is that evaluation must be *layered*: retrieval quality (context precision/recall) is independent of synthesis quality (faithfulness). A system with perfect faithfulness and poor context precision is correctly synthesising wrong information. You need both signals to know *where* the system is failing — in retrieval or in synthesis — so you can fix the right layer.
+
+---
+
+### 8. Active Recall (Spaced Repetition) [Beginner → Pro]
+
+**Q1 [Beginner]:** Name the five evaluation dimensions for document AI systems and what each measures.
+
+> **A:** (1) **Faithfulness** — is every claim in the response supported by the retrieved context? (2) **Answer relevancy** — does the response address the question asked? (3) **Context precision** — of all retrieved chunks, what fraction are actually relevant to the query? (4) **Context recall** — did retrieval capture all the information needed to answer? (requires a reference answer). (5) **Extraction accuracy** — for structured extraction, are the field values correct? (field-level F1, grounding check pass rate).
+
+---
+
+**Q2 [Beginner]:** Why should you NOT use the same LLM as both the system under test and the evaluator judge?
+
+> **A:** The same model tends to rate its own outputs as correct — a self-grading bias. GPT-4o evaluating GPT-4o responses will grade hallucinations as faithful because the model's internal reasoning is consistent with its own output. Use a different model as judge (e.g., Claude as judge when system runs on GPT-4o), or use a fine-tuned faithfulness judge. The evaluation is only valuable if the judge can catch errors the generator makes.
+
+---
+
+**Q3 [Intermediate]:** A system has faithfulness 0.97 but users report wrong answers. What is the likely failure mode, and which metric would expose it?
+
+> **A:** The likely failure mode is a retrieval failure — the system retrieved the wrong chunks and is faithfully synthesising wrong information. Faithfulness can be 1.0 while the response is completely wrong, if the retrieved context was wrong. **Context precision** (`ContextPrecisionEvaluator`) would expose this: if retrieved chunks are not relevant to the query, precision will be low even when faithfulness is high. Fix: add metadata filters, improve retriever quality (hybrid retrieval, reranking), and check that the embedding model handles domain-specific terminology.
+
+---
+
+**Q4 [Intermediate]:** What is `DatasetGenerator` used for, and why is it important when you have no labeled data?
+
+> **A:** `DatasetGenerator.from_documents(docs, num_questions_per_chunk=3)` uses an LLM to automatically generate Q&A pairs from document chunks. This creates a synthetic evaluation dataset when no manual labels exist. It's important because: (1) manual labeling is expensive and time-consuming; (2) automated generation creates diverse query types the team might not have thought of; (3) it ensures the eval set covers the actual content of the corpus, not just the team's mental model of it. Caveat: synthetic datasets may be biased toward "easy" questions that the retriever handles well — augment with real production queries for coverage of edge cases.
+
+---
+
+**Q5 [Pro]:** Design a regression gate for a CI/CD pipeline. A new LLM version (gpt-4o-2025-04) is being tested to replace the current model (gpt-4o-2024-08). What metrics do you compare, what thresholds trigger a rollback, and how do you account for the fact that evaluation itself uses an LLM?
+
+> **A:** **Metrics to compare:** faithfulness (mean score + pass rate), answer relevancy, context precision. Run all three over the same 200-query golden set with both model versions in the same day. **Thresholds:** block the upgrade if any metric drops > 3% (absolute) vs baseline. Example: if faithfulness was 0.95 on old model and drops to 0.91 on new model → block. A 3% threshold accounts for LLM judge variance while catching real regressions. **Accounting for judge LLM variance:** use a fixed judge model (e.g., Claude Sonnet) that is NOT changed during the test — the judge must be identical for both runs to ensure metric comparability. Run each query twice with the judge (temperature=0) and average the scores to reduce judge variance. Also run the deterministic extraction accuracy check (field-level F1) as a variance-free signal that doesn't depend on the judge LLM.
+
+---
+
+### 9. Practice
+
+**Mini-exercise:** You have 50 queries in your golden set. `FaithfulnessEvaluator` takes 1.5 seconds per query. You want to run the eval in under 2 minutes. How do you achieve this?
+
+> **Suggested answer:**
+> Use `BatchEvalRunner` with `workers=N` for parallel async evaluation. 50 queries × 1.5s sequential = 75 seconds. With `workers=8`: 50/8 = 7 rounds × 1.5s = ~10.5 seconds (plus API overhead). In practice, with 8 workers and network latency: ~15–25 seconds total — well under 2 minutes. Set `workers` to your LLM provider's API concurrency limit (OpenAI allows up to 10 concurrent requests on standard tier; higher on paid tiers).
+
+---
+
+**Capstone system design question (Module 14 Checkpoint):**
+
+Design the complete production system for a pharmaceutical regulatory research copilot — from document ingestion through to evaluation — covering:
+1. Ingestion pipeline (document types, parsing, chunking)
+2. Index topology (which index types for which content)
+3. Query/research interface (chat engine, memory, citation)
+4. Evaluation framework (offline + online, metrics, golden set, regression gate)
+5. Cost estimate per document and per query
+6. Failure mode handling (what happens when each layer fails)
+
+This question integrates all of Module 14 (14.1–14.3d).
+
+> **Answer outline:**
+> 1. **Ingestion (14.1a/b/14.3a/b):**
+>    - Document types: 10-K/10-Q filings, FDA submission PDFs (NDA/BLA), clinical study reports (CSRs), drug labels, REMS documents.
+>    - Parsing strategy: two-tier — `pypdf` text-layer extraction first (fast, free); `LlamaParse` for clinical study reports with complex tables and multi-column layouts ($0.003/page).
+>    - Chunking: `SentenceSplitter(chunk_size=512, chunk_overlap=50)` for narrative text; `SemanticSplitter` for abstract/methodology/results sections (variable-length semantic units); keep tables as single nodes regardless of size.
+>    - Metadata enrichment: `{source, page, section_title, document_type, filing_date, drug_name, compound_id, element_type}` — all mandatory for downstream filtering.
+>    - Structured extraction (14.3b): `pdfplumber` for efficacy/safety tables → Markdown nodes; Pydantic programs for adverse event summaries (structured narrative extraction).
+>    - Cost: avg 50 pages/document, 60% LlamaParse: 0.4×$0/page + 0.6×$0.003×50 = $0.09/document.
+> 2. **Index topology (14.1c/14.2a):**
+>    - `clinical_index`: `VectorStoreIndex` over CSR text nodes (semantic search for efficacy, safety, statistical results).
+>    - `label_index`: `VectorStoreIndex` over approved labels (indication language, dosing, contraindications).
+>    - `rems_index`: `SummaryIndex` over REMS documents (full-scan; REMS docs are short, 10–30 pages; full context needed).
+>    - `table_index`: Separate `VectorStoreIndex` for table nodes tagged `element_type: table` — routed to for numeric/structured queries.
+>    - Retriever: `QueryFusionRetriever` (hybrid BM25 + vector, 60/40 weight) for clinical and label indices. Drug names and compound IDs are exact-match terms that BM25 handles better than vector similarity.
+> 3. **Query/research interface (14.2b/14.3c):**
+>    - `CondensePlusContextChatEngine` for multi-turn research sessions (regulatory scientists ask follow-ups).
+>    - `OpenAIAgent` with 4 tools (clinical, label, rems, table) for complex multi-index queries.
+>    - `CitationQueryEngine` on all tools — every claim cites exact source document + page + section.
+>    - Memory: `SimpleComposableMemory` (buffer + vector). Sessions stored in Redis with 4h TTL.
+>    - Streaming enabled to reduce perceived latency.
+> 4. **Evaluation (14.3d):**
+>    - Golden set: 150 queries manually labeled by regulatory scientists (3 days, ~50 queries/scientist).
+>    - Offline eval (nightly): `BatchEvalRunner` with `FaithfulnessEvaluator` + `AnswerRelevancyEvaluator` + `ContextPrecisionEvaluator`. Judge: Claude Sonnet (different from system's GPT-4o). Regression gate: block deploy if faithfulness drops > 3%.
+>    - Online eval: 10% sampling, async `FaithfulnessEvaluator`. Alert if rolling 24h faithfulness < 0.90.
+>    - Extraction accuracy: daily deterministic F1 run on 200-contract extraction golden set. Grounding check pass rate target > 98%.
+> 5. **Cost estimate:**
+>    - Per document ingestion: $0.09 (parsing) + $0.01 (embedding ~50 chunks × $0.0002) = $0.10/document.
+>    - Per query: 3 tool calls × $0.03 + synthesis $0.02 = $0.11. Offline eval: 150 queries × 4 evaluators × $0.004 = $2.40/night. Online eval: 200 queries/day × 10% × $0.008 = $0.16/day.
+> 6. **Failure mode handling:**
+>    - LlamaParse rate limit: fallback to `pypdf` + flag for manual review; maintain `parsing_degraded=True` in document metadata.
+>    - Retrieval scores < 0.5: return *"I couldn't find a reliable answer in the submitted corpus"* — do not hallucinate.
+>    - Faithfulness < 0.70 (live): flag response, add disclaimer, route to human-in-the-loop review queue.
+>    - Extraction grounding check fail: set `confidence="low"`, add to review queue, do NOT auto-publish.
+>    - LLM outage: graceful degradation — return cached responses for exact-match known queries; surface degraded-mode message to users.
+
+---
+
+### 10. Production Reality Check (Mandatory)
+
+**If this fails in prod, what's the first thing we inspect?**
+
+> **Separate the retrieval eval signal from the synthesis eval signal.**
+>
+> When a production research copilot starts returning wrong answers, teams almost always look at the wrong layer first — they tweak the synthesis prompt when the real problem is retrieval. The fastest way to isolate the failure is to log context precision alongside faithfulness on every sampled query:
+>
+> ```python
+> # Minimal two-signal production probe
+> # Run async on 10% of live queries
+>
+> async def triage_failure(query: str, response: str, source_nodes) -> dict:
+>     """Run faithfulness + context precision in parallel to isolate failure layer."""
+>     contexts = [n.node.text for n in source_nodes]
+>     scores   = [n.score for n in source_nodes]
+>
+>     faith_task  = faithfulness_eval.aevaluate(query=query, response=response,
+>                                                contexts=contexts)
+>     rel_task    = relevancy_eval.aevaluate(query=query, response=response,
+>                                             contexts=contexts)
+>     faith_res, rel_res = await asyncio.gather(faith_task, rel_task)
+>
+>     # Triage logic
+>     if not faith_res.passing and rel_res.passing:
+>         layer = "SYNTHESIS: response is not grounded in retrieved context"
+>         action = "Check synthesiser prompt; add grounding instruction"
+>     elif not rel_res.passing:
+>         layer = "RETRIEVAL: retrieved context is not relevant to the query"
+>         action = "Check top_k, metadata filters, hybrid retrieval weights"
+>     elif max(scores) < 0.5:
+>         layer = "RETRIEVAL: low similarity scores — content may not be in index"
+>         action = "Check if document was ingested; check embedding model coverage"
+>     else:
+>         layer = "PASSING: no failure detected"
+>         action = "None"
+>
+>     return {"faithfulness": faith_res.score, "relevancy": rel_res.score,
+>             "failure_layer": layer, "action": action,
+>             "max_retrieval_score": max(scores)}
+> ```
+>
+> **The production rule:** If `faithfulness < 0.85` and `relevancy > 0.80` → fix the synthesis layer. If `relevancy < 0.70` → fix the retrieval layer. If both are low → fix retrieval first (bad context makes synthesis unfixable). Never adjust the synthesis prompt to compensate for a retrieval problem — you will mask the symptom without fixing the root cause.
+
+---
+
+### 11. Curiosity Bridge (Mandatory)
+
+You've now completed the full Module 14 stack: document ingestion and parsing, indexing and retrieval, query engines and workflows, research copilot interfaces, structured extraction, and automated evaluation. Every layer has its own failure modes, metrics, and debugging strategy.
+
+The next question is: what if your system needs to do more than *answer questions over documents*? What if it needs to *take actions* — trigger a downstream process, call an external API, route work between specialised sub-agents, and recover gracefully when a sub-agent fails? Documents are one kind of input; the broader world of agentic systems requires a runtime that can handle multi-agent coordination, tool execution, state management, and production-grade observability across the whole agent graph.
+
+That's **Module 15: ADK and OpenAI Agents SDK** — where you'll learn Google's Agent Development Kit and OpenAI's Agents SDK, the two production runtimes that take everything you know about LLM systems and add the scaffolding for real-world autonomous agent deployment.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit check:** You're done with 14.3.d when you can name the five evaluation dimensions and explain why each measures a different failure mode, configure `BatchEvalRunner` with appropriate evaluators and a separate judge LLM, diagnose whether a wrong answer is a retrieval failure or a synthesis failure using the two-signal probe, design an offline + online eval pipeline with a regression gate, and explain why context recall requires a reference answer while faithfulness does not.
+
+---
+
+**Carry-Forward Review (interleaved recall from 14.3.c):**
+
+*Q: A research copilot is deployed for legal contract review. After 3 weeks, associates report the copilot frequently forgets what was discussed earlier in the session. Sessions typically last 30–40 turns, each turn adding ~150 tokens to memory. The copilot uses `ChatMemoryBuffer(token_limit=2048)`. What is happening and what is the fix?*
+
+> **A:** After approximately 13 turns (2048 / 150 = ~13.7), the buffer reaches its token limit and starts dropping the oldest turns. By turn 30, the first 17+ turns have been silently evicted. The condensation call in `CondensePlusContextChatEngine` only sees the most recent ~13 turns, so early-session context (e.g., *"focus only on SaaS agreements"*) is lost. **Fix:** replace `ChatMemoryBuffer` with `SimpleComposableMemory`: `SimpleComposableMemory.from_defaults(primary=ChatMemoryBuffer(token_limit=2048), secondary=VectorMemory(top_k=3))`. The `VectorMemory` stores all 40 turns as embeddings and retrieves the 3 most semantically relevant past turns on each new message — including early-session constraints — even after they've been evicted from the buffer.
+
+---
+
+## Module 14 Checkpoint
+
+**You have completed Module 14: LlamaIndex and Data-Centric GenAI Systems (28h).**
+
+Before moving to Module 15, verify you can answer all three checkpoint questions from the curriculum:
+
+---
+
+**Checkpoint Q1: Explain when LlamaIndex is the right fit compared with LangChain or LangGraph.**
+
+> **When to choose LlamaIndex:**
+> - Your primary challenge is *document understanding at scale*: you have large corpora of PDFs, Word docs, HTML, or structured files and need to index, retrieve, and synthesise from them.
+> - You need *sophisticated retrieval*: hybrid retrieval (BM25 + vector), multi-index routing, reranking, and node-level metadata filtering.
+> - You have *structured content*: tables, forms, financial statements that need extraction and structured querying alongside narrative text.
+> - You need *production-grade document AI*: ingestion pipelines with caching, multi-document synthesis, citation-grounded research copilots.
+> - You want *native evaluation*: `FaithfulnessEvaluator`, `BatchEvalRunner`, `DatasetGenerator` are first-class LlamaIndex features.
+>
+> **When LangChain is a better fit:**
+> - You need a wide ecosystem of integrations (100+ LLMs, vector stores, tools).
+> - Your system is primarily prompt chains and simple tool calling, not document-heavy retrieval.
+> - You want the largest community and most third-party tutorials.
+>
+> **When LangGraph is a better fit:**
+> - You need explicit *graph-based multi-agent orchestration* with state machines, checkpointing, and human-in-the-loop.
+> - Your workflow has complex branching, conditional routing, or parallel agent lanes.
+> - You need production-grade agent state persistence across sessions.
+>
+> **Key distinction:** LlamaIndex excels at the *data layer* (ingestion → indexing → retrieval → synthesis). LangGraph excels at the *control layer* (routing → state → orchestration → recovery). In a sophisticated production system, you often use both: LlamaIndex for the data plane, LangGraph (or ADK) for the orchestration plane.
+
+---
+
+**Checkpoint Q2: Describe document-heavy system design using ingestion and indexing vocabulary.**
+
+> A document-heavy system is designed around five layers:
+> 1. **Ingestion:** Parse documents to extract content and preserve structure (`SimpleDirectoryReader`, `LlamaParse`, `UnstructuredReader`). Apply a two-tier strategy: cheap text-layer extraction for standard PDFs, layout-aware parsing for complex layouts and scanned documents. Output: `Document` objects with full text + structure metadata.
+> 2. **Node construction:** Chunk `Document` objects into `TextNode` objects using structure-aware chunking (`SentenceSplitter` with `chunk_size` tuned to the content type; `SemanticSplitter` for variable-length sections; protect tables from mid-row splits). Enrich with metadata: `{source, page, section_title, element_type, document_type}`.
+> 3. **Indexing:** Route nodes to appropriate indices by content type: `VectorStoreIndex` for semantic search over narrative text; `SummaryIndex` for short document sets needing full-context synthesis; separate table/structured nodes into a dedicated sub-index with `MetadataFilters` for element-type routing.
+> 4. **Retrieval:** Use `QueryFusionRetriever` (hybrid BM25 + vector) for corpora with domain-specific terminology. Add a reranker (`SentenceTransformerRerank`) to improve precision. Route across multiple indices with `RouterQueryEngine` or `SubQuestionQueryEngine` for multi-document synthesis.
+> 5. **Synthesis:** `CitationQueryEngine` for attribution. `CondensePlusContextChatEngine` for multi-turn research copilots. `ResponseSynthesizer` mode: `"tree_summarize"` for long multi-document synthesis, `"compact"` for single-document Q&A.
+
+---
+
+**Checkpoint Q3: Reason about structured extraction as more than plain text retrieval.**
+
+> Plain text retrieval treats every document as a bag of tokens and returns the chunks with highest semantic similarity to the query. This works well for narrative questions (*"What is the efficacy of Drug A?"*) but fails for *structured* questions (*"Which drugs had efficacy > 80%?"*) because:
+> - The answer depends on a numeric comparison across multiple table rows, not a single semantically similar chunk.
+> - The meaning of a cell value (`82.3`) depends on its column header (`Efficacy (%)`), which may be in a different node or not retrieved at all.
+> - A merged cell's group membership (`Phase II`) may be empty in most rows unless forward-filled after extraction.
+>
+> Structured extraction recognises three distinct content types: tables (extracted as column-header-preserving Markdown/DataFrame nodes), forms (extracted as key-value JSON nodes via AcroForm fields or proximity detection), and structured narratives (extracted via Pydantic programs with LLM-guided schema filling and grounding checks). Each type requires a different tool, a different node representation, and a different retrieval strategy.
+>
+> The payoff: structured nodes unlock *hybrid querying* — semantic search finds relevant tables by topic, and the LLM reads the full table structure from the node to answer numeric filter queries. A research copilot that only uses plain text RAG cannot answer *"drugs with efficacy > 80% AND adverse event rate < 5%"* — it lacks the column-header context. Structured extraction makes this query answerable.
+
 ## Module Glossary
 
 | Term | Definition |
@@ -4616,3 +8716,57 @@ That's **14.3.a: LlamaIndex Agents and ReActAgent** — where your workflow scaf
 | **Fan-in deadlock** | When a `collect_events` step waits for N events but fewer than N are emitted (because one parallel branch crashed without emitting a typed error event); workflow hangs until timeout |
 | **`IngestionPipeline`** | LlamaIndex's simpler linear workflow; a fixed sequence of `Transformation` objects applied to documents in order; no branching, events, or shared state |
 | **`IngestionCache`** | Content-hash-based cache layer in `IngestionPipeline`; skips nodes whose text hash is already in the cache; must be cleared after embedding model upgrades |
+| **Framework positioning** | The set of problems a framework is optimised to solve — not what it *can* do but where it has the deepest abstractions and most production validation |
+| **LCEL (LangChain Expression Language)** | LangChain's composable pipe (`|`) operator for chaining `Runnable` objects; enables readable, streamable LLM call chains |
+| **`RouterQueryEngine`** | LlamaIndex engine that routes a query to one of several sub-query-engines based on LLM classification or keyword matching; no first-class equivalent in LangChain |
+| **`SubQuestionQueryEngine`** | LlamaIndex engine that decomposes a complex multi-part question into sub-questions, routes each to a separate query engine, and synthesizes a unified answer |
+| **Data-centric RAG** | A RAG architecture where the primary engineering investment is in data quality, index structure, and retrieval precision; LlamaIndex's primary domain |
+| **Agent-centric orchestration** | A GenAI architecture where the primary engineering investment is in agent decision-making, tool calling, and multi-step reasoning; LangChain/LangGraph's primary domain |
+| **LlamaIndex + LangChain interop** | LlamaIndex query engines wrapped as LangChain `Tool` objects (using string-converting wrapper functions); the two frameworks compose at the callable interface boundary |
+| **Context stuffing** | Sending the full document corpus in every LLM prompt instead of using retrieval; cost is O(N) per query where N is corpus size; infeasible beyond ~100K tokens |
+| **Text layer** | Embedded Unicode text in a PDF or Word file; extractable directly without image processing; scanned PDFs do not have a text layer |
+| **OCR (Optical Character Recognition)** | Converting a scanned document image into machine-readable text; adds latency (~1–5s/page) and cost; accuracy degrades on poor scan quality |
+| **Layout-aware parsing** | Extracting text while preserving spatial relationships (table rows/columns, multi-column layout, heading hierarchy); required for tables and complex PDFs |
+| **`LlamaParse`** | LlamaIndex's cloud-based advanced document parser; handles multi-column PDFs, embedded tables, formulas, and code blocks; API-based with a free tier |
+| **`UnstructuredReader`** | Open-source document parser (unstructured.io) supporting 25+ file types; classifies elements as Title, NarrativeText, Table, ListItem, etc. |
+| **Structure-aware chunking** | Splitting documents at natural semantic boundaries (section headings, paragraph breaks, table boundaries) rather than fixed character counts |
+| **`ElementType`** | In `UnstructuredReader`, the category of each extracted element (Title, NarrativeText, Table, Image, ListItem, Header, Footer, PageBreak) |
+| **Heading hierarchy** | The h1/h2/h3 or numbered section structure of a document; mapped to `NodeRelationship` parent-child links for hierarchical retrieval |
+| **Document metadata enrichment** | Attaching structural metadata to nodes at parse time: page number, section title, heading level, doc title, author, element type |
+| **Two-tier parsing strategy** | Running cheap text-layer extraction for all documents, then re-parsing complex/scanned documents with layout-aware parsers; reduces parsing cost 60–80% at scale |
+| **`pdfplumber`** | Python library for precise PDF table extraction using bounding-box analysis; returns tables as lists of lists; handles most well-formed PDF tables reliably |
+| **`camelot`** | PDF table extraction library with `lattice` (grid-line tables) and `stream` (whitespace-aligned tables) strategies; returns pandas DataFrames with per-table accuracy scores |
+| **Pandas DataFrame node** | A `TextNode` whose text is a Markdown-serialised DataFrame (`df.to_markdown()`); metadata contains column names, row count, and table title; preserves column-header-to-value bindings |
+| **`Pydantic program`** | LlamaIndex abstraction that uses an LLM to extract structured data matching a Pydantic schema from text; uses function calling or JSON mode; requires grounding check |
+| **Key-value extraction** | Identifying field label–value pairs in forms and semi-structured documents; can be rule-based (regex), layout-based (bounding box proximity), or LLM-based |
+| **Merged cell** | A table cell spanning multiple rows or columns; after extraction leaves empty strings in spanned rows; must be forward-filled (`df.ffill()`) before indexing |
+| **Repeated table header** | A header row that appears on every page when a table spans multiple pages; must be detected and deduplicated — compare each row against the captured header before appending |
+| **Table provenance metadata** | Metadata on every table node: source document, page number, table index, inferred table title, row count, column names, numeric column list |
+| **Grounding check** | Post-extraction validation that a Pydantic-extracted numeric value appears literally (or in word form) in the source text; prevents LLM hallucination of plausible-sounding but wrong values |
+| **AcroForm** | PDF's built-in interactive form standard; field values are programmatically accessible via `pypdf.get_fields()`; no OCR or LLM needed for typed fields; checkboxes return `/Yes` or `/Off` |
+| **`ContextChatEngine`** | LlamaIndex chat engine that runs the retriever on every user message independently; does not condense conversation history; breaks when follow-up messages use pronouns or references to prior context |
+| **`CondensePlusContextChatEngine`** | Chat engine that makes a cheap LLM condensation call to convert `history + current_message` into a standalone question before retrieval; the standard for multi-turn research copilots |
+| **`SimpleChatEngine`** | Chat engine with no retrieval; pure LLM conversation; useful only for meta-questions and clarification, not for domain-specific knowledge retrieval |
+| **`OpenAIAgent` (LlamaIndex)** | Agent built on OpenAI function calling that holds `QueryEngineTool` objects; decides which tool to call and when; best for unpredictable multi-index research queries |
+| **`QueryEngineTool`** | Wraps any LlamaIndex query engine as a callable tool with a name and description string; agent selects tools based on semantic similarity between query and description |
+| **`SubQuestionQueryEngine`** | Decomposes a complex multi-part question into sub-questions, routes each to the appropriate query engine in parallel, and synthesises all sub-answers; best for known multi-document comparison patterns |
+| **`ChatMemoryBuffer`** | Token-bounded in-memory chat history; stores recent turns as `ChatMessage` objects; drops oldest turns when `token_limit` is exceeded; simplest memory for short-session copilots |
+| **`VectorMemory`** | Stores conversation turns as vector embeddings; retrieves the `top_k` semantically relevant past turns on each new message; enables long-term topic recall across many turns |
+| **`SimpleComposableMemory`** | Combines `ChatMemoryBuffer` (recent turns) + `VectorMemory` (semantic long-term); the production standard for research copilots with sessions > 20 turns |
+| **`CitationQueryEngine`** | Wraps any query engine to annotate every claim in the response with a numbered citation `[n]` referencing the exact source node (document, page, section); mandatory for professional research copilots |
+| **Tool description quality** | The precision and domain vocabulary in a `QueryEngineTool` description; directly determines agent routing accuracy; vague descriptions cause misrouting; specific descriptions with domain terms route correctly |
+| **The "those" problem** | Conversational failure where a follow-up message uses a pronoun or reference ("those", "it", "that") that depends on prior context; `ContextChatEngine` cannot resolve it; `CondensePlusContextChatEngine` resolves it via condensation |
+| **`FaithfulnessEvaluator`** | LlamaIndex evaluator that checks whether each claim in a response is supported by the provided source nodes; returns a 0–1 score; the primary automated guard against hallucination |
+| **`RelevancyEvaluator`** | Checks whether the retrieved context is relevant to the query; detects retrieval noise (pulling irrelevant chunks that dilute or confuse the synthesiser) |
+| **`AnswerRelevancyEvaluator`** | Checks whether the response addresses the question; a response can be faithful yet irrelevant (accurately quoting a clause but not answering the question asked) |
+| **`ContextPrecisionEvaluator`** | Of all retrieved chunks, what fraction are actually relevant to the query? Low precision = retrieval noise diluting the context window |
+| **`ContextRecallEvaluator`** | Did retrieval capture all the information needed to answer? Requires a reference answer; low recall = missing chunks, incomplete answers |
+| **`BatchEvalRunner`** | LlamaIndex utility that runs multiple evaluators in parallel over a dataset of (query, response, source_nodes) triples; the standard tool for offline batch evaluation |
+| **`DatasetGenerator`** | Generates synthetic evaluation Q&A pairs from a document corpus using an LLM; essential when no ground-truth evaluation dataset exists; use `num_questions_per_chunk=3` as a starting point |
+| **`EvaluationResult`** | Output of every LlamaIndex evaluator: `passing` (bool), `score` (0–1), `feedback` (explanation), `query`, `response` |
+| **RAGAS** | Open-source RAG evaluation framework; computes `faithfulness`, `answer_relevancy`, `context_precision`, `context_recall` as a unified suite; integrates with LlamaIndex |
+| **Eval golden dataset** | A fixed set of (query, expected_answer, relevant_source_docs) triples used as ground truth; created by domain experts; used as regression baseline on every deploy |
+| **Online evaluation** | Sampling 5–10% of live production queries and running evaluators asynchronously post-response; provides continuous quality signal on real-world traffic without human review |
+| **Self-grading bias** | The tendency of an LLM to rate its own outputs as correct; happens when the same model is used for both generation and evaluation; mitigated by using a different or stronger judge model |
+| **Two-signal triage** | Running faithfulness AND context relevancy together to isolate failure layer: if faithfulness fails but relevancy passes → synthesis bug; if relevancy fails → retrieval bug |
+| **Regression gate** | A CI/CD check that blocks a new model or retriever deployment if any evaluation metric drops more than a defined threshold (e.g., 3%) vs the previous baseline |
