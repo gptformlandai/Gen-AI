@@ -18,13 +18,13 @@
 | 15.2.a | Agent, runner, tools, and handoffs | ✅ Done |
 | 15.2.b | Guardrails and sessions | ✅ Done |
 | 15.2.c | MCP integration and sandbox agents | ✅ Done |
-| 15.2.d | Realtime and voice-oriented pathways | 🔲 |
+| 15.2.d | Realtime and voice-oriented pathways | ✅ Done |
 | **Topic 15.3** | **Runtime comparison and selection (10h)** | |
-| 15.3.a | LangGraph vs ADK vs OpenAI Agents SDK | 🔲 |
-| 15.3.b | Lock-in, control, observability, and runtime tradeoffs | 🔲 |
-| 15.3.c | Team skill fit and ecosystem maturity | 🔲 |
-| 15.3.d | Building a framework-selection rubric | 🔲 |
-| **CHECKPOINT** | **Module 15 checkpoint - runtime comparison memo** | 🔲 |
+| 15.3.a | LangGraph vs ADK vs OpenAI Agents SDK | ✅ Done |
+| 15.3.b | Lock-in, control, observability, and runtime tradeoffs | ✅ Done |
+| 15.3.c | Team skill fit and ecosystem maturity | ✅ Done |
+| 15.3.d | Building a framework-selection rubric | ✅ Done |
+| **CHECKPOINT** | **Module 15 checkpoint - runtime comparison memo** | ✅ Done |
 
 **Covered so far:**
 - 15.1.a — ADK agent model and tool patterns: `Agent` / `LlmAgent` mental model, instruction + model + tools contract, FunctionTool schema generation, ToolContext, AgentTool, McpToolset, runtime event loop basics, tool design rules, confirmation patterns, production debugging signals
@@ -34,6 +34,12 @@
 - 15.2.a — Agent, runner, tools, and handoffs: OpenAI Agents SDK primitive model, `Agent` configuration, `Runner` loop, `RunResult`, function tools, hosted tools, agents-as-tools, handoffs, handoff filters, structured outputs, context injection, tool-use behavior, max-turn debugging
 - 15.2.b — Guardrails and sessions: input/output/tool guardrails, tripwire behavior, blocking vs parallel guardrail execution, tool approval pause/resume, `RunState`, session-backed memory, history merge callbacks, session backends, server-managed conversation state, compaction, session debugging
 - 15.2.c — MCP integration and sandbox agents: hosted MCP vs local MCP servers, MCP transports, approval policies, tool filtering, prompts, caching, tracing, SandboxAgent workspace execution, manifests, capabilities, sandbox clients, sandbox lifecycle, snapshots, session-state resume, composition with handoffs/tools/MCP
+- 15.2.d — Realtime and voice-oriented pathways: server-side realtime WebSocket sessions, SIP attach flows, `RealtimeAgent`, `RealtimeRunner`, `RealtimeSession`, audio input/output settings, turn detection, event streams, interruptions, playback tracking, realtime tools/approvals/handoffs/guardrails, voice pipeline STT -> workflow -> TTS path, tracing and latency debugging
+- 15.3.a — LangGraph vs ADK vs OpenAI Agents SDK: runtime-selection mental model, orchestration runtime vs agent product runtime vs lightweight Responses-centered SDK, durable state and human-in-loop differences, Google ecosystem fit, OpenAI-native fit, sandbox/realtime distinctions, framework comparison matrix, scenario-based selection, migration warning signs
+- 15.3.b — Lock-in, control, observability, and runtime tradeoffs: lock-in surface model, control premium, observability boundary, trace portability, managed vs owned state, provider/runtime/deployment coupling, exit strategy, operational risk matrix, debugging runtime-fit failures, hands-on tradeoff ledger
+- 15.3.c — Team skill fit and ecosystem maturity: team-fit lens for framework selection, orchestration maturity vs platform maturity vs Python/OpenAI speed, skill inventory, operational maturity, ecosystem gravity, staffing risk, runbook readiness, change velocity, learning curve debugging, adoption strategy
+- 15.3.d — Building a framework-selection rubric: repeatable runtime decision rubric, knockout criteria, weighted scoring, sensitivity analysis, pilot spikes, decision memo structure, risk register, migration/exit plan, LangGraph/ADK/OpenAI Agents SDK scoring examples, production-first evaluation workflow
+- CHECKPOINT — Runtime comparison memo: framework-neutral engineering argument structure, workflow-shape-first selection, LangGraph/ADK/OpenAI Agents SDK comparison, vendor-popularity trap, why LangGraph remains the anchor runtime, split-architecture reasoning, final Project 7 memo template
 
 ---
 
@@ -3220,10 +3226,2581 @@ That leads into **Realtime and voice-oriented pathways**: agent loops where spee
 
 ---
 
+## Subtopic 15.2.d: Realtime and Voice-Oriented Pathways
+
+### ✅ Add to Knowledge Base
+
+---
+
+### 0. Reading Path + Level Tags
+
+**Beginner:** Read sections 1-2, the decision table in section 5, and Active Recall.
+
+**Intermediate:** Add sections 3-6 so you can reason about realtime sessions, voice pipelines, and production failure modes.
+
+**Pro:** Do the Hands-On Lab and capstone prompt. Focus on latency budgets, interruptions, playback tracking, tool approval events, and which voice path fits which product.
+
+---
+
+### 1. Pre-Question Hook + The Intuition (Plain English)
+
+**Pause:** before reading, why does a voice assistant feel much harder than a chat assistant even when both call the same model and tools?
+
+The core difference is time. A chat agent can think, call tools, and return one final answer. A realtime voice agent must listen while the user is still speaking, decide when a turn ends, stream partial output, handle interruptions, keep audio playback aligned with conversation history, and still call tools safely.
+
+**RealtimeAgent** is the Agents SDK agent type for low-latency live sessions. It supports instructions, tools, handoffs, output guardrails, MCP servers, and hooks, but it is narrower than regular `Agent`: model choice and most model settings are session-level, structured outputs are not supported, and voice cannot change after the session has already spoken.
+
+**RealtimeRunner** is the realtime equivalent of `Runner`. Instead of returning a final result, it creates a live `RealtimeSession` over a realtime transport.
+
+**RealtimeSession** is the live bidirectional session. It sends text/audio input, streams events, tracks local history, executes tools, runs guardrails, handles handoffs, and exposes approval methods.
+
+**VoicePipeline** is the older pipeline-style voice path: speech-to-text -> your workflow -> text-to-speech. It is useful when you want to turn an existing agent workflow into voice without managing a persistent realtime model session.
+
+Mental model: a regular agent is like email, a streamed text agent is like live chat, and a realtime voice agent is like a phone call. In a phone call, overlap, interruption, silence, delay, and playback matter as much as the words.
+
+Where the analogy breaks: realtime systems still expose programmable events, tools, guardrails, traces, and transport choices. It is not just audio; it is a distributed event loop.
+
+**Turn detection** is the mechanism that decides when the user has finished speaking and the model should respond.
+
+**Semantic VAD** is a voice activity detection mode that uses semantic signals to decide turn boundaries, often improving natural interruptions compared with simple silence thresholds.
+
+**RealtimePlaybackTracker** is the component used when interruption handling must be based on what the user actually heard, especially in delayed playback environments like telephony.
+
+---
+
+### 2. Visual Diagram (Mermaid)
+
+```mermaid
+flowchart TD
+    user[User speech or text] --> app[Python app]
+
+    subgraph Realtime_Path[Realtime path]
+        app --> runner[RealtimeRunner]
+        runner --> session[RealtimeSession]
+        session --> ws[OpenAI realtime transport]
+        session --> events[Session events]
+        session --> tools[Function tools / MCP tools]
+        session --> approvals[Tool approvals]
+        session --> handoffs[Realtime handoffs]
+        session --> guardrails[Output guardrails]
+        events --> audio[Streaming audio output]
+        events --> history[history_added / history_updated]
+        events --> interrupts[audio_interrupted]
+    end
+
+    subgraph Voice_Pipeline_Path[Voice pipeline path]
+        audioIn[AudioInput or StreamedAudioInput] --> stt[Speech to text]
+        stt --> workflow[Agent workflow]
+        workflow --> tts[Text to speech]
+        tts --> voiceEvents[VoiceStreamEvent audio/lifecycle/error]
+    end
+```
+
+Key distinction: realtime is a long-lived conversation session. Voice pipeline is a staged pipeline that transcribes audio, runs a workflow, and synthesizes audio for each detected input.
+
+---
+
+### 3. Real-World Industry Scenarios
+
+#### Scenario A: Customer Support Voice Assistant [Intermediate]
+
+Product context: a user calls support, explains a billing issue, interrupts the assistant, asks follow-up questions, and may need a human handoff.
+
+How realtime affects the product: the agent cannot wait for a complete chat transcript. It must stream audio, handle partial conversation state, call billing tools, pause for approval when needed, and switch to a specialist agent without dropping the live session.
+
+Constraints:
+- Latency: users notice delays above a few hundred milliseconds in turn-taking. Tool calls must be short, asynchronous, or hidden behind conversational filler only when product policy allows it.
+- Reliability: dropped WebSocket/SIP sessions, microphone gaps, duplicate audio chunks, tool timeouts, and broken event loops feel like the assistant is ignoring the user.
+- Failure modes: bad turn detection causes the model to interrupt too early or wait too long. Bad playback tracking means the history includes words the user never heard.
+- Security/privacy: audio transcripts and recordings may contain sensitive data. Tracing must decide whether to include transcripts or raw audio.
+
+What good looks like in production: the app measures time-to-first-audio, turn-end-to-response latency, interruption success rate, tool approval time, and call drop rate. The event loop separates UI/audio playback state from model/tool execution state.
+
+#### Scenario B: Telehealth Intake or Benefits Voice Assistant [Intermediate]
+
+Product context: a patient or member asks about coverage, symptoms, appointment scheduling, or claims. The assistant may call internal systems but must avoid unsafe medical or policy commitments.
+
+How realtime affects the product: voice makes the interaction natural, but also riskier. The user may provide sensitive information aloud. The assistant may need to interrupt itself if an output guardrail catches unsafe content after partial audio has already buffered.
+
+Constraints:
+- Latency: conversational delay must stay low, but guardrails and tool checks still need to run.
+- Reliability: transcript errors can change meaning; "no chest pain" vs "chest pain" is not a minor typo.
+- Safety: tool approvals and guardrails must be runtime policies, not just prompt instructions.
+- Privacy: traces should usually avoid raw audio and minimize transcript retention unless compliance requires storage.
+
+What good looks like in production: the assistant confirms high-risk facts, uses structured internal tools for eligibility/appointment data, emits guardrail and escalation events, and logs enough to audit decisions without over-retaining audio.
+
+#### Scenario C: Push-to-Talk Field Operations Assistant [Pro]
+
+Product context: a technician records short audio notes in a noisy environment. The app transcribes each message, runs an agent workflow to create a work order update, and reads back a confirmation.
+
+How voice pipeline affects the product: this may not need a persistent realtime session. A `VoicePipeline` can take a complete or streamed audio input, transcribe it, run a normal `Agent` workflow, and synthesize the response.
+
+Constraints:
+- Latency: users tolerate slightly more delay after releasing push-to-talk because the turn boundary is explicit.
+- Reliability: the system must handle noisy audio, retries, and workflow failures cleanly.
+- Cost: STT, LLM, and TTS are separate stages, so each stage has separate cost and tuning knobs.
+- Observability: failures need stage-level traces: transcription quality, workflow output, TTS generation, playback.
+
+What good looks like in production: the pipeline captures stage latencies, shows confidence/confirmation for critical fields, and treats every audio input as an independent workflow run unless application memory is added deliberately.
+
+---
+
+### 4. System View (Think Like a Systems Engineer)
+
+#### Realtime Session Flow [Intermediate]
+
+Inputs:
+- User text, structured messages, images, or raw audio chunks
+- `RealtimeAgent` definitions with instructions, tools, handoffs, guardrails, MCP servers
+- `RealtimeRunner` config with model settings, tool behavior, guardrail settings, and tracing
+- `model_config` such as API key, WebSocket URL, headers, `call_id`, or playback tracker
+
+Transformations:
+1. The app creates a `RealtimeRunner` with a starting agent.
+2. `await runner.run()` returns a `RealtimeSession`, not a final answer.
+3. Entering the session opens the realtime transport, usually server-side WebSocket in Python.
+4. The app sends messages with `send_message()` or audio chunks with `send_audio()`.
+5. The session receives events: audio, audio end, interruptions, tool start/end, approval required, handoff, history updates, guardrail trips, raw model events, and errors.
+6. The session executes tools, manages approvals, updates active agents, and keeps local history aligned with server-side conversation state.
+7. The app forwards audio events to playback and uses history events to update UI/state.
+
+Outputs:
+- Streaming audio chunks
+- Local history items
+- Tool call events and results
+- Approval events
+- Handoff events
+- Guardrail trip events
+- Error events and raw model events
+
+Observability:
+- Log time-to-session-open, time-to-first-audio, turn-end-to-first-audio, audio underruns, interruption latency, tool call latency, approval wait time, handoff count, guardrail trips, and reconnect/drop reasons.
+- Track whether audio history was truncated correctly after interruption.
+- For privacy, separate operational metrics from retained transcript/audio payloads.
+
+Failure points:
+- Turn detection commits too early, too late, or not at all.
+- Raw audio format does not match configured `audio.input.format`.
+- The app fails to stop local playback when `audio_interrupted` arrives.
+- A voice changes after the session already produced audio.
+- A tool approval event is emitted but the app never calls `approve_tool_call()` or `reject_tool_call()`.
+- Custom `headers` are provided without an authorization header, so the SDK does not inject auth automatically.
+
+#### Voice Pipeline Flow [Intermediate]
+
+Inputs:
+- `AudioInput` for complete audio, or `StreamedAudioInput` for chunked audio with activity detection
+- STT model settings
+- `VoiceWorkflow`, often `SingleAgentVoiceWorkflow(agent)`
+- TTS model settings
+- `VoicePipelineConfig` with tracing options
+
+Transformations:
+1. The pipeline receives audio input.
+2. STT transcribes audio to text.
+3. The workflow runs your normal agentic code.
+4. TTS turns the workflow's text result into audio.
+5. The result streams `VoiceStreamEvent` items: audio, lifecycle, or error.
+
+Outputs:
+- Synthesized audio chunks
+- Lifecycle events such as turn start/end
+- Error events
+- Pipeline trace data
+
+Observability:
+- Log STT latency, transcript quality indicators, workflow latency, TTS latency, output audio duration, lifecycle events, and stage errors.
+- Configure whether traces include sensitive transcripts or raw audio.
+
+Failure points:
+- Activity detection splits turns incorrectly.
+- The workflow returns text that is awkward for speech.
+- The app expects built-in interruption handling, but `StreamedAudioInput` voice pipeline does not provide it automatically.
+- Audio sample rate or dtype does not match what playback expects.
+
+---
+
+### 5. System Design Flavor (Practical and Concise)
+
+#### Decision Table
+
+| Need | Prefer | Why |
+|---|---|---|
+| Server-managed live voice/chat with tools, handoffs, approvals, and interruptions | Realtime path: `RealtimeAgent` + `RealtimeRunner` + `RealtimeSession` | Long-lived session, bidirectional events, low-latency audio streaming, local history tracking. |
+| Phone/SIP integration | Realtime SIP attach with `OpenAIRealtimeSIPModel` and `call_id` | Attaches the agent to an existing realtime call flow. |
+| Browser WebRTC client | Realtime API WebRTC docs outside this Python SDK | The Python SDK does not provide browser `RTCPeerConnection` transport. |
+| Existing text agent workflow converted to voice | `VoicePipeline` + `SingleAgentVoiceWorkflow` | Simpler STT -> workflow -> TTS path, good for push-to-talk or prerecorded audio. |
+| Batch or prerecorded audio task | `VoicePipeline` with `AudioInput` | Clear turn boundary; no need for persistent live session. |
+| Continuous audio stream but not full realtime model semantics | `VoicePipeline` with `StreamedAudioInput` | Pipeline activity detection can trigger workflow runs, but interruption handling remains app-owned. |
+
+#### Tradeoff 1: Realtime Session vs Voice Pipeline [Intermediate]
+
+Choose realtime when conversation continuity, interruption handling, live event streams, tool approvals, handoffs, and low-latency audio output are core product requirements.
+
+Choose voice pipeline when audio is mostly an input/output wrapper around an existing agent workflow, especially push-to-talk, prerecorded audio, or simple spoken responses.
+
+Plain-English version: realtime is a phone call. voice pipeline is a voice form submission with spoken output.
+
+#### Tradeoff 2: Server-Side WebSocket vs SIP Attach [Intermediate]
+
+Use server-side WebSocket when your Python service owns the audio pipeline, UI connection, tools, approvals, and session lifecycle.
+
+Use SIP attach when a phone/call flow already exists and the Python agent needs to attach to an existing realtime call through `call_id`.
+
+Plain-English version: WebSocket is your app starting the call. SIP attach is your app joining a call that the telephony system already created.
+
+#### Tradeoff 3: Automatic Turn Detection vs Manual Turn Control [Pro]
+
+Use automatic turn detection, such as semantic VAD, for natural conversation and interruptions.
+
+Use manual turn control when your product has an explicit push-to-talk button, moderation/gating before response, or needs to decide exactly when `response.create` should happen.
+
+Plain-English version: automatic turn detection feels natural but can guess wrong. manual control is less natural but more deterministic.
+
+#### Scaling Consideration: 10x Realtime Traffic [Pro]
+
+At 10x traffic, the bottleneck becomes connection lifecycle, audio bandwidth, event fanout, and operational visibility:
+- Keep one event loop per live session clean and non-blocking.
+- Move slow tools behind async execution and timeouts.
+- Track WebSocket/SIP session count, average duration, reconnect/drop rates, audio bytes in/out, tool concurrency, approval queue time, and p95 turn latency.
+- Decide early what audio/transcript data is retained, redacted, or excluded from traces.
+
+---
+
+### 6. Common Mistakes + Debugging
+
+#### Mistake 1: Treating `runner.run()` Like Text-Agent `Runner.run()`
+
+Symptom: code waits for a final result that never arrives or exits before receiving audio/events.
+
+Likely cause: realtime `runner.run()` returns a live `RealtimeSession`, not a completed `RunResult`.
+
+First debugging step: check whether the code enters `async with await runner.run() as session:` and iterates over `async for event in session:`.
+
+#### Mistake 2: Ignoring Playback State During Interruptions
+
+Symptom: the user interrupts, but the transcript/history assumes the user heard audio that was never played, so future responses refer to unheard content.
+
+Likely cause: local or remote playback delay was not reported. The default assumption may not match telephony or buffered playback.
+
+First debugging step: inspect `audio_interrupted` events and configure `RealtimePlaybackTracker` when playback can lag behind generation.
+
+#### Mistake 3: Using Voice Pipeline When You Need Realtime Interruptions
+
+Symptom: every detected user turn starts a separate workflow run, but the app cannot naturally cancel or interrupt ongoing assistant speech.
+
+Likely cause: `VoicePipeline` is a staged STT -> workflow -> TTS pipeline. It does not provide built-in interruption handling for `StreamedAudioInput`.
+
+First debugging step: decide whether the product requires true barge-in/interruption. If yes, move to realtime sessions or implement application-level interruption handling around voice lifecycle events.
+
+#### Mistake 4: Logging Raw Audio by Default
+
+Symptom: traces contain sensitive transcripts or audio payloads that compliance/security did not approve.
+
+Likely cause: tracing configuration was not reviewed for voice/realtime data.
+
+First debugging step: inspect `VoicePipelineConfig` fields such as `trace_include_sensitive_data` and `trace_include_sensitive_audio_data`, and define trace redaction policy before production traffic.
+
+---
+
+### 7. Hands-On Lab (Concept -> Build -> Break -> Measure -> Explain)
+
+#### Build A: Minimal Realtime Session Event Loop [Pro]
+
+Goal: create a realtime session, send one text message, and observe the event stream shape.
+
+```python
+import asyncio
+
+from agents.realtime import RealtimeAgent, RealtimeRunner
+
+
+agent = RealtimeAgent(
+    name="Concise Assistant",
+    instructions="You are a helpful voice assistant. Keep replies short.",
+)
+
+runner = RealtimeRunner(
+    starting_agent=agent,
+    config={
+        "model_settings": {
+            "model_name": "gpt-realtime-2",
+            "audio": {
+                "input": {
+                    "format": "pcm16",
+                    "transcription": {"model": "gpt-4o-mini-transcribe"},
+                    "turn_detection": {
+                        "type": "semantic_vad",
+                        "interrupt_response": True,
+                    },
+                },
+                "output": {"format": "pcm16", "voice": "ash"},
+            },
+        }
+    },
+)
+
+
+async def main() -> None:
+    async with await runner.run() as session:
+        await session.send_message("Say hello in one short sentence.")
+
+        async for event in session:
+            print(event.type)
+            if event.type == "audio":
+                # Forward event.audio.data to your audio player.
+                pass
+            elif event.type == "history_added":
+                print(event.item)
+            elif event.type == "agent_end":
+                break
+            elif event.type == "error":
+                print(event.error)
+                break
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+Break it on purpose:
+- Remove the `async for event in session` loop and notice that you do not process audio/history/error events.
+- Send audio bytes with the wrong format and observe errors or poor transcription.
+- Add a tool requiring approval but do not handle `tool_approval_required`; observe the stalled tool execution.
+
+Measure:
+- Session open latency
+- Time from `send_message()` to first `audio` event
+- Number and order of event types
+- Tool approval wait time
+- Error event count and type
+
+Explain:
+Realtime agent code is event-loop code. The model response is not just a return value; it is a stream of state changes. If you do not consume and handle events, the product cannot play audio, update history, approve tools, or recover from errors.
+
+#### Build B: Voice Pipeline Around a Normal Agent [Pro]
+
+Goal: run a normal agent workflow through STT and TTS using a pipeline.
+
+```python
+import asyncio
+
+import numpy as np
+
+from agents import Agent
+from agents.voice import AudioInput, SingleAgentVoiceWorkflow, VoicePipeline
+
+
+agent = Agent(
+    name="Voice Workflow Assistant",
+    instructions="Answer in one short spoken sentence.",
+    model="gpt-5.5",
+)
+
+
+async def main() -> None:
+    pipeline = VoicePipeline(workflow=SingleAgentVoiceWorkflow(agent))
+
+    # Three seconds of silence as a placeholder for captured microphone audio.
+    buffer = np.zeros(24000 * 3, dtype=np.int16)
+    audio_input = AudioInput(buffer=buffer)
+
+    result = await pipeline.run(audio_input)
+
+    async for event in result.stream():
+        if event.type == "voice_stream_event_audio":
+            # Write event.data to an audio output stream.
+            pass
+        elif event.type == "voice_stream_event_lifecycle":
+            print(event)
+        elif event.type == "voice_stream_event_error":
+            print(event)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+Break it on purpose:
+- Use a noisy or empty buffer and inspect transcript/workflow behavior.
+- Make the agent return long paragraphs and listen to how poor text formatting becomes poor speech UX.
+- Expect barge-in interruption from `VoicePipeline`; observe that interruption handling is application-owned.
+
+Measure:
+- STT latency
+- Workflow latency
+- TTS latency
+- Total time to first audio chunk
+- Error events by stage
+
+Explain:
+Voice pipeline is easier to reason about because it has stages. That also means stage boundaries become your debugging map: if output is wrong, first identify whether transcription, agent reasoning, or TTS caused it.
+
+---
+
+### 8. Active Recall (Spaced Repetition)
+
+1. What does realtime `RealtimeRunner.run()` return, and why is that different from regular `Runner.run()`?
+2. When should you prefer `VoicePipeline` over `RealtimeSession`?
+3. Why does playback tracking matter for interruptions?
+4. What are the highest-value realtime events to handle in a production UI?
+5. Why is browser WebRTC outside the Python SDK path?
+
+**Answer keys:**
+
+1. It returns a live `RealtimeSession`, not a final `RunResult`, because realtime work is a long-lived bidirectional event session.
+2. Use `VoicePipeline` when audio wraps an existing workflow, especially prerecorded audio, push-to-talk, or simple STT -> agent -> TTS flows that do not need full realtime interruption semantics.
+3. Interruption truncation must reflect what the user actually heard. If playback lags, history can otherwise include assistant words that never reached the user.
+4. `audio`, `audio_end`, `audio_interrupted`, `history_added`, `history_updated`, `tool_approval_required`, `tool_start`, `tool_end`, `handoff`, `guardrail_tripped`, and `error`.
+5. The Python SDK realtime docs cover server-side WebSocket and SIP attach flows; browser WebRTC uses browser/client APIs and official Realtime API WebRTC docs, not a Python transport abstraction.
+
+---
+
+### 9. Practice
+
+#### Mini-Exercise: Choose the Voice Architecture
+
+A claims assistant lets users press and hold a microphone button, describe a document issue, and receive a spoken confirmation after the button is released. It does not need mid-sentence interruption.
+
+**Suggested answer:** Use `VoicePipeline` with `AudioInput` or `StreamedAudioInput` depending on capture style. The explicit button release gives a clean turn boundary. Use a normal `Agent` workflow for claim logic, and configure tracing to avoid retaining sensitive audio unless required.
+
+#### Capstone-Style System Design Question
+
+Design a realtime phone support assistant for benefits questions. It can answer FAQs, look up eligibility, escalate to a human, and handle the caller interrupting while it speaks.
+
+**Answer outline:**
+
+- Use realtime path with `RealtimeAgent`, `RealtimeRunner`, and `RealtimeSession`.
+- For telephony, use SIP attach with `OpenAIRealtimeSIPModel` and `call_id` if the call comes through the Realtime Calls/SIP flow.
+- Configure nested audio settings: input/output format, transcription model, semantic VAD, interruption support, voice.
+- Handle events: audio playback, history updates, interruption, tool start/end, approval required, handoff, guardrail trip, errors.
+- Use function tools or MCP for eligibility lookups; require approval for account changes or sensitive actions.
+- Use realtime handoffs for specialist flows such as billing, pharmacy, or human escalation.
+- Use `RealtimePlaybackTracker` for telephony or any delayed playback path.
+- Log time-to-first-audio, turn latency, interruption accuracy, tool latency, approval wait, call drops, and guardrail trips.
+- Minimize transcript/audio retention and configure tracing privacy.
+
+---
+
+### 10. Production Reality Check (Mandatory Ending)
+
+**If this fails in prod, what's the first thing we inspect?**
+
+Inspect the event timeline for one affected session:
+- Did the session open successfully?
+- What input event arrived: text, audio chunks, commit, or raw event?
+- Did turn detection fire when expected?
+- When did first audio output arrive?
+- Were `audio_interrupted`, `history_updated`, tool approval, handoff, guardrail, or error events emitted?
+- Did playback tracking match what the user actually heard?
+
+Why: realtime bugs are usually ordering and timing bugs. The same model answer can feel correct in text but broken in voice if turn detection, playback, interruption, tool approval, or event handling is off by a few seconds.
+
+---
+
+### 11. Curiosity Bridge (Mandatory Ending)
+
+Realtime and voice make the SDK feel like a product runtime, not just a model wrapper. But now the bigger question becomes: which runtime should a team choose when LangGraph, ADK, and OpenAI Agents SDK all seem capable?
+
+That leads into **Topic 15.3: Runtime comparison and selection**, where we build the framework-selection rubric instead of memorizing framework features.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit check:** You're done with 15.2.d when you can choose between realtime sessions, SIP attach, browser WebRTC outside the Python SDK, and voice pipeline, then explain the latency, interruption, tracing, tool approval, and event-loop implications.
+
+---
+
+**Carry-Forward Review (interleaved recall from 15.2.c):**
+
+*Q: If a realtime agent also needs private backend tools, how do MCP and realtime compose?*
+
+> **A:** A `RealtimeAgent` can include `mcp_servers`, but the application must manage local MCP server lifecycle or use `MCPServerManager`. In realtime, MCP tool calls still become live tool events, so latency, approval, and event handling matter more than in a text-only run.
+
+---
+
+## Topic 15.3: Runtime Comparison and Selection
+
+> **Topic time:** 10h  
+> Focus: Choosing between LangGraph, Google ADK, and OpenAI Agents SDK based on product constraints, state/control needs, team skill, cloud/vendor fit, observability, deployment shape, and long-term maintenance risk.
+
+---
+
+## Subtopic 15.3.a: LangGraph vs ADK vs OpenAI Agents SDK
+
+### ✅ Add to Knowledge Base
+
+---
+
+### 0. Reading Path + Level Tags
+
+**Beginner:** Read sections 1-2, the comparison table in section 5, and Active Recall.
+
+**Intermediate:** Add sections 3-6 so you can explain the production tradeoffs in interviews and design reviews.
+
+**Pro:** Do the Hands-On Lab and capstone. Your goal is to justify a runtime choice with constraints, not personal preference.
+
+---
+
+### 1. Pre-Question Hook + The Intuition (Plain English)
+
+**Pause:** before reading, imagine a product team asks: "Should we build this agent in LangGraph, ADK, or OpenAI Agents SDK?" What is the first question you ask before naming a framework?
+
+The first question is not "which framework is best?" It is: **what kind of runtime problem are we solving?**
+
+**LangGraph** is a low-level orchestration runtime for long-running, stateful agent workflows. Its strength is control: explicit state, nodes, edges, persistence, durable execution, human-in-the-loop, and provider flexibility.
+
+**Google ADK** is an agent product runtime and ecosystem. Its strength is building, running, observing, evaluating, and deploying agent applications with Google-flavored runtime surfaces: agents, tools, sessions, events, graph workflows, artifacts, integrations, evaluation, observability, deployment, and multi-language support.
+
+**OpenAI Agents SDK** is a lightweight Python-first runtime around OpenAI's Responses ecosystem. Its strength is fast agent construction with few primitives: `Agent`, `Runner`, tools, handoffs, guardrails, sessions, tracing, sandbox agents, MCP, and realtime voice paths.
+
+Mental model: LangGraph is a programmable workflow engine for agent state. ADK is an agent application platform. OpenAI Agents SDK is a compact product SDK for OpenAI-native agent loops.
+
+Where the analogy breaks: all three overlap. LangGraph can ship full products, ADK now has graph workflows, and OpenAI Agents SDK has sandbox/realtime features that go beyond a small wrapper. The correct comparison is about ownership boundaries: who owns orchestration, state, deployment, observability, and model/provider coupling?
+
+**Runtime selection** is the process of choosing the execution framework whose control model, persistence model, observability, deployment path, and team ergonomics match the product constraints.
+
+**Control plane** is the part of the system that decides what runs next, what state changes, when humans approve, and how execution resumes after pauses/failures.
+
+**Agent product runtime** is a framework shape that packages agent execution together with sessions, tools, events, evaluation, deployment, and operational surfaces.
+
+---
+
+### 2. Visual Diagram (Mermaid)
+
+```mermaid
+flowchart TD
+    req[Agent product requirement] --> q1{Need explicit durable workflow state?}
+
+    q1 -- yes --> lg[LangGraph]
+    lg --> lgWhy[StateGraph / Functional API\ncheckpointers + stores\nhuman-in-loop + durable execution]
+
+    q1 -- no or moderate --> q2{Need Google-style agent platform/runtime?}
+    q2 -- yes --> adk[Google ADK]
+    adk --> adkWhy[Agents + tools + sessions + events\ngraph workflows + artifacts\nevals + deploy + observability]
+
+    q2 -- no --> q3{Need fast OpenAI-native agent app?}
+    q3 -- yes --> oai[OpenAI Agents SDK]
+    oai --> oaiWhy[Agent + Runner + tools\nhandoffs + guardrails + sessions\nsandbox + realtime + tracing]
+
+    q3 -- no --> raw[Raw model API or custom runtime]
+
+    req --> constraints[Constraints: provider fit, latency, cost, team skill, deploy, eval, observability]
+    constraints --> q1
+```
+
+This is not a universal decision tree. It is a way to start the conversation. In real systems, the final choice comes from constraints: state durability, workflow complexity, cloud fit, model neutrality, observability, deployment, and team speed.
+
+---
+
+### 3. Real-World Industry Scenarios
+
+#### Scenario A: Long-Running Claims Workflow [Intermediate]
+
+Product context: an insurance workflow receives a claim, extracts facts, retrieves policy evidence, asks a human for missing documents, waits days, resumes, updates state, and may re-run a branch after new evidence arrives.
+
+How runtime choice affects the system:
+- LangGraph is a strong fit if the key problem is durable state, resume, explicit branching, human review, time travel, and long-running workflows.
+- ADK can fit if the team wants an agent runtime with sessions, events, graph workflows, evaluation, and Google deployment surfaces.
+- OpenAI Agents SDK can fit if the process is mostly a shorter OpenAI-native agent loop with tools, guardrails, sessions, and maybe sandboxed document work.
+
+Constraints:
+- Latency: less important than correctness and resumability; workflow steps may be hours or days apart.
+- Reliability: the system must recover from worker restarts and human delays without losing state.
+- Cost: repeated model calls and retries need traceable budgets.
+- Privacy/security: claim data and approvals require strict state scoping and audit logs.
+
+What good looks like in production: a design memo explains where workflow state lives, how humans inspect/edit state, how execution resumes, what traces prove, and how failed steps replay safely.
+
+#### Scenario B: Google Cloud Enterprise Support Agent [Intermediate]
+
+Product context: an enterprise already uses Google Cloud, Gemini, Cloud Run/GKE, Google observability, and wants a support assistant with tools, sessions, artifacts, evaluation, and deployment through a standardized agent runtime.
+
+How runtime choice affects the system:
+- ADK is a strong fit because its center of gravity is production agent applications inside Google's ecosystem.
+- LangGraph can still fit if the workflow needs deep low-level orchestration and provider neutrality.
+- OpenAI Agents SDK may be less natural if the enterprise standardizes on Gemini/Google deployment and wants ADK's runtime/dev/deploy workflow.
+
+Constraints:
+- Latency: depends on deployed endpoints and tool services.
+- Reliability: platform-managed deployment and observability reduce operational glue.
+- Cost: Gemini/model routing and Google infrastructure billing may be easier for the organization to manage.
+- Security/privacy: identity, cloud IAM, logging, and approved integrations matter as much as framework syntax.
+
+What good looks like in production: the team can run locally, expose an API, observe events/traces, evaluate agent behavior, deploy to approved infrastructure, and keep tool/auth boundaries auditable.
+
+#### Scenario C: OpenAI-Native Product Assistant with Realtime and Sandbox [Pro]
+
+Product context: a SaaS product wants a Python service that uses OpenAI models, function tools, hosted tools, sessions, guardrails, sandbox coding/document agents, and realtime voice for support.
+
+How runtime choice affects the system:
+- OpenAI Agents SDK is a strong fit because it directly packages the OpenAI agent loop, Responses-based tools, tracing, sessions, sandbox agents, and realtime agents.
+- LangGraph might be chosen if the app later needs complex durable workflow state across many nested branches.
+- ADK might be chosen if the organization wants broader agent runtime surfaces or Google ecosystem alignment.
+
+Constraints:
+- Latency: realtime and tool latency are product-critical.
+- Reliability: simple primitives reduce development drag, but OpenAI-native coupling must be accepted.
+- Cost: OpenAI traces, model settings, sessions, and tool patterns are easier to keep in one mental model.
+- Security/privacy: sandbox manifests, tool approvals, guardrails, and trace redaction become runtime design choices.
+
+What good looks like in production: the team can explain which features are OpenAI-specific, which are portable, how conversation state is stored, when sandbox state resumes, and how realtime failures are debugged.
+
+---
+
+### 4. System View (Think Like a Systems Engineer)
+
+#### Inputs
+
+- Product workflow shape: short assistant, multi-step task, long-running process, live voice, document workspace, or backend automation
+- State needs: no memory, session memory, durable workflow state, cross-thread memory, replay/time travel, human edits
+- Tool/action risk: read-only tools, state-changing tools, financial/health/legal actions, human approval needs
+- Deployment environment: local service, managed cloud, Google Cloud, LangSmith deployment, OpenAI-native service, custom infra
+- Observability/evaluation needs: traces, metrics, evalsets, simulation, audit logs, state snapshots
+- Team constraints: Python skill, LangChain ecosystem familiarity, Google ecosystem familiarity, OpenAI platform dependency, DevOps maturity
+
+#### Transformations
+
+1. Classify the runtime problem: orchestration, agent product runtime, or lightweight agent loop.
+2. Identify the highest-risk state boundary: conversation history, workflow state, tool side effects, sandbox workspace, or realtime session.
+3. Pick the framework whose primitives make that boundary explicit.
+4. Prototype the riskiest flow, not the easiest demo.
+5. Evaluate traces, failure recovery, tool behavior, human approval, and operational ownership.
+
+#### Outputs
+
+- A runtime choice with a written rationale
+- A small prototype exercising the riskiest behavior
+- A state ownership map
+- A deployment/observability plan
+- A migration warning list if constraints change
+
+#### Observability
+
+Track different signals by runtime:
+- LangGraph: node transitions, state diffs, checkpoint writes, store reads/writes, interrupt/resume points, thread IDs, replay behavior.
+- ADK: session ID, event stream, function calls/responses, state updates, artifacts, eval results, deployment/runtime logs.
+- OpenAI Agents SDK: run items, handoffs, tool calls, guardrail tripwires, interruptions, sessions, `RunState`, sandbox session/snapshot events, realtime event timelines.
+
+#### Failure Points
+
+- Picking OpenAI Agents SDK for a months-long workflow and later discovering you needed explicit durable graph state.
+- Picking LangGraph for a simple product assistant and spending too much time building runtime glue.
+- Picking ADK because it has graph workflows but ignoring model/provider/cloud fit.
+- Treating observability as equivalent across frameworks when each traces different runtime objects.
+- Confusing demo speed with production fit.
+
+---
+
+### 5. System Design Flavor (Practical and Concise)
+
+#### Core Comparison Matrix
+
+| Dimension | LangGraph | Google ADK | OpenAI Agents SDK |
+|---|---|---|---|
+| Best mental model | Low-level orchestration runtime | Agent product runtime/ecosystem | Lightweight OpenAI-native agent runtime |
+| Primary strength | Explicit stateful graphs, durable execution, human-in-loop, persistence | Agents, tools, sessions, events, graph workflows, eval/deploy/observability ecosystem | Fast Python agent loops with tools, handoffs, guardrails, sessions, sandbox, realtime |
+| State model | Graph state, checkpointers, stores, thread IDs | Sessions, events, state, artifacts, workflow data | Run input/output items, sessions, server-managed state options, `RunState`, sandbox session state |
+| Control model | Nodes, edges, conditional routing, functional tasks | Agents, workflows, routing, event loop, runtime config | `Runner` loop, tools, handoffs, agents-as-tools, guardrails, session/realtime events |
+| Provider posture | Strongest provider neutrality | Google ecosystem center, multi-model support | OpenAI-first, some model/provider extension options |
+| Human-in-loop | Strong state inspection/edit/resume pattern | Runtime/workflow human input and confirmations | Tool approvals, guardrails, interruptions, resumable `RunState` |
+| Best for | Complex stateful workflows and long-running agent systems | Enterprise agent apps, Google-aligned deployment/eval/runtime | OpenAI-native product agents, realtime voice, sandbox workspaces, fast app development |
+| Main risk | Overkill/complexity for simple assistants | Ecosystem fit and abstraction commitment | OpenAI coupling and less explicit graph-level control |
+
+#### Tradeoff 1: Control vs Speed [Intermediate]
+
+Choose LangGraph when control is the product requirement: explicit state, graph transitions, durable execution, resume, inspection, and complex branching.
+
+Choose OpenAI Agents SDK when speed and OpenAI-native features are more valuable than owning every orchestration detail.
+
+Choose ADK when the team wants a fuller agent runtime path from local development to evaluation, deployment, and Google ecosystem operations.
+
+Plain-English version: LangGraph gives you the steering wheel and transmission. OpenAI Agents SDK gives you a compact, fast vehicle. ADK gives you more of the garage, road signs, and service plan.
+
+#### Tradeoff 2: Provider Neutrality vs Platform Leverage [Intermediate]
+
+LangGraph is strongest when you want orchestration that can sit above different models and tool ecosystems.
+
+ADK is strongest when Google platform alignment is a benefit, not a liability.
+
+OpenAI Agents SDK is strongest when OpenAI-native primitives are exactly what the product needs.
+
+Plain-English version: neutrality lowers lock-in but can increase glue code. platform leverage lowers build effort but increases coupling.
+
+#### Tradeoff 3: Built-In Product Features vs Custom Architecture [Pro]
+
+Built-in sessions, guardrails, sandbox agents, evals, deployment, or tracing can save months if they match your product.
+
+Custom architecture is worth it when built-ins hide the exact state, approval, or recovery behavior you need to own.
+
+Plain-English version: use framework features when they match the system boundary. drop lower when the boundary is the product.
+
+#### Scaling Consideration: 10x Usage [Pro]
+
+At 10x traffic, framework choice becomes operational:
+- LangGraph needs checkpoint/store performance, queue/worker design, graph versioning, thread lifecycle, and state growth controls.
+- ADK needs session storage, event volume, eval coverage, deployment autoscaling, tool/auth integration, and observability cost controls.
+- OpenAI Agents SDK needs session/history limits, tool concurrency, OpenAI API latency/cost monitoring, sandbox capacity, realtime session capacity, and trace privacy controls.
+
+---
+
+### 6. Common Mistakes + Debugging
+
+#### Mistake 1: Choosing by Framework Popularity
+
+Symptom: the team debates popularity, tutorials, or personal familiarity while the product's actual failure mode remains unclear.
+
+Likely cause: no one mapped the runtime problem: state, durability, tools, approvals, deployment, and observability.
+
+First debugging step: write a one-page runtime requirement table before choosing. Include state lifetime, human-in-loop, tool risk, deployment target, model/provider constraints, eval/trace needs, and team ownership.
+
+#### Mistake 2: Using LangGraph as a Default for Every Agent
+
+Symptom: simple assistant features take too long because the team is designing nodes/checkpoints for a problem that only needed a managed agent loop.
+
+Likely cause: confusing "more control" with "better fit."
+
+First debugging step: remove every graph node that does not represent a real state boundary, failure boundary, or reusable process step. If almost nothing remains, use a simpler runtime.
+
+#### Mistake 3: Using OpenAI Agents SDK for a Workflow That Needs Graph Durability
+
+Symptom: the app accumulates ad hoc state tables, resume logic, manual branching, and custom recovery code around a simple SDK loop.
+
+Likely cause: the real product is a durable workflow, not just an agent loop with tools.
+
+First debugging step: draw the state machine. If state transitions, interrupts, and replay dominate the design, evaluate LangGraph or ADK graph workflows.
+
+#### Mistake 4: Choosing ADK Without Owning the Ecosystem Choice
+
+Symptom: the team likes ADK's agent runtime but later resists Google-aligned deployment, observability, or model/tool conventions.
+
+Likely cause: the framework was chosen for features without deciding whether Google ecosystem alignment is desired.
+
+First debugging step: list the platform assumptions: model providers, cloud target, observability, eval, deployment, identity, tool integrations. If those assumptions do not fit, choose a lower-level or more neutral runtime.
+
+---
+
+### 7. Hands-On Lab (Concept -> Build -> Break -> Measure -> Explain)
+
+This lab is a decision drill. The goal is not to run all three frameworks. The goal is to make your runtime choice inspectable and falsifiable.
+
+#### Build: A Runtime Fit Scoring Table [Pro]
+
+Create a small scoring script for a product scenario. Score each framework from 1-5 on the dimensions that matter.
+
+```python
+frameworks = {
+    "LangGraph": {
+        "durable_state": 5,
+        "explicit_control": 5,
+        "provider_neutrality": 5,
+        "openai_native_speed": 2,
+        "google_runtime_fit": 2,
+        "realtime_sandbox_builtins": 2,
+    },
+    "Google ADK": {
+        "durable_state": 4,
+        "explicit_control": 4,
+        "provider_neutrality": 3,
+        "openai_native_speed": 2,
+        "google_runtime_fit": 5,
+        "realtime_sandbox_builtins": 3,
+    },
+    "OpenAI Agents SDK": {
+        "durable_state": 3,
+        "explicit_control": 3,
+        "provider_neutrality": 2,
+        "openai_native_speed": 5,
+        "google_runtime_fit": 1,
+        "realtime_sandbox_builtins": 5,
+    },
+}
+
+weights = {
+    # Example: a live OpenAI-native support assistant with sandbox review.
+    "durable_state": 1,
+    "explicit_control": 2,
+    "provider_neutrality": 1,
+    "openai_native_speed": 5,
+    "google_runtime_fit": 0,
+    "realtime_sandbox_builtins": 5,
+}
+
+
+def score(framework: str) -> int:
+    return sum(frameworks[framework][dimension] * weight for dimension, weight in weights.items())
+
+
+for name in sorted(frameworks, key=score, reverse=True):
+    print(name, score(name))
+```
+
+Break it on purpose:
+- Change the scenario to a claims workflow that waits days for human approval. Increase `durable_state` and `explicit_control`, lower `openai_native_speed`, and rerun.
+- Change the scenario to a Google Cloud enterprise deployment. Increase `google_runtime_fit`, eval/deploy assumptions, and rerun.
+- Remove all weights and notice the comparison becomes generic and useless.
+
+Measure:
+- Which dimensions dominate the decision?
+- Which framework wins only because of one assumption?
+- Which assumption would force migration later?
+- What prototype must prove the decision?
+
+Explain:
+Framework selection is not taste. It is weighted constraint matching. A useful comparison makes the hidden assumptions visible enough that another engineer can challenge them.
+
+---
+
+### 8. Active Recall (Spaced Repetition)
+
+1. What is the simplest mental model difference between LangGraph, ADK, and OpenAI Agents SDK?
+2. When is LangGraph the strongest fit?
+3. When is ADK the strongest fit?
+4. When is OpenAI Agents SDK the strongest fit?
+5. What is the first production artifact you should create before committing to a runtime?
+
+**Answer keys:**
+
+1. LangGraph is a low-level orchestration runtime; ADK is an agent product runtime/ecosystem; OpenAI Agents SDK is a lightweight OpenAI-native agent runtime.
+2. When explicit durable state, complex graph control, human-in-loop, replay/resume, and provider-neutral orchestration dominate.
+3. When the team wants a fuller agent runtime with agents, tools, sessions, events, graph workflows, eval/deploy/observability, especially in a Google-aligned environment.
+4. When the product is OpenAI-native and benefits from fast Python agent loops, tools, handoffs, guardrails, sessions, sandbox agents, MCP, tracing, or realtime voice.
+5. A runtime-selection memo or table that maps product constraints to state/control/deployment/observability requirements and identifies the riskiest prototype.
+
+---
+
+### 9. Practice
+
+#### Mini-Exercise: Choose the Runtime
+
+A product team needs a voice support assistant that uses OpenAI realtime, calls account tools, can hand off to a specialist, and occasionally opens a sandbox to inspect uploaded files. The workflow lasts minutes, not days.
+
+**Suggested answer:** Choose OpenAI Agents SDK first. Its realtime agents, handoffs, guardrails, tool approvals, sessions, tracing, MCP integration, and sandbox agents match the product directly. Revisit LangGraph only if durable cross-day workflow state or complex graph replay becomes central.
+
+#### Capstone-Style System Design Question
+
+Design a runtime choice for a financial compliance review system. It ingests documents, performs extraction, calls policy tools, asks humans to review uncertain sections, resumes after review, and maintains an audit trail.
+
+**Answer outline:**
+
+- Start by classifying this as a durable workflow, not just a chat assistant.
+- LangGraph is a strong candidate because graph state, checkpointers, stores, human-in-loop, and replay/resume are central.
+- ADK is also a candidate if the organization is Google-aligned and wants agent sessions/events/evals/deployment plus graph workflows.
+- OpenAI Agents SDK is useful for OpenAI-native subagents, extraction tools, or sandboxed document work, but may need extra glue if the main requirement is long-running workflow durability.
+- Prototype the hardest flow: document extraction -> uncertain field -> human review -> resume -> final decision -> audit trace.
+- Pick the runtime that makes state, approval, audit, and replay easiest to inspect.
+
+---
+
+### 10. Production Reality Check (Mandatory Ending)
+
+**If this fails in prod, what's the first thing we inspect?**
+
+Inspect whether the chosen runtime matches the failure boundary:
+- Did the failure happen in workflow state/resume? LangGraph-style state/checkpoint inspection may be needed.
+- Did it happen in agent session/tool/event behavior? ADK or OpenAI SDK traces/events may be enough.
+- Did it happen because the product needed platform features the framework does not own?
+
+Why: many "agent framework failures" are actually runtime-fit failures. The team chose a runtime whose abstractions hide or under-support the exact boundary that later became critical.
+
+---
+
+### 11. Curiosity Bridge (Mandatory Ending)
+
+This comparison tells us which framework tends to fit which runtime shape, but it does not yet quantify the deeper tradeoffs.
+
+That leads into **Lock-in, control, observability, and runtime tradeoffs**: the part where architecture maturity shows up in what you are willing to give up.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit check:** You're done with 15.3.a when you can defend a LangGraph vs ADK vs OpenAI Agents SDK choice using state durability, control, provider fit, platform leverage, observability, deployment, and team ownership.
+
+---
+
+**Carry-Forward Review (interleaved recall from 15.2.d):**
+
+*Q: Why might realtime voice push you toward OpenAI Agents SDK even if LangGraph is stronger for durable workflows?*
+
+> **A:** If the product's core risk is live audio events, interruption handling, realtime sessions, tool approval during conversation, and OpenAI-native voice behavior, OpenAI Agents SDK has those runtime surfaces built in. LangGraph may still fit for backend durable workflows, but the realtime interaction layer is more directly supported by the OpenAI SDK.
+
+---
+
+## Subtopic 15.3.b: Lock-in, Control, Observability, and Runtime Tradeoffs
+
+### ✅ Add to Knowledge Base
+
+---
+
+### 0. Reading Path + Level Tags
+
+**Beginner:** Read sections 1-2 and the Active Recall. Focus on the mental model: every runtime gives you leverage and takes ownership of something.
+
+**Intermediate:** Add sections 3-6. You should be able to explain lock-in, control, and observability as engineering tradeoffs, not vague warnings.
+
+**Pro:** Do the Hands-On Lab and capstone. The goal is to produce a tradeoff ledger you could attach to a real architecture review.
+
+---
+
+### 1. Pre-Question Hook + The Intuition (Plain English)
+
+**Pause:** before choosing an agent runtime, ask: "If this system fails at 2 a.m., which layer will I need to inspect, and do I own that layer?"
+
+Most framework debates sound like feature comparisons, but production runtime selection is really about four forces:
+
+- **Lock-in** — the future cost of changing model provider, runtime, storage, deployment, tracing, evals, or tool protocol.
+- **Control** — how much of the execution loop, state, retries, approvals, and recovery logic your team can directly shape.
+- **Observability** — what the runtime shows you when the agent behaves badly.
+- **Runtime leverage** — the speed you get by letting a framework own hard operational surfaces for you.
+
+A framework is like renting a specialized workshop. You get tools, benches, lighting, safety rails, and maybe staff who maintain the machines. That is leverage. But the more your process depends on that workshop's custom machines, the harder it is to move to another building later.
+
+Where the analogy breaks: software lock-in is not all-or-nothing. You can isolate tools behind MCP, keep prompts and eval cases portable, store state in your database, and export traces to a neutral observability system. Lock-in becomes dangerous when you do not know which parts are coupled.
+
+**Vendor lock-in** is dependency on one provider's APIs, models, hosted state, tracing, deployment, or runtime-specific features in a way that makes migration expensive.
+
+**Control premium** is the extra engineering cost you pay to own lower-level execution details instead of using a higher-level managed abstraction.
+
+**Observability boundary** is the line between what your runtime can explain through traces/logs/metrics and what remains hidden inside a model, hosted service, or external tool.
+
+**Exit strategy** is a design plan for what must stay portable if the team later changes model provider, runtime, deployment target, tracing system, or state store.
+
+---
+
+### 2. Visual Diagram (Mermaid)
+
+```mermaid
+flowchart LR
+    choice[Runtime choice] --> leverage[Runtime leverage]
+    choice --> lockin[Lock-in surface]
+    choice --> control[Control surface]
+    choice --> obs[Observability surface]
+
+    leverage --> faster[Ship faster\nless glue code\nmanaged features]
+    lockin --> coupled[Provider/runtime/storage/deploy/tracing coupling]
+    control --> owned[State machine\nretry/resume\napprovals\ntool execution]
+    obs --> inspect[Traces\nlogs\nmetrics\nevals\nstate snapshots]
+
+    coupled --> risk{Can we migrate?}
+    owned --> cost{Can we maintain it?}
+    inspect --> debug{Can we explain failure?}
+
+    risk --> memo[Tradeoff ledger]
+    cost --> memo
+    debug --> memo
+    faster --> memo
+```
+
+The mature move is not avoiding lock-in at all costs. The mature move is making lock-in explicit, then deciding whether the leverage is worth it.
+
+---
+
+### 3. Real-World Industry Scenarios
+
+#### Scenario A: Healthcare Assistant with Strict Audit Needs [Intermediate]
+
+Product context: a clinical operations assistant summarizes patient support messages, retrieves internal policy, recommends next actions, and routes uncertain cases to humans. The team must preserve audit trails and show why a recommendation happened.
+
+How tradeoffs show up:
+- Lock-in: hosted model traces may capture sensitive data unless configured carefully; hosted conversation state may conflict with retention policies.
+- Control: human review, state transitions, and audit evidence may need explicit ownership.
+- Observability: final answers are not enough; the trace must show retrieval, tool calls, guardrail decisions, and human approval points.
+- Runtime leverage: built-in tracing/evals can accelerate compliance testing if they support privacy requirements.
+
+What good looks like in production: the team can answer "what data left our boundary," "which state store is source of truth," "which trace fields are redacted," and "how do we replay this decision?"
+
+#### Scenario B: Fast-Moving SaaS Support Copilot [Intermediate]
+
+Product context: a startup wants a support copilot with ticket search, account tools, handoffs, guardrails, and conversation memory. The team has two backend engineers and wants to ship in weeks.
+
+How tradeoffs show up:
+- Lock-in: OpenAI-native sessions, tracing, hosted tools, or realtime features may couple the product to the OpenAI ecosystem.
+- Control: the team may accept less graph-level control because the main risk is not long-running workflow durability.
+- Observability: default traces and run items may be enough for early product debugging.
+- Runtime leverage: built-in `Runner`, sessions, guardrails, handoffs, and tracing reduce time spent building glue.
+
+What good looks like in production: the team documents which features are OpenAI-specific and keeps business tools behind clean interfaces so future migration is not a full rewrite.
+
+#### Scenario C: Enterprise Workflow Platform [Pro]
+
+Product context: an enterprise platform runs agent workflows for procurement, compliance, HR, and finance. Workflows can pause for days and involve approvals, retries, state inspection, and replay.
+
+How tradeoffs show up:
+- Lock-in: tying workflow durability to a vendor-specific conversation primitive could become costly.
+- Control: state machines, checkpoints, thread IDs, stores, and versioned workflow logic matter more than fast demo speed.
+- Observability: engineers need node-level state diffs, checkpoint inspection, online/offline evals, and production dashboards.
+- Runtime leverage: LangSmith or ADK managed deployment can be valuable, but only if it matches governance and infrastructure constraints.
+
+What good looks like in production: each workflow has a state ownership map, trace schema, evalset, rollback path, migration boundary, and documented failure-recovery behavior.
+
+---
+
+### 4. System View (Think Like a Systems Engineer)
+
+#### Inputs
+
+- Compliance constraints: data retention, ZDR policies, audit trail, trace redaction, encryption, regional hosting
+- Product behavior: short chat, long workflow, realtime, sandbox, document-heavy, human approval, multi-agent handoff
+- Runtime ownership: model call loop, tool execution, state persistence, memory compaction, retries, approvals, deployment
+- Observability requirements: traces, spans, logs, metrics, evals, dashboards, feedback, state replay
+- Migration concerns: model provider, tool protocol, state store, evaluation datasets, deployment target, tracing backend
+
+#### Transformations
+
+1. List every coupled surface: model, prompt format, tool schema, state, deployment, tracing, evals, guardrails, sandbox/realtime APIs.
+2. Mark who owns each surface: your app, the runtime, the model provider, cloud platform, or third-party tool.
+3. Decide which surfaces are allowed to be coupled because the leverage is worth it.
+4. Put portability around the risky surfaces: interfaces, adapters, MCP, neutral eval data, external state stores, exported telemetry.
+5. Prototype the failure mode that would make migration or debugging painful.
+
+#### Outputs
+
+- A lock-in surface map
+- A control ownership table
+- An observability checklist
+- An exit strategy
+- A prototype proving the riskiest runtime assumption
+
+#### Observability Signals by Runtime
+
+- LangGraph/LangSmith: node transitions, state snapshots, checkpoints, store access, thread IDs, runs, traces, eval experiments, deployment metrics.
+- ADK: session IDs, event streams, trace view, function call/function response events, model request/response tabs, graph view, evalsets, conformance baselines, logs/metrics/traces.
+- OpenAI Agents SDK: trace/workflow IDs, agent spans, generation spans, function spans, guardrail spans, handoff spans, session history, `RunState`, `RunConfig`, trace sensitive-data settings, custom processors.
+
+#### Failure Points
+
+- You stored source-of-truth workflow state only in a provider-managed conversation primitive.
+- You relied on default traces without checking whether sensitive inputs/outputs are captured.
+- You chose a low-level runtime but did not staff the team to own retries, deployment, evals, dashboards, and state operations.
+- You picked managed deployment but later needed infrastructure controls the managed path does not expose.
+- You treated eval data as framework-specific, making migration harder than necessary.
+
+---
+
+### 5. System Design Flavor (Practical and Concise)
+
+#### Runtime Tradeoff Matrix
+
+| Tradeoff | LangGraph | Google ADK | OpenAI Agents SDK |
+|---|---|---|---|
+| Lock-in shape | Lower model lock-in, higher LangGraph/LangSmith orchestration shape if using managed platform | Google ecosystem/runtime/deploy/eval conventions; container options reduce but do not erase coupling | OpenAI Responses/tracing/sessions/realtime/sandbox coupling when using native features deeply |
+| Control | Highest control over workflow state, graph transitions, persistence, and human-in-loop | Medium-high control through agents/workflows/events, with more runtime conventions | Medium control through `Runner`, `RunConfig`, sessions, hooks, guardrails, and integrations |
+| Observability | Strong when paired with LangSmith: traces, state transitions, evals, deployment | Strong ADK-native event/trace/eval surfaces plus logs/metrics/traces | Built-in tracing by default; traces/spans for agents, generations, tools, handoffs, guardrails, voice |
+| Deployment leverage | LangSmith deployment or own infra | Agent Runtime, Cloud Run, GKE, containers, ADK runtime surfaces | Bring your own service plus OpenAI platform features; durable execution via integrations |
+| Cost of ownership | Higher app/runtime engineering, lower abstraction hiding | Balanced if Google ecosystem fits | Lower initial build cost; higher migration risk if OpenAI-native features become core |
+| Best when | State/control is product-critical | Agent lifecycle/platform fit is product-critical | OpenAI-native speed/features are product-critical |
+
+#### Tradeoff 1: Lock-In vs Leverage [Beginner]
+
+Lock-in is not automatically bad. If OpenAI realtime is the product advantage, OpenAI coupling may be a rational trade. If Google Cloud deployment and ADK evals fit the enterprise path, ADK coupling may reduce operational risk. If LangGraph gives durable control over business workflows, LangGraph-specific state architecture may be worth it.
+
+The dangerous version is invisible lock-in: you do not realize until later that your conversation memory, trace IDs, eval format, tool protocol, or deployment path cannot move.
+
+#### Tradeoff 2: Control vs Maintenance Burden [Intermediate]
+
+More control means more responsibility. LangGraph gives explicit orchestration, but your team must design graph state, persistence, versioning, retry policy, deployment, and monitoring. OpenAI Agents SDK and ADK can hide more runtime details, but the hidden details may become limiting when you need custom replay, state migration, or special compliance behavior.
+
+Use high control when the control boundary is the product. Use managed leverage when the product does not need to own that boundary.
+
+#### Tradeoff 3: Observability Depth vs Observability Portability [Pro]
+
+Vendor-native tracing often gives better semantic visibility because it understands the runtime objects: agents, tool calls, guardrails, handoffs, sessions, checkpoints, or graph nodes. But the deeper the semantic trace, the more runtime-specific it may be.
+
+The practical answer is dual-layer observability:
+- Keep native traces for runtime debugging.
+- Export key events to a neutral schema for audits, dashboards, and migration.
+- Keep eval datasets in a format that can be replayed outside one framework.
+
+#### Scaling Consideration: When the System Becomes Important [Pro]
+
+At small scale, the best runtime is often the one that ships a reliable prototype fastest. At production scale, the best runtime is the one whose failure surfaces your team can inspect and operate.
+
+At 10x traffic or risk:
+- Trace volume becomes a cost/privacy problem.
+- Session/history growth becomes a latency problem.
+- Tool retries become a side-effect problem.
+- Managed conversations become a governance problem if source-of-truth state is unclear.
+- Custom orchestration becomes a staffing problem if no one owns operations.
+
+---
+
+### 6. Common Mistakes + Debugging
+
+#### Mistake 1: Treating Lock-In as a Vague Emotion
+
+Symptom: people say "avoid lock-in" but cannot name the locked surface.
+
+Likely cause: no lock-in inventory exists.
+
+First debugging step: list the coupled surfaces: model API, prompt format, tool schema, state store, tracing dashboard, eval format, deployment runtime, sandbox/realtime APIs, guardrails, and human approval flow.
+
+#### Mistake 2: Paying the Control Premium Without Needing Control
+
+Symptom: the team builds custom state machines, retry handlers, eval harnesses, and deployment glue for a simple assistant.
+
+Likely cause: choosing a low-level runtime because it feels more "serious."
+
+First debugging step: identify the product-critical control boundary. If none exists beyond conversation memory and tool calls, a higher-level runtime may be better.
+
+#### Mistake 3: Trusting Default Traces Without Privacy Review
+
+Symptom: traces contain prompts, tool arguments, tool outputs, audio data, customer IDs, or regulated content that should not be stored in that backend.
+
+Likely cause: tracing was enabled before data classification and redaction policies were designed.
+
+First debugging step: inspect one full trace from a realistic production-like scenario and mark every sensitive field. Then configure redaction, disable sensitive capture, or route traces to an approved backend.
+
+#### Mistake 4: No Exit Strategy for State
+
+Symptom: migration is blocked because conversation history, workflow status, approvals, and audit evidence live in runtime-specific objects.
+
+Likely cause: the team never separated convenience memory from source-of-truth state.
+
+First debugging step: build a state ownership map. Mark which data must survive framework migration and move that data to an application-owned store or neutral schema.
+
+---
+
+### 7. Hands-On Lab (Concept -> Build -> Break -> Measure -> Explain)
+
+Build a lightweight tradeoff ledger for a runtime decision. This is the kind of artifact a senior engineer brings to an architecture review.
+
+#### Build: Runtime Tradeoff Ledger [Pro]
+
+```python
+surfaces = [
+    {"name": "model_api", "owner": "provider", "portability": 2, "risk": "model migration"},
+    {"name": "tool_protocol", "owner": "app", "portability": 4, "risk": "tool rewrite"},
+    {"name": "conversation_memory", "owner": "runtime", "portability": 2, "risk": "history migration"},
+    {"name": "workflow_state", "owner": "app", "portability": 5, "risk": "resume/replay"},
+    {"name": "tracing", "owner": "vendor", "portability": 2, "risk": "debug/audit migration"},
+    {"name": "eval_dataset", "owner": "app", "portability": 5, "risk": "regression testing"},
+]
+
+
+def migration_risk(item):
+    # Lower portability means higher migration risk.
+    return 6 - item["portability"]
+
+
+for item in surfaces:
+    print(
+        item["name"],
+        "owner=", item["owner"],
+        "migration_risk=", migration_risk(item),
+        "risk=", item["risk"],
+    )
+```
+
+#### Break
+
+Change `workflow_state` owner from `app` to `provider` and set portability to `1`. Then ask: what happens if we migrate from OpenAI-native conversations to LangGraph or ADK? The risk score should rise.
+
+Change `tracing` owner from `vendor` to `app` and portability to `4`. Then ask: what did we lose? You may gain audit portability but lose rich native trace semantics unless you still keep native traces for debugging.
+
+#### Measure
+
+Record:
+- Number of surfaces with portability <= 2.
+- Number of source-of-truth surfaces owned by a provider/runtime.
+- Number of sensitive data surfaces in traces.
+- Number of eval/test artifacts reusable outside the framework.
+
+#### Explain
+
+The ledger exposes architectural debt before it becomes migration pain. A runtime can be the right choice even with lock-in, but only if the locked surfaces are intentional and the exit strategy protects the source-of-truth parts of the system.
+
+---
+
+### 8. Active Recall (Spaced Repetition)
+
+1. Why is lock-in not automatically bad?
+2. What is the control premium?
+3. What is the observability boundary?
+4. Why should source-of-truth state usually stay application-owned?
+5. What is the first thing to inspect when default traces are enabled?
+
+**Answer keys:**
+
+1. Lock-in can be rational when platform leverage directly matches the product need; it is dangerous when hidden or accidental.
+2. The extra engineering and operations cost paid to own lower-level execution details instead of using managed abstractions.
+3. The line between what traces/logs/metrics can explain and what remains hidden inside model/provider/runtime/tool internals.
+4. Because workflow status, approvals, audit evidence, and long-term business facts must survive framework or provider migration.
+5. Inspect a realistic full trace for sensitive prompts, tool arguments, tool outputs, audio data, IDs, and regulated content.
+
+---
+
+### 9. Practice
+
+#### Mini-Exercise: Identify the Locked Surface
+
+A team says, "We are locked into OpenAI Agents SDK." They use OpenAI models, `SQLiteSession`, function tools written in Python, OpenAI tracing, and no realtime/sandbox features.
+
+**Suggested answer:** The strongest lock-in surfaces are model API and tracing. `SQLiteSession` and Python function tools are easier to port than OpenAI-managed conversation state or realtime APIs. If the app owns its business state and tools have clean interfaces, migration is not as severe as the statement implies.
+
+#### Capstone-Style System Design Question
+
+You are reviewing an architecture proposal for a regulated financial assistant. The team wants OpenAI Agents SDK because it ships fast, OpenAI server-managed conversations for memory, OpenAI traces for debugging, and tool approvals for risky actions. What tradeoff questions do you ask before approval?
+
+**Answer outline:**
+
+- What data is stored in OpenAI-managed conversation state, and does that meet retention/privacy rules?
+- Is server-managed conversation state source of truth or just convenience history?
+- Are traces allowed to contain prompts, tool args/outputs, or sensitive data? If not, how is sensitive capture disabled or redacted?
+- What happens if the assistant must migrate to LangGraph, ADK, or another model provider?
+- Are eval datasets stored in a portable format?
+- Are risky tool approvals logged in an application-owned audit store?
+- Is there a fallback path if OpenAI tracing, conversation state, or model APIs are unavailable?
+
+---
+
+### 10. Production Reality Check (Mandatory Ending)
+
+**If this fails in prod, what's the first thing we inspect?**
+
+Inspect the failure against the ownership map: which layer owned the failed surface?
+
+- If it is state/resume/replay, inspect the source-of-truth state store and runtime checkpoint/session behavior.
+- If it is a bad tool action, inspect tool-call traces, approval logs, guardrail logs, and side-effect idempotency.
+- If it is observability/privacy, inspect trace payloads and redaction settings before reading only dashboards.
+- If it is migration pain, inspect which locked surface was never given an exit strategy.
+
+Why: runtime tradeoff failures usually appear as debugging blindness. You cannot fix what the chosen runtime does not expose, what your app did not own, or what your observability pipeline never recorded.
+
+---
+
+### 11. Curiosity Bridge (Mandatory Ending)
+
+This works when the tradeoff ledger is honest, but it breaks when team capability is misread.
+
+That leads into **Team skill fit and ecosystem maturity**: the same architecture can be brilliant for one team and a maintenance trap for another.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit check:** You're done with 15.3.b when you can map every major runtime decision to a lock-in surface, a control surface, an observability surface, and an exit strategy.
+
+---
+
+**Carry-Forward Review (interleaved recall from 15.3.a):**
+
+*Q: Why is "LangGraph vs ADK vs OpenAI Agents SDK" not just a feature checklist?*
+
+> **A:** Because the real decision is about runtime fit: durable state, control ownership, provider/platform alignment, observability, deployment, and team operations. Features matter only after you know which failure boundary the product needs the runtime to expose.
+
+---
+
+## Subtopic 15.3.c: Team Skill Fit and Ecosystem Maturity
+
+### ✅ Add to Knowledge Base
+
+---
+
+### 0. Reading Path + Level Tags
+
+**Beginner:** Read sections 1-2 and Active Recall. Focus on the idea that the "best" framework can fail if the team cannot operate it.
+
+**Intermediate:** Add sections 3-6. You should be able to map LangGraph, ADK, and OpenAI Agents SDK to team capability and ecosystem fit.
+
+**Pro:** Do the Hands-On Lab and capstone. The goal is to produce an adoption plan that reduces staffing, maintenance, and migration risk.
+
+---
+
+### 1. Pre-Question Hook + The Intuition (Plain English)
+
+**Pause:** before choosing a runtime, ask: "Which framework can this team debug, deploy, upgrade, and explain six months from now?"
+
+A runtime is not just code. It is a skill requirement. LangGraph, ADK, and OpenAI Agents SDK each assume a different kind of team:
+
+- LangGraph rewards teams that can think in state machines, durable execution, workflow versioning, persistence, and operational debugging.
+- ADK rewards teams that want a broader agent application framework with Google ecosystem alignment, multi-language surfaces, built-in agent lifecycle concepts, evals, observability, and deployment paths.
+- OpenAI Agents SDK rewards teams that are Python-first, OpenAI-native, product-speed oriented, and comfortable using a compact set of primitives around `Agent`, `Runner`, tools, handoffs, sessions, guardrails, sandbox, and realtime.
+
+An agent framework is like choosing a workshop and a training curriculum for your team. A sophisticated machine is powerful only if the team knows how to set it up, maintain it, inspect failures, and teach new engineers how to use it.
+
+Where the analogy breaks: teams learn. The current skill fit is not destiny. A team can start with a simpler runtime, isolate business tools behind interfaces, and graduate to lower-level orchestration once the product proves the need.
+
+**Team skill fit** is the match between a framework's required mental models and the team's actual ability to build, debug, deploy, evaluate, and maintain systems with those mental models.
+
+**Ecosystem maturity** is the practical strength of a framework's docs, examples, integrations, community, deployment paths, observability, evaluation tooling, release stability, and hiring/knowledge availability.
+
+**Operational maturity** is a team's ability to run a system after launch: incident response, runbooks, metrics, trace interpretation, regression tests, upgrade discipline, and ownership boundaries.
+
+**Staffing risk** is the chance that a framework choice depends on rare expertise or one local expert, making the system hard to maintain when people change roles.
+
+---
+
+### 2. Visual Diagram (Mermaid)
+
+```mermaid
+flowchart TD
+    choice[Runtime choice] --> skills{Team strength?}
+
+    skills --> orch[Workflow/state orchestration maturity]
+    skills --> platform[Cloud/platform lifecycle maturity]
+    skills --> python[Python/OpenAI product speed]
+
+    orch --> lg[LangGraph fit]
+    platform --> adk[ADK fit]
+    python --> oai[OpenAI Agents SDK fit]
+
+    lg --> ops[Runbooks + checkpoint debugging + graph versioning]
+    adk --> ops2[Agent sessions + events + evals + deploy surfaces]
+    oai --> ops3[Runner traces + sessions + guardrails + realtime/sandbox paths]
+
+    ops --> maturity[Ecosystem and team maturity score]
+    ops2 --> maturity
+    ops3 --> maturity
+
+    maturity --> decision[Adopt / pilot / delay / split architecture]
+```
+
+The decision is not only "what can the framework do?" It is "what can this team reliably do with the framework under production pressure?"
+
+---
+
+### 3. Real-World Industry Scenarios
+
+#### Scenario A: Small Python Product Team Shipping a Support Assistant [Beginner]
+
+Product context: a small SaaS team wants a support assistant with account lookup, ticket creation, basic handoff, and traceable outputs. The team uses Python heavily and is already building on OpenAI APIs.
+
+How team fit affects the choice:
+- OpenAI Agents SDK fits because the learning curve is small, the primitives are few, and the team can move from raw Responses API calls to `Agent` + `Runner` + tools quickly.
+- LangGraph may be too much if the workflow is not durable or graph-heavy yet.
+- ADK may be less natural unless the company is already adopting Google Cloud/Gemini/ADK operational paths.
+
+What good looks like in production: the team can read traces, tune sessions/history, write tool tests, configure guardrails, and keep business tools portable even while using OpenAI-native runtime leverage.
+
+#### Scenario B: Enterprise Team Standardized on Google Cloud [Intermediate]
+
+Product context: a large enterprise already uses Google Cloud, Gemini, Cloud Run/GKE, centralized logging/metrics/tracing, and wants a consistent agent development/deployment path across teams.
+
+How team fit affects the choice:
+- ADK fits because it aligns with the organization's platform habits, agent runtime surfaces, deployment options, evaluation concepts, and multi-language needs.
+- LangGraph can still fit for teams that need deep orchestration and have state-machine expertise.
+- OpenAI Agents SDK can be used for OpenAI-native product slices, but may create platform fragmentation if the enterprise standard is Google-aligned.
+
+What good looks like in production: there is a shared ADK project template, approved tool/auth patterns, evalset conventions, trace dashboards, deployment playbooks, and platform support.
+
+#### Scenario C: Platform Team Building Long-Running Agent Workflows [Pro]
+
+Product context: a platform team builds reusable agent workflows for many business units. Workflows may pause, resume, branch, inspect state, replay, and integrate with separate model providers and tools.
+
+How team fit affects the choice:
+- LangGraph fits if the team understands graphs, persistence, checkpointing, thread IDs, stores, human-in-loop, and stateful workflow operations.
+- ADK fits if the team wants an agent app framework with broader lifecycle surfaces and Google ecosystem compatibility.
+- OpenAI Agents SDK fits better as a leaf runtime for OpenAI-native subagents than as the main durable workflow backbone, unless paired with durable execution integrations.
+
+What good looks like in production: the team has graph versioning rules, checkpoint/store ownership, migration plans, evals, trace review habits, and onboarding docs for new engineers.
+
+---
+
+### 4. System View (Think Like a Systems Engineer)
+
+#### Inputs
+
+- Team language strengths: Python, TypeScript, Go, Java, Kotlin, backend platform experience
+- Mental model strengths: workflows, graphs, state machines, cloud deployment, model APIs, tool design, evals, observability
+- Existing ecosystem: LangChain/LangSmith, Google Cloud/Gemini/Vertex/ADK, OpenAI platform, MCP, existing databases, monitoring tools
+- Delivery pressure: prototype in days, production in weeks, enterprise platform over quarters
+- Ownership model: product team, platform team, central AI team, shared DevOps/SRE, compliance/security review
+- Hiring/onboarding reality: how easy it is to find docs, examples, engineers, and support for the chosen stack
+
+#### Transformations
+
+1. Score the product need: speed, durability, platform alignment, provider neutrality, realtime/sandbox, eval/observability.
+2. Score team readiness: framework knowledge, state/debugging skill, deployment maturity, test/eval habits, incident response.
+3. Score ecosystem maturity: docs, examples, integrations, deployment options, tracing/eval support, release stability, community/support.
+4. Identify the skill gap that would create the worst incident.
+5. Choose adoption style: direct adoption, pilot first, split architecture, or delay until the team can operate it.
+
+#### Outputs
+
+- A team-fit scorecard
+- A skill-gap list
+- An onboarding/runbook plan
+- A pilot scope
+- A fallback/migration path if the chosen runtime strains the team
+
+#### Observability and Operations Fit
+
+Team fit shows up in incidents:
+- LangGraph incidents require engineers who can inspect graph state, checkpoints, stores, interrupts, node transitions, and replay/resume behavior.
+- ADK incidents require engineers who can inspect sessions, events, traces, tool trajectories, eval failures, deployment logs, and Google-integrated runtime behavior.
+- OpenAI Agents SDK incidents require engineers who can inspect run items, spans, `RunConfig`, sessions/history, guardrail tripwires, handoffs, sandbox state, realtime events, and OpenAI API behavior.
+
+#### Failure Points
+
+- Choosing LangGraph without anyone who understands stateful workflow debugging.
+- Choosing ADK without platform agreement around Google Cloud/Gemini/ADK operations.
+- Choosing OpenAI Agents SDK because it is fast, then overloading it with long-running workflow responsibilities the team cannot maintain.
+- Choosing the most mature ecosystem globally while ignoring local team maturity.
+- Depending on one senior engineer as the only person who understands the runtime.
+
+---
+
+### 5. System Design Flavor (Practical and Concise)
+
+#### Team-Fit Matrix
+
+| Team / ecosystem signal | LangGraph | Google ADK | OpenAI Agents SDK |
+|---|---|---|---|
+| Strongest team profile | Platform/backend team comfortable with state machines and workflow ops | Enterprise/platform team aligned with Google Cloud and agent lifecycle tooling | Python product team already using OpenAI APIs |
+| Learning curve | Higher: graph/state/persistence/human-in-loop concepts | Medium: agent runtime, sessions, workflows, eval/deploy ecosystem | Lower initial curve: few primitives, Python-first runtime |
+| Operational burden | High unless using managed LangSmith deployment | Medium if ADK/Google operational path fits | Low-medium for short agents; higher for durable workflows unless integrated with Dapr/Temporal/Restate/DBOS |
+| Ecosystem advantage | LangChain/LangSmith ecosystem, provider flexibility, durable orchestration | Google ecosystem, multi-language support, agent dev/eval/deploy surfaces | OpenAI platform, Responses API, tracing, sandbox, realtime/voice, simple primitives |
+| Hiring/onboarding risk | Need engineers comfortable with explicit orchestration | Need engineers comfortable with ADK/Google agent platform patterns | Easier for Python/OpenAI teams; deeper features still need runtime knowledge |
+| Watch-out | Overengineering simple agents | Platform fit assumptions | OpenAI-native coupling and workflow durability limits |
+
+#### Tradeoff 1: Local Skill vs Global Popularity [Beginner]
+
+A framework can be popular and still be wrong for your team. If nobody can debug it during an incident, popularity does not help the user.
+
+Choose based on who will maintain the system, not only who can build the first demo.
+
+#### Tradeoff 2: Learning Curve vs Runtime Power [Intermediate]
+
+LangGraph has a higher learning curve because it exposes more orchestration control. That is valuable when the team needs it. OpenAI Agents SDK has a lower initial curve because the primitive set is smaller. ADK sits closer to a product runtime: more surfaces than OpenAI's small core, but more guided lifecycle support than hand-built orchestration.
+
+Plain-English version: power that the team cannot use becomes complexity. simplicity that hides needed control becomes a ceiling.
+
+#### Tradeoff 3: Ecosystem Gravity vs Architecture Neutrality [Pro]
+
+Ecosystems pull designs toward their native way of working:
+- LangGraph pulls toward explicit state graphs, LangSmith observability/evals/deployment, and LangChain-style integrations.
+- ADK pulls toward Google agent runtime concepts, Google deployment paths, evals, traces, integrations, and multi-language agent teams.
+- OpenAI Agents SDK pulls toward Responses API, OpenAI tracing, OpenAI-native sessions/conversations, sandbox, realtime, and Python-first app code.
+
+This gravity is useful when aligned with the organization. It becomes friction when the organization wants a different platform center.
+
+#### Scaling Consideration: Team Growth [Pro]
+
+At one or two engineers, choose the runtime that minimizes cognitive load and lets you ship safely. At ten-plus engineers, choose the runtime that supports shared conventions: templates, runbooks, eval datasets, trace review rituals, CI checks, deployment playbooks, and ownership boundaries.
+
+The scaling question becomes: can a new engineer fix a production issue in this runtime after two weeks of onboarding?
+
+---
+
+### 6. Common Mistakes + Debugging
+
+#### Mistake 1: Confusing Prototype Skill with Production Skill
+
+Symptom: the team builds a polished demo but cannot explain bad tool calls, state bugs, trace anomalies, or deployment failures.
+
+Likely cause: the team learned only the happy-path tutorial.
+
+First debugging step: run a failure drill. Force a bad tool result, broken session state, guardrail tripwire, and deployment config issue. See who can diagnose each layer.
+
+#### Mistake 2: Picking a Framework for One Expert
+
+Symptom: one engineer understands the graph/session/runtime behavior, and everyone else treats it as magic.
+
+Likely cause: framework choice depended on local hero expertise instead of team-wide maintainability.
+
+First debugging step: require a second engineer to write a runbook and fix a staged incident without help from the expert.
+
+#### Mistake 3: Ignoring Ecosystem Maturity at the Edge Features
+
+Symptom: core examples work, but advanced needs like evals, deployment, sandbox, realtime, multi-language support, or observability integrations are under-documented for your exact stack.
+
+Likely cause: evaluating the ecosystem only by quickstart quality.
+
+First debugging step: validate the exact production path: deploy, trace, evaluate, recover from failure, upgrade, and migrate a small but realistic flow.
+
+#### Mistake 4: Choosing Simplicity Until the System Outgrows It
+
+Symptom: a simple SDK loop accumulates custom state tables, replay logic, approval queues, audit logs, and retry glue.
+
+Likely cause: the product became a workflow platform, but the runtime choice never changed.
+
+First debugging step: compare the custom glue to LangGraph/ADK built-in surfaces. If the glue is becoming your framework, revisit the runtime choice.
+
+---
+
+### 7. Hands-On Lab (Concept -> Build -> Break -> Measure -> Explain)
+
+Build a team-fit scorecard before choosing a runtime. This makes people/process risk visible.
+
+#### Build: Team-Fit Scorecard [Pro]
+
+```python
+frameworks = {
+    "LangGraph": {
+        "team_state_machine_skill": 5,
+        "team_google_platform_fit": 2,
+        "team_openai_python_speed": 3,
+        "ops_runbook_required": 5,
+        "ecosystem_alignment": 4,
+    },
+    "Google ADK": {
+        "team_state_machine_skill": 4,
+        "team_google_platform_fit": 5,
+        "team_openai_python_speed": 2,
+        "ops_runbook_required": 4,
+        "ecosystem_alignment": 4,
+    },
+    "OpenAI Agents SDK": {
+        "team_state_machine_skill": 2,
+        "team_google_platform_fit": 1,
+        "team_openai_python_speed": 5,
+        "ops_runbook_required": 3,
+        "ecosystem_alignment": 4,
+    },
+}
+
+team = {
+    "team_state_machine_skill": 2,
+    "team_google_platform_fit": 1,
+    "team_openai_python_speed": 5,
+    "ops_runbook_required": 2,
+    "ecosystem_alignment": 4,
+}
+
+
+def fit_score(framework):
+    score = 0
+    for dimension, needed in frameworks[framework].items():
+        available = team[dimension]
+        score += max(0, 6 - abs(needed - available))
+    return score
+
+
+for name in sorted(frameworks, key=fit_score, reverse=True):
+    print(name, fit_score(name))
+```
+
+#### Break
+
+Change the team profile to a platform team with high state-machine skill and low OpenAI product dependency. LangGraph should rise.
+
+Change the team profile to a Google Cloud enterprise team. ADK should rise.
+
+Then remove `ops_runbook_required` from the scoring. Notice how the result becomes demo-biased and underweights maintenance.
+
+#### Measure
+
+Record:
+- Which framework wins for the current team?
+- Which skill gap is largest?
+- Which runbook must be written before launch?
+- Which feature must be piloted before commitment?
+
+#### Explain
+
+Team fit is not an excuse to avoid powerful tools. It is a way to sequence adoption. A team can start with OpenAI Agents SDK for product speed, keep state/tools portable, and later move durable workflow pieces to LangGraph or ADK when the product and team justify it.
+
+---
+
+### 8. Active Recall (Spaced Repetition)
+
+1. What does team skill fit mean in runtime selection?
+2. Why might LangGraph be risky for a small product team?
+3. Why might ADK be strong for a Google Cloud enterprise?
+4. Why might OpenAI Agents SDK be strong for a Python-first team?
+5. What is staffing risk?
+
+**Answer keys:**
+
+1. The match between a framework's required mental models and the team's ability to build, debug, deploy, evaluate, and maintain with those models.
+2. It can impose graph/state/persistence/operations complexity before the product needs that control.
+3. It aligns with Google agent runtime concepts, deployment paths, multi-language support, evals, observability, and platform habits.
+4. It has few primitives, Python-first design, OpenAI-native runtime features, and a fast path from prototype to product assistant.
+5. The risk that maintenance depends on rare expertise or one local expert rather than team-wide capability.
+
+---
+
+### 9. Practice
+
+#### Mini-Exercise: Diagnose Team Fit
+
+A team has strong Python skills, weak cloud platform maturity, no SRE support, and a two-month deadline for a customer-support assistant. The workflow is short-lived and uses OpenAI models. Which runtime do you start with?
+
+**Suggested answer:** Start with OpenAI Agents SDK. It matches Python/OpenAI speed and avoids unnecessary orchestration complexity. Keep tools and business state behind app-owned interfaces so the team can move parts to LangGraph or ADK later if durable workflow needs appear.
+
+#### Capstone-Style System Design Question
+
+An enterprise architecture board is deciding between LangGraph and ADK for a multi-department agent platform. The platform must support long-running workflows, human approvals, evals, observability, and deployment across regulated teams. What team/ecosystem questions do you ask?
+
+**Answer outline:**
+
+- Do teams already understand graph/state workflow operations, or do they need a more packaged agent runtime?
+- Is Google Cloud/Gemini/ADK already a platform standard?
+- Who owns deployment, observability, eval datasets, and incident response?
+- Can new engineers debug state/resume/tool/eval failures within two weeks?
+- Are there shared templates, runbooks, approved tool/auth patterns, and trace redaction policies?
+- Which ecosystem has better support for the exact languages, deployment targets, and compliance requirements?
+- Should the organization split architecture: LangGraph for durable workflows, ADK for Google-aligned agent apps, OpenAI Agents SDK for OpenAI-native realtime/sandbox slices?
+
+---
+
+### 10. Production Reality Check (Mandatory Ending)
+
+**If this fails in prod, what's the first thing we inspect?**
+
+Inspect whether the failure is a capability gap, not only a code bug:
+- Did the team know where to look in traces/events/state?
+- Was there a runbook for this failure mode?
+- Was the framework's operational model understood by more than one engineer?
+- Did the ecosystem provide a documented path for this exact deployment/eval/debug scenario?
+
+Why: many runtime failures persist because the team cannot operate the abstraction it chose. The fix may be training, runbooks, templates, or a different runtime boundary, not a prompt edit.
+
+---
+
+### 11. Curiosity Bridge (Mandatory Ending)
+
+This gives us the human and ecosystem lens, but the module still needs a reusable decision artifact.
+
+That leads into **Building a framework-selection rubric**: turning all these tradeoffs into a repeatable scoring method you can use in real architecture reviews.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit check:** You're done with 15.3.c when you can explain which team profiles fit LangGraph, ADK, and OpenAI Agents SDK, and name the operational risks created by a mismatch.
+
+---
+
+**Carry-Forward Review (interleaved recall from 15.3.b):**
+
+*Q: How does team skill fit change the lock-in/control discussion?*
+
+> **A:** A team with high operational maturity may safely pay the control premium for LangGraph. A small product team may rationally accept OpenAI-native lock-in for speed. A Google-aligned enterprise may reduce operational risk by adopting ADK. The same lock-in can be acceptable or dangerous depending on who must operate it.
+
+---
+
+## Subtopic 15.3.d: Building a Framework-Selection Rubric
+
+### ✅ Add to Knowledge Base
+
+---
+
+### 0. Reading Path + Level Tags
+
+**Beginner:** Read sections 1-2 and Active Recall. Focus on why a rubric beats opinion-based framework selection.
+
+**Intermediate:** Add sections 3-6. You should be able to build a fair comparison across LangGraph, ADK, and OpenAI Agents SDK.
+
+**Pro:** Do the Hands-On Lab and capstone. The goal is to produce a real architecture-review artifact: weighted scores, knockout criteria, pilot plan, and decision memo.
+
+---
+
+### 1. Pre-Question Hook + The Intuition (Plain English)
+
+**Pause:** before you score frameworks, ask: "What would make a framework unacceptable no matter how high its score is?"
+
+A **framework-selection rubric** turns runtime choice from taste into structured reasoning. It forces you to name the product constraints, disqualifying requirements, weighted priorities, team-fit assumptions, and evidence needed before committing.
+
+The mental model: a rubric is not a spreadsheet that magically chooses for you. It is a debate discipline. It makes assumptions visible so other engineers can challenge them.
+
+A good rubric has four layers:
+
+1. **Knockout criteria** — hard requirements that immediately disqualify a runtime.
+2. **Weighted scoring** — soft tradeoffs that matter by degree.
+3. **Pilot evidence** — small experiments that test the riskiest assumptions.
+4. **Decision memo** — the written rationale, risks, exit plan, and follow-up checks.
+
+Analogy: choosing a runtime is like choosing infrastructure for a hospital department. You do not pick the shiniest machine. You check regulatory constraints, staffing, maintenance, training, uptime, integration, support, and what happens when it fails.
+
+Where the analogy breaks: GenAI runtimes evolve quickly. A rubric must be revisited as frameworks, models, pricing, docs, deployment options, and team skills change.
+
+**Knockout criterion** is a non-negotiable requirement that disqualifies a runtime before weighted scoring, such as data residency, unsupported language, missing deployment approval, or inability to handle durable state.
+
+**Weighted scoring** is a decision method where criteria receive importance weights, frameworks receive scores, and the final result exposes which assumptions drive the choice.
+
+**Sensitivity analysis** is checking whether a decision changes when weights or scores shift, revealing fragile conclusions.
+
+**Pilot spike** is a short, focused prototype that tests the riskiest assumption before full adoption.
+
+---
+
+### 2. Visual Diagram (Mermaid)
+
+```mermaid
+flowchart TD
+    req[Product requirements] --> ko{Knockout criteria}
+    ko -- fails --> reject[Reject runtime]
+    ko -- passes --> weights[Weighted scoring]
+
+    weights --> score[Score LangGraph / ADK / OpenAI SDK]
+    score --> sensitivity[Sensitivity analysis]
+    sensitivity --> pilot[Pilot spike on riskiest assumption]
+    pilot --> memo[Decision memo]
+    memo --> adopt{Adopt?}
+
+    adopt -- yes --> runbook[Runbooks + evals + traces + exit plan]
+    adopt -- no --> revisit[Adjust architecture or choose another runtime]
+```
+
+The rubric is useful because it separates "must have" from "nice to have," and separates opinion from evidence.
+
+---
+
+### 3. Real-World Industry Scenarios
+
+#### Scenario A: Customer-Support Copilot [Beginner]
+
+Product context: a SaaS support team needs a chatbot that can search tickets, inspect account status, call safe tools, escalate to billing, and remember session context.
+
+Rubric outcome:
+- Knockout criteria: must support Python tools, tracing, guardrails, session memory, and OpenAI models.
+- Weighted priorities: speed to market, tool loop simplicity, tracing, team familiarity, future realtime option.
+- Likely winner: OpenAI Agents SDK if OpenAI-native coupling is acceptable.
+- Pilot spike: build one ticket lookup tool, one billing handoff, one guardrail, one session-backed follow-up, and inspect traces.
+
+What good looks like: the decision memo says why LangGraph was not needed yet, what would trigger migration, and which business state remains app-owned.
+
+#### Scenario B: Enterprise Compliance Workflow [Intermediate]
+
+Product context: a regulated team needs multi-step document review, policy retrieval, uncertain-field human review, cross-day resume, replay, audit trails, and evals.
+
+Rubric outcome:
+- Knockout criteria: must support durable workflow state, human-in-loop, replay/resume, audit-friendly traces, and app-owned source-of-truth state.
+- Weighted priorities: state control, observability, eval maturity, team orchestration skill, deployment governance.
+- Likely candidates: LangGraph or ADK, depending on platform alignment and team skills.
+- Pilot spike: document extraction -> uncertain field -> human review -> resume -> final decision -> audit trace.
+
+What good looks like: the team chooses based on state/replay evidence, not demo polish.
+
+#### Scenario C: Multimodal Voice Assistant with Backend Workflows [Pro]
+
+Product context: a product has live voice support, interruptions, realtime tool approvals, and a backend reimbursement workflow that can pause for days.
+
+Rubric outcome:
+- Knockout criteria: voice layer must support realtime events and interruptions; workflow layer must support durable state.
+- Weighted priorities: realtime latency, voice tooling, durable workflow control, trace stitching, team skill.
+- Likely architecture: OpenAI Agents SDK for realtime/voice interaction layer plus LangGraph or ADK for durable backend workflow.
+- Pilot spike: realtime call -> tool approval -> backend workflow creation -> human approval -> workflow resume -> voice status update.
+
+What good looks like: the rubric allows a split architecture instead of forcing one runtime to own every layer.
+
+---
+
+### 4. System View (Think Like a Systems Engineer)
+
+#### Inputs
+
+- Product shape: chat, workflow, voice/realtime, sandbox, data-heavy assistant, internal automation, platform runtime
+- Hard constraints: data residency, model provider approval, language support, deployment target, latency, durability, human approvals, auditability
+- Soft priorities: speed, control, portability, observability, cost, ecosystem maturity, team fit, hiring ease
+- Runtime candidates: LangGraph, ADK, OpenAI Agents SDK, raw Responses API, custom runtime, split architecture
+- Evidence sources: docs, prototypes, traces, eval results, failure drills, deployment spikes, cost estimates
+
+#### Transformations
+
+1. Convert requirements into knockout criteria.
+2. Convert priorities into weighted scoring criteria.
+3. Score each runtime with evidence, not vibes.
+4. Run sensitivity analysis: change weights and see if the winner changes.
+5. Build a pilot spike for the riskiest assumption.
+6. Write a decision memo with risks, owners, exit plan, and review date.
+
+#### Outputs
+
+- Framework-selection rubric table
+- Runtime scorecard
+- Sensitivity analysis notes
+- Pilot spike result
+- Decision memo
+- Risk register and exit plan
+
+#### Observability
+
+The rubric should require observability evidence:
+- Can we trace model calls, tool calls, handoffs, guardrails, state changes, approvals, and failures?
+- Can we connect traces to eval cases and production incidents?
+- Can we redact sensitive fields?
+- Can we export enough telemetry for long-term audit/migration?
+- Can a new engineer inspect a failed run without the original author?
+
+#### Failure Points
+
+- Scoring without knockout criteria, causing an invalid runtime to win.
+- Scoring every criterion equally, hiding what the product actually needs.
+- Using generic scores instead of scenario-specific scores.
+- Ignoring sensitivity analysis, so a fragile winner looks certain.
+- Skipping the pilot and discovering the hard part after adoption.
+
+---
+
+### 5. System Design Flavor (Practical and Concise)
+
+#### Example Rubric Dimensions
+
+| Dimension | What It Measures | When Weight Should Be High |
+|---|---|---|
+| Durable state/control | Explicit state, resume, replay, human-in-loop, versioning | Long-running workflows, regulated processes, approvals |
+| Speed to product | How quickly the team can ship safely | MVPs, small product teams, short-lived assistants |
+| Provider/platform fit | Alignment with approved models/cloud/deployment | Enterprises, governed platforms, procurement constraints |
+| Observability/eval | Trace depth, eval support, production monitoring | High-risk, regulated, multi-agent, tool-heavy apps |
+| Team skill fit | Ability to build/debug/operate | Any production system, especially small teams |
+| Lock-in/portability | Migration and exit cost | Multi-provider strategy, uncertain platform future |
+| Realtime/sandbox support | Voice, live sessions, isolated workspaces | Voice products, document/code workspace agents |
+| Ecosystem maturity | Docs, examples, community, integrations, release stability | Long-lived systems, many teams, hiring/onboarding needs |
+
+#### Scoring Example
+
+| Runtime | Durable Control | Speed | Platform Fit | Observability | Team Fit | Portability | Realtime/Sandbox | Total Shape |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| LangGraph | 5 | 3 | 3 | 5 | depends | 4 | 2 | Strong for durable workflows |
+| ADK | 4 | 4 | 5 if Google-aligned | 4 | depends | 3 | 3 | Strong for Google-aligned agent apps |
+| OpenAI Agents SDK | 3 | 5 | 5 if OpenAI-aligned | 4 | high for Python/OpenAI teams | 2-3 | 5 | Strong for OpenAI-native product agents |
+
+The table is not the answer. The weights are the answer. A customer-support copilot and a compliance workflow should not weight these dimensions the same way.
+
+#### Tradeoff 1: Rubric Precision vs Decision Speed [Intermediate]
+
+A rubric can become bureaucracy if it is too large. Use enough criteria to reveal the real tradeoffs, then stop. For most teams, 6-8 weighted criteria and 3-5 knockout criteria are enough.
+
+#### Tradeoff 2: Single Runtime vs Split Architecture [Intermediate]
+
+Sometimes the best answer is not one runtime. Use OpenAI Agents SDK for realtime voice, LangGraph for durable workflows, ADK for Google-aligned agent apps, and MCP/tool interfaces to keep boundaries clean.
+
+Plain-English rule: choose one runtime when the product shape is coherent. split when different layers have genuinely different runtime needs.
+
+#### Tradeoff 3: Evidence vs Assumptions [Pro]
+
+Every score should say whether it is evidence-backed or assumed:
+- Evidence-backed: built a spike, inspected traces, deployed once, ran evals.
+- Assumed: read docs, inferred from examples, team believes it can operate it.
+
+High-impact assumed scores must become pilot spikes before production commitment.
+
+#### Scaling Consideration: Rubric Reuse Across Teams [Pro]
+
+At one team, a rubric prevents bad local decisions. At many teams, a rubric becomes governance:
+- Shared scoring dimensions
+- Approved knockout criteria
+- Standard pilot checklist
+- Decision memo template
+- Runtime-specific runbook requirements
+- Periodic review when frameworks or provider policies change
+
+---
+
+### 6. Common Mistakes + Debugging
+
+#### Mistake 1: Equal Weights for Unequal Priorities
+
+Symptom: the scorecard says two frameworks are close, but engineers still disagree strongly.
+
+Likely cause: critical product constraints were treated as merely one row among many.
+
+First debugging step: move true non-negotiables into knockout criteria and reweight the rest around business risk.
+
+#### Mistake 2: Scoring Frameworks Globally
+
+Symptom: someone says "LangGraph scores 5 for production" or "OpenAI SDK scores 5 for speed" without naming the product scenario.
+
+Likely cause: scores are generic instead of scenario-specific.
+
+First debugging step: rewrite the rubric title as "Runtime choice for [specific product/use case]" and rescore only for that context.
+
+#### Mistake 3: No Sensitivity Analysis
+
+Symptom: the winning runtime changes after one stakeholder says latency, compliance, or team skill matters more.
+
+Likely cause: the decision depends on fragile weights.
+
+First debugging step: run a sensitivity pass. Increase/decrease top weights by 20-30%. If the winner flips, document the assumption and test it with a pilot.
+
+#### Mistake 4: Pilot Tests the Easy Path
+
+Symptom: the pilot succeeds, but production fails at resume, tracing, deployment, approval, or eval maintenance.
+
+Likely cause: the pilot tested the demo path instead of the riskiest path.
+
+First debugging step: define the pilot around the hardest failure boundary: state recovery, human approval, realtime interruption, sandbox resume, trace redaction, or deployment governance.
+
+---
+
+### 7. Hands-On Lab (Concept -> Build -> Break -> Measure -> Explain)
+
+Build a tiny framework-selection rubric you can modify per project.
+
+#### Build: Weighted Runtime Rubric [Pro]
+
+```python
+runtimes = {
+    "LangGraph": {
+        "durable_control": 5,
+        "speed_to_product": 3,
+        "platform_fit": 3,
+        "observability_eval": 5,
+        "team_fit": 3,
+        "portability": 4,
+        "realtime_sandbox": 2,
+    },
+    "Google ADK": {
+        "durable_control": 4,
+        "speed_to_product": 4,
+        "platform_fit": 5,
+        "observability_eval": 4,
+        "team_fit": 3,
+        "portability": 3,
+        "realtime_sandbox": 3,
+    },
+    "OpenAI Agents SDK": {
+        "durable_control": 3,
+        "speed_to_product": 5,
+        "platform_fit": 4,
+        "observability_eval": 4,
+        "team_fit": 5,
+        "portability": 2,
+        "realtime_sandbox": 5,
+    },
+}
+
+# Example scenario: OpenAI-native support copilot with possible realtime later.
+weights = {
+    "durable_control": 1,
+    "speed_to_product": 5,
+    "platform_fit": 4,
+    "observability_eval": 3,
+    "team_fit": 5,
+    "portability": 2,
+    "realtime_sandbox": 4,
+}
+
+knockouts = {
+    "must_support_python_tools": True,
+    "must_have_traceable_tool_calls": True,
+    "must_support_session_memory": True,
+}
+
+
+def weighted_score(runtime: str) -> int:
+    return sum(runtimes[runtime][criterion] * weight for criterion, weight in weights.items())
+
+
+for runtime in sorted(runtimes, key=weighted_score, reverse=True):
+    print(runtime, weighted_score(runtime))
+```
+
+#### Break
+
+Change the scenario to a cross-day compliance workflow:
+- Raise `durable_control` to 5.
+- Raise `observability_eval` to 5.
+- Lower `speed_to_product` to 2.
+- Lower `realtime_sandbox` to 1.
+
+The winning runtime should likely move toward LangGraph or ADK.
+
+Then add a knockout: `must_run_on_google_approved_platform = True`. ADK may become favored if the organization is Google-aligned.
+
+#### Measure
+
+Record:
+- Winner under default weights.
+- Winner after sensitivity changes.
+- Top two criteria driving the result.
+- Any assumed score above 4 that lacks pilot evidence.
+- One pilot spike needed before final commitment.
+
+#### Explain
+
+The rubric does not remove judgment. It improves judgment. It turns hidden preferences into inspectable assumptions, then forces the riskiest assumptions into experiments.
+
+---
+
+### 8. Active Recall (Spaced Repetition)
+
+1. What are the four layers of a good framework-selection rubric?
+2. Why should knockout criteria happen before weighted scoring?
+3. What does sensitivity analysis reveal?
+4. Why should the pilot spike target the riskiest path instead of the easiest demo?
+5. When might a split architecture beat one runtime?
+
+**Answer keys:**
+
+1. Knockout criteria, weighted scoring, pilot evidence, and decision memo.
+2. Because non-negotiable requirements should disqualify invalid runtimes even if they score well on softer dimensions.
+3. Whether the decision is stable or depends heavily on fragile assumptions/weights.
+4. Because production failures usually happen at hard boundaries: state, approval, tracing, deployment, privacy, realtime, or eval maintenance.
+5. When different layers have different runtime needs, such as OpenAI realtime for voice plus LangGraph/ADK for durable backend workflows.
+
+---
+
+### 9. Practice
+
+#### Mini-Exercise: Build the Knockout List
+
+For a regulated healthcare workflow assistant, write three knockout criteria before scoring frameworks.
+
+**Suggested answer:**
+
+- Must support app-owned source-of-truth state and audit trail.
+- Must allow sensitive trace redaction or approved tracing backend.
+- Must support human review/resume for uncertain or risky decisions.
+
+Other valid knockouts: approved deployment environment, data residency, eval/regression support, identity/auth integration, durable replay.
+
+#### Capstone-Style System Design Question
+
+Create a runtime-selection memo for Project 7: a data-heavy assistant that uses LlamaIndex for document retrieval and must choose between LangGraph, ADK, and OpenAI Agents SDK for the agent runtime.
+
+**Answer outline:**
+
+- State the product: data-heavy assistant with retrieval, citations, tool actions, evals, and possible workflow decisions.
+- Knockouts: must integrate with LlamaIndex retrieval tools, preserve citation/evidence logs, support evals/traces, and keep source-of-truth data outside the runtime.
+- Weights: retrieval/tool integration, observability/eval, team fit, workflow durability, platform fit, speed, portability.
+- Likely choices:
+  - LangGraph if durable workflow and explicit state are central.
+  - ADK if Google-aligned deployment/eval/runtime is central.
+  - OpenAI Agents SDK if OpenAI-native product speed, sandbox, or realtime is central.
+- Pilot: retrieval -> answer with citations -> risky tool proposal -> approval -> trace/eval review.
+- Decision memo: chosen runtime, why others lost, risks, owners, exit strategy, review date.
+
+---
+
+### 10. Production Reality Check (Mandatory Ending)
+
+**If this fails in prod, what's the first thing we inspect?**
+
+Inspect whether the failed requirement was represented correctly in the rubric.
+
+- If durable state failed, was it weighted high enough or made a knockout?
+- If debugging failed, did observability/eval have evidence or just assumed scores?
+- If the team cannot operate the runtime, did team fit and staffing risk matter enough?
+- If migration is painful, did the decision memo include an exit strategy?
+
+Why: a bad runtime decision often starts as a bad rubric. The production failure reveals which assumption was missing, underweighted, or never tested.
+
+---
+
+### 11. Curiosity Bridge (Mandatory Ending)
+
+This completes the runtime comparison arc: choose by constraints, tradeoffs, team reality, and evidence.
+
+The next step is the **Module 15 checkpoint - runtime comparison memo**, where you turn the rubric into a concise architecture decision artifact for a real project.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit check:** You're done with 15.3.d when you can create a runtime-selection rubric with knockout criteria, weighted scores, sensitivity analysis, pilot evidence, and a decision memo for LangGraph vs ADK vs OpenAI Agents SDK.
+
+---
+
+**Carry-Forward Review (interleaved recall from 15.3.c):**
+
+*Q: Why must a framework-selection rubric include team skill fit?*
+
+> **A:** Because a runtime that fits the product but not the operators becomes production risk. Team skill fit captures whether the team can debug traces, maintain state, update evals, handle incidents, onboard engineers, and evolve the system after launch.
+
+---
+
+## Module Checkpoint: Runtime Comparison Memo
+
+### ✅ Add to Knowledge Base
+
+---
+
+### Checkpoint Goals
+
+By the end of this checkpoint, you should be able to:
+
+- Compare agent runtimes with engineering arguments rather than fandom.
+- Choose a runtime based on workflow shape, not vendor popularity.
+- Explain why LangGraph remains your anchor even after learning alternatives.
+
+This checkpoint is the final compression layer for Module 15. It turns ADK, OpenAI Agents SDK, and LangGraph from a list of features into a runtime-selection discipline.
+
+---
+
+### 0. Reading Path + Level Tags
+
+**Beginner:** Read sections 1-3 and the Final Decision Rules. Focus on matching runtime to workflow shape.
+
+**Intermediate:** Add sections 4-7. You should be able to write a runtime comparison memo that explains tradeoffs without framework fandom.
+
+**Pro:** Complete the checkpoint lab and memo template. The target output is a realistic architecture decision note for Project 7 or any agent product.
+
+---
+
+### 1. Pre-Question Hook + The Intuition (Plain English)
+
+**Pause:** if two engineers argue "LangGraph is better" vs "ADK is better" vs "OpenAI Agents SDK is better," what question should you ask before judging either claim?
+
+Ask: "Better for what workflow shape, operated by what team, under what constraints?"
+
+An **engineering argument** is a runtime recommendation backed by workload shape, state needs, observability requirements, deployment constraints, team skill, risk, and evidence.
+
+The core mental model:
+
+- LangGraph is your **anchor runtime** for thinking about explicit stateful orchestration.
+- ADK is a strong **agent product runtime** when Google-aligned platform leverage, sessions, evals, deployment, and managed agent patterns matter.
+- OpenAI Agents SDK is a strong **OpenAI-native agent runtime** when product speed, OpenAI model/tool integration, guardrails, handoffs, realtime, or sandbox paths matter.
+
+The checkpoint answer is not "always pick LangGraph." The checkpoint answer is: keep LangGraph as your reference model because it teaches you what every runtime must eventually answer: where is state, who owns control flow, how do we pause/resume, how do we observe failures, and what happens when the workflow gets complicated?
+
+Analogy: LangGraph is like learning manual transmission before driving many automatic cars. You may not use manual every day, but it teaches you what the machine is doing underneath. ADK and OpenAI Agents SDK can be faster and smoother in the right vehicle, but LangGraph gives you the mechanical intuition to know when the abstraction is helping or hiding risk.
+
+Where the analogy breaks: software runtimes are not fixed machines. Their capabilities change quickly, and split architectures can combine multiple runtimes in one product.
+
+**Workflow shape** is the structure of an agent problem: its state lifetime, branching, human review, tool risk, latency, modality, deployment needs, and failure-recovery behavior.
+
+**Anchor runtime** is the framework you use as a mental reference point for evaluating other runtimes' control, state, observability, and failure semantics.
+
+---
+
+### 2. Visual Diagram (Mermaid)
+
+```mermaid
+flowchart TD
+    problem[Agent product idea] --> shape[Classify workflow shape]
+    shape --> state{Long-running explicit state?}
+    shape --> platform{Platform ecosystem constraint?}
+    shape --> openai{OpenAI-native speed / realtime / sandbox?}
+
+    state -- yes --> lg[LangGraph as strong candidate]
+    platform -- Google-aligned --> adk[ADK as strong candidate]
+    openai -- yes --> oai[OpenAI Agents SDK as strong candidate]
+
+    lg --> memo[Runtime comparison memo]
+    adk --> memo
+    oai --> memo
+
+    memo --> evidence[Rubric + pilot evidence + risks]
+    evidence --> decision[Decision: one runtime or split architecture]
+```
+
+The correct comparison starts from the problem shape, not from the vendor logo.
+
+---
+
+### 3. Final Runtime Decision Rules
+
+#### Rule 1: Choose LangGraph When State and Control Are the Product [Beginner]
+
+Choose LangGraph when the system is mostly a durable workflow:
+
+- Cross-turn or cross-day state matters.
+- Human review, pause/resume, replay, retries, or compensation matter.
+- You need explicit graph nodes and inspectable state transitions.
+- You want provider-neutral orchestration and app-owned state.
+- Debugging requires knowing exactly which node changed which state.
+
+Engineering argument: "We choose LangGraph because workflow correctness and state control are the core risk. The product needs durable orchestration more than a managed agent shell."
+
+#### Rule 2: Choose ADK When Google-Aligned Agent Runtime Leverage Matters [Intermediate]
+
+Choose ADK when the system benefits from Google's agent product shape:
+
+- Google Cloud deployment, governance, or tooling is the default path.
+- Sessions, events, artifacts, evaluation, and trace tooling should feel integrated.
+- Agent-to-agent and workflow composition fit the product.
+- The team wants a production runtime with opinionated agent patterns.
+
+Engineering argument: "We choose ADK because platform alignment reduces operational burden, and its agent/runtime/eval/deployment model matches our environment."
+
+#### Rule 3: Choose OpenAI Agents SDK When OpenAI-Native Product Speed Matters [Intermediate]
+
+Choose OpenAI Agents SDK when the product is tightly aligned with OpenAI capabilities:
+
+- Fast Python-first agent development is the priority.
+- Function tools, hosted tools, guardrails, handoffs, and tracing are enough.
+- Realtime voice, sandbox agents, or OpenAI-native sessions matter.
+- The team accepts OpenAI coupling for speed and product leverage.
+
+Engineering argument: "We choose OpenAI Agents SDK because the product is OpenAI-native, the workflow is not primarily a custom durable state machine, and speed/realtime/sandbox leverage dominates."
+
+#### Rule 4: Use Split Architecture When One Runtime Would Distort the Design [Pro]
+
+Use a split architecture when different layers have different runtime shapes:
+
+- OpenAI Agents SDK for realtime voice, LangGraph for durable backend workflow.
+- ADK for Google-aligned agent surface, LangGraph for custom long-running orchestration.
+- LlamaIndex for data/retrieval, LangGraph/ADK/OpenAI Agents SDK for agent control.
+
+Engineering argument: "We split because forcing one runtime across all layers would either hide state risk, slow product delivery, or overcouple independent concerns."
+
+---
+
+### 4. Runtime Comparison Memo Template
+
+Use this template whenever someone asks, "Which agent framework should we use?"
+
+#### 1. Decision Summary
+
+- Recommended runtime: LangGraph / ADK / OpenAI Agents SDK / split architecture.
+- One-sentence reason: tie it to workflow shape and production risk.
+- Decision confidence: high / medium / low.
+- Review date: when to revisit the decision.
+
+#### 2. Product and Workflow Shape
+
+- Is the product chat, workflow, realtime voice, sandbox, data-heavy assistant, or platform agent?
+- How long does state live?
+- Does it need human review, approval, replay, retries, or resume?
+- Are tool calls low-risk lookups or high-risk business actions?
+- What are the latency, cost, compliance, and privacy constraints?
+
+#### 3. Knockout Criteria
+
+- Must support approved deployment environment.
+- Must support required model/provider policy.
+- Must expose enough traces for incidents/audits.
+- Must keep source-of-truth state portable.
+- Must support required modality: chat, voice, sandbox, workflow, MCP, or data/RAG tools.
+
+#### 4. Weighted Scoring
+
+Score only after knockouts pass.
+
+| Criterion | Weight | LangGraph | ADK | OpenAI Agents SDK | Notes |
+|---|---:|---:|---:|---:|---|
+| Durable state/control | 1-5 | | | | Higher for long workflows |
+| Product speed | 1-5 | | | | Higher for MVP/chat/realtime |
+| Platform fit | 1-5 | | | | Higher for Google/OpenAI constraints |
+| Observability/evals | 1-5 | | | | Higher for risky production systems |
+| Team skill fit | 1-5 | | | | Higher when team is small or new |
+| Portability/exit | 1-5 | | | | Higher when provider strategy is uncertain |
+| Realtime/sandbox | 1-5 | | | | Higher for voice/live/code/data workspaces |
+
+#### 5. Evidence and Pilot Results
+
+- What prototype did we build?
+- Which failure path did we test?
+- What traces/evals/logs did we inspect?
+- What remained assumed?
+- Which assumption could invalidate the decision?
+
+#### 6. Risks and Mitigations
+
+- Runtime risk: abstraction hides a needed boundary.
+- Team risk: operators cannot debug it.
+- Lock-in risk: migration becomes expensive.
+- Observability risk: incidents cannot be explained.
+- Scale risk: state, traces, evals, or deployment do not hold at 10x.
+
+#### 7. Final Recommendation
+
+Use this wording:
+
+> We recommend [runtime] because [workflow shape] makes [top 1-2 criteria] the dominant production risk. [Other runtime] is not selected because [specific mismatch], not because it is weak generally. We will revisit if [trigger condition].
+
+---
+
+### 5. Worked Comparison: Project 7 Data-Heavy Assistant
+
+Project shape: a data-heavy assistant using LlamaIndex for document ingestion/retrieval, with tool calls, citations, evals, and a final framework-selection memo.
+
+#### Step 1: Classify Workflow Shape
+
+This is not just a chatbot. It is a data-centric assistant:
+
+- Retrieval quality and citation correctness matter.
+- Tool calls may need permission and audit trails.
+- Evaluation must test answer quality, retrieval coverage, and tool trajectory.
+- The runtime should not own the canonical document/index state.
+- If decisions become multi-step or review-heavy, durable orchestration matters.
+
+#### Step 2: Runtime Arguments
+
+**LangGraph argument:**
+
+Choose LangGraph if the assistant becomes a stateful workflow: retrieve -> reason -> call tools -> request approval -> revise -> store artifact -> resume later. LangGraph keeps orchestration explicit and makes state transitions inspectable.
+
+**ADK argument:**
+
+Choose ADK if the organization is Google-aligned and wants an integrated agent runtime with sessions, events, evaluation, deployment, and managed operational paths. ADK is especially attractive when platform fit reduces governance and deployment friction.
+
+**OpenAI Agents SDK argument:**
+
+Choose OpenAI Agents SDK if the assistant is OpenAI-native, tool/handoff-driven, needs fast product iteration, or may add realtime/sandbox features. It is a strong fit when durable workflow control is not the main complexity.
+
+#### Step 3: Likely Recommendation
+
+For a learning capstone, use **LangGraph as the anchor recommendation** unless the product explicitly prioritizes OpenAI realtime/sandbox or Google platform alignment.
+
+Why: Project 7 is meant to prove data-heavy assistant design and framework selection. LangGraph exposes the orchestration questions most clearly:
+
+- What state do we pass between retrieval, reasoning, tools, and final response?
+- Where do citations and evidence live?
+- Where do approvals happen?
+- How do we resume or replay a failed run?
+- How do we evaluate each node or trajectory?
+
+The memo should still compare ADK and OpenAI Agents SDK fairly. The goal is not to crown LangGraph by fandom. The goal is to show why explicit orchestration is the best learning and control anchor for this project shape.
+
+---
+
+### 6. Common Mistakes + Debugging
+
+#### Mistake 1: Choosing by Vendor Popularity
+
+Symptom: the team says "everyone is using X" or "vendor Y is moving fastest" without mapping features to failure modes.
+
+Likely cause: runtime selection is being driven by market noise instead of workflow shape.
+
+First debugging step: write the workflow shape in one paragraph, then list the top three production failure modes. Rescore runtimes against those risks.
+
+#### Mistake 2: Treating LangGraph as Always the Answer
+
+Symptom: simple product agents become over-engineered with custom nodes, checkpointers, and state schemas before the product has real workflow complexity.
+
+Likely cause: confusing anchor runtime with default runtime.
+
+First debugging step: ask whether the system actually needs explicit durable orchestration now, or whether ADK/OpenAI Agents SDK can ship safely with clearer product leverage.
+
+#### Mistake 3: Treating Managed Runtime Leverage as Weakness
+
+Symptom: the team rejects ADK or OpenAI Agents SDK because they feel less customizable, even though the product mostly needs fast safe tool use, sessions, tracing, evals, or realtime.
+
+Likely cause: overvaluing control and undervaluing operational leverage.
+
+First debugging step: estimate the engineering cost of rebuilding what the runtime already provides: session handling, guardrails, tracing, eval hooks, deployment paths, approvals, realtime, or sandbox behavior.
+
+#### Mistake 4: Ignoring the Migration Trigger
+
+Symptom: the first runtime works for the MVP, then fails when workflows become long-running, regulated, or multi-team.
+
+Likely cause: no explicit trigger for revisiting the decision.
+
+First debugging step: add a review trigger to the memo, such as "migrate/revisit if human review, replay, multi-day state, provider portability, or audit requirements become central."
+
+---
+
+### 7. Hands-On Checkpoint Lab (Concept -> Build -> Break -> Measure -> Explain)
+
+#### Build: One-Page Runtime Comparison Memo [Pro]
+
+Create a memo for a data-heavy assistant with this structure:
+
+```markdown
+# Runtime Comparison Memo
+
+## Decision
+Recommended runtime: LangGraph / ADK / OpenAI Agents SDK / split architecture
+Confidence: High / Medium / Low
+
+## Workflow Shape
+- State lifetime:
+- Human approval/review:
+- Tool risk:
+- Retrieval/data needs:
+- Deployment/platform constraints:
+- Observability/eval needs:
+
+## Knockout Criteria
+1.
+2.
+3.
+
+## Weighted Criteria
+| Criterion | Weight | Winner | Evidence |
+|---|---:|---|---|
+| Durable state/control | | | |
+| Product speed | | | |
+| Platform fit | | | |
+| Observability/evals | | | |
+| Team skill fit | | | |
+| Portability/exit | | | |
+
+## Runtime Comparison
+- LangGraph:
+- ADK:
+- OpenAI Agents SDK:
+
+## Recommendation
+We choose ___ because ___. We reject ___ for this use case because ___, not because it is weak generally.
+
+## Risks and Review Triggers
+- Risk:
+- Mitigation:
+- Revisit if:
+```
+
+#### Break
+
+Force the memo to fail by writing a recommendation that says only:
+
+> "Choose OpenAI Agents SDK because OpenAI is popular and fast."
+
+Now debug it:
+
+- What is the workflow shape?
+- Does the assistant need durable state?
+- What owns retrieval indexes and citation evidence?
+- What happens when a tool call must pause for approval?
+- Which traces/evals prove the choice is safe?
+
+#### Measure
+
+Grade the memo on five signals:
+
+| Signal | Pass Condition |
+|---|---|
+| Workflow shape clarity | A reader can tell what kind of agent system this is |
+| Engineering argument | Recommendation maps to state/control/observability/team constraints |
+| Fair comparison | Each runtime is rejected or selected for a specific reason |
+| Evidence | At least one pilot or trace/eval result is named |
+| Review trigger | The memo says when to revisit the decision |
+
+#### Explain
+
+The broken memo fails because popularity is not an architecture argument. The fixed memo explains the workload, identifies the dominant production risk, compares runtimes against that risk, and states what evidence would change the decision.
+
+---
+
+### 8. Active Recall (Spaced Repetition)
+
+1. What question should you ask before accepting "Framework X is better"?
+2. Why does workflow shape matter more than vendor popularity?
+3. When is LangGraph the strongest runtime choice?
+4. When can ADK be a better fit than LangGraph?
+5. When can OpenAI Agents SDK be a better fit than LangGraph?
+6. Why does LangGraph remain your anchor even when you choose another runtime?
+
+**Answer keys:**
+
+1. "Better for what workflow shape, operated by what team, under what constraints?"
+2. Because production failures come from state, control, observability, deployment, team skill, and data constraints, not brand popularity.
+3. When explicit durable state, human-in-loop, replay/resume, provider-neutral orchestration, and inspectable control flow are central.
+4. When Google-aligned platform leverage, managed sessions/events/evals/deployment, and agent product runtime conventions reduce operational risk.
+5. When OpenAI-native speed, tools, handoffs, guardrails, tracing, realtime, sandbox, or simple session-backed agent patterns dominate.
+6. Because LangGraph teaches the underlying control/state/failure model that lets you evaluate higher-level runtimes with engineering clarity.
+
+---
+
+### 9. Practice
+
+#### Mini-Exercise: Reject Without Dismissing
+
+Write one sentence rejecting each runtime for a specific workflow, without implying the runtime is bad generally.
+
+**Suggested answer:**
+
+- LangGraph: "We are not choosing LangGraph for this MVP because the assistant has no durable workflow or human-in-loop state yet, so the control premium is not justified."
+- ADK: "We are not choosing ADK because the organization is not Google-aligned and the managed platform benefits do not offset adoption cost for this use case."
+- OpenAI Agents SDK: "We are not choosing OpenAI Agents SDK because the core risk is multi-day auditable workflow state, not OpenAI-native tool-loop speed."
+
+#### Capstone: Final Module 15 Memo Prompt
+
+Write a runtime comparison memo for a production data-heavy assistant that must answer questions with citations, call internal tools, support human approval for risky actions, and be evaluated weekly.
+
+**Suggested outline:**
+
+- Workflow shape: data-heavy assistant with retrieval, citations, tool actions, approvals, evals.
+- Knockouts: traceability, retrieval/citation evidence, approval support, portable source-of-truth state, approved deployment.
+- Weighted priorities: observability/evals, durable state/control, team skill, product speed, platform fit, portability.
+- Recommendation: LangGraph if approval/resume/workflow state is central; ADK if Google platform alignment dominates; OpenAI Agents SDK if OpenAI-native speed/realtime/sandbox dominates.
+- Why LangGraph remains anchor: it exposes state and control boundaries even if the final implementation uses a higher-level runtime.
+- Review trigger: revisit if modality changes, platform policy changes, workflows become more/less durable, or eval failures reveal trace gaps.
+
+---
+
+### 10. Production Reality Check (Mandatory Ending)
+
+**If this fails in prod, what's the first thing we inspect?**
+
+Inspect the mismatch between the selected runtime and the real workflow shape.
+
+Ask:
+
+- Did we choose speed when the system needed durable control?
+- Did we choose control when the product needed managed runtime leverage?
+- Did we choose platform fit while ignoring team skill or observability?
+- Did we choose vendor popularity instead of production failure modes?
+- Did the memo include a review trigger and pilot evidence?
+
+Why: runtime failures usually reveal that the dominant production risk was misclassified. The fastest path to root cause is comparing the incident against the original workflow-shape assumptions.
+
+---
+
+### 11. Curiosity Bridge (Mandatory Ending)
+
+This completes Module 15: you now have the runtime-selection vocabulary to compare LangGraph, ADK, and OpenAI Agents SDK without fandom.
+
+This unlocks the next move: using the selected runtime in a real project, where the abstract memo becomes working retrieval, tools, traces, evals, and incident-ready design.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+**Exit check:** You're done with Module 15 when you can write a runtime comparison memo that chooses LangGraph, ADK, OpenAI Agents SDK, or a split architecture based on workflow shape, evidence, team skill, observability, lock-in, and production risk.
+
+---
+
+**Carry-Forward Review (interleaved recall from Module 15):**
+
+*Q: What is the difference between choosing LangGraph as an anchor and choosing LangGraph as the implementation?*
+
+> **A:** Anchor means LangGraph is your mental reference for state, control flow, pause/resume, and observability. Implementation means it is the actual runtime you deploy. You can use LangGraph as the anchor while still choosing ADK or OpenAI Agents SDK when their managed runtime leverage better fits the workflow.
+
+*Q: What is the cleanest runtime-selection sentence?*
+
+> **A:** "We choose [runtime] because [workflow shape] makes [dominant production risk] the deciding factor; we reject [alternative] for this use case because [specific mismatch], not because it is weak generally."
+
+---
+
 ## Module Glossary
 
 | Term | Definition |
 |------|------------|
+| **Engineering argument** | Runtime recommendation backed by workload shape, state needs, observability requirements, deployment constraints, team skill, risk, and evidence. |
+| **Workflow shape** | Structure of an agent problem: state lifetime, branching, human review, tool risk, latency, modality, deployment needs, and failure-recovery behavior. |
+| **Anchor runtime** | Framework used as a mental reference point for evaluating other runtimes' control, state, observability, and failure semantics. |
+| **Runtime comparison memo** | Architecture decision note that compares agent runtimes using workflow shape, knockouts, weighted criteria, evidence, risks, and review triggers. |
+| **Split architecture** | Design that uses different runtimes or frameworks for different layers because one runtime would distort the system boundary. |
+| **Framework-selection rubric** | Structured decision artifact that compares runtimes using knockout criteria, weighted scoring, pilot evidence, risks, and a written rationale. |
+| **Knockout criterion** | Non-negotiable requirement that disqualifies a runtime before weighted scoring. |
+| **Weighted scoring** | Decision method where criteria receive importance weights and runtimes receive scores to expose which assumptions drive the result. |
+| **Sensitivity analysis** | Process of changing weights or scores to see whether the decision remains stable or depends on fragile assumptions. |
+| **Pilot spike** | Short focused prototype that tests the riskiest runtime assumption before full adoption. |
+| **Decision memo** | Written architecture artifact explaining the chosen runtime, rejected alternatives, evidence, risks, owners, exit plan, and review date. |
+| **Risk register** | List of known runtime risks, their impact, owners, mitigations, and review triggers. |
+| **Team skill fit** | Match between a framework's required mental models and the team's ability to build, debug, deploy, evaluate, and maintain with those models. |
+| **Ecosystem maturity** | Practical strength of a framework's docs, examples, integrations, community, deployment paths, observability, evaluation tooling, release stability, and support. |
+| **Operational maturity** | Team ability to run a system after launch through incident response, runbooks, metrics, trace interpretation, regression tests, upgrades, and ownership boundaries. |
+| **Staffing risk** | Risk that a framework choice depends on rare expertise or one local expert, making the system hard to maintain when people change roles. |
+| **Ecosystem gravity** | Tendency of a framework ecosystem to pull architecture toward its native models, deployment paths, integrations, and operational habits. |
+| **Runbook readiness** | Degree to which the team has documented, tested steps for diagnosing and recovering from expected production failures. |
+| **Adoption style** | How a team introduces a runtime: direct adoption, pilot first, split architecture, or delay until the team can operate it safely. |
+| **Vendor lock-in** | Dependency on one provider's APIs, models, hosted state, tracing, deployment, or runtime-specific features in a way that makes migration expensive. |
+| **Control premium** | Extra engineering cost paid to own lower-level execution details instead of using a higher-level managed abstraction. |
+| **Observability boundary** | Line between what traces/logs/metrics can explain and what remains hidden inside a model, hosted service, runtime, or external tool. |
+| **Exit strategy** | Design plan for what must remain portable if the team changes model provider, runtime, deployment target, tracing system, or state store. |
+| **Lock-in surface** | Specific part of a system that creates migration cost, such as model API, session storage, trace format, deployment runtime, tool schema, or eval format. |
+| **Trace portability** | Ability to preserve useful debugging/audit information when moving between tracing backends or runtime frameworks. |
+| **Source-of-truth state** | Durable business state that must remain correct and portable regardless of which agent runtime is used. |
+| **Runtime leverage** | Build and operations speed gained by letting a framework own agent-loop, tracing, state, eval, deployment, sandbox, or realtime capabilities. |
+| **LangGraph** | Low-level orchestration runtime for long-running, stateful agent workflows with graphs, persistence, human-in-loop, streaming, and durable execution. |
+| **Runtime selection** | Process of choosing an agent execution framework based on state, control, deployment, observability, provider fit, and team constraints. |
+| **Control plane** | System layer that decides execution order, state transitions, approvals, retries, pause/resume behavior, and ownership of workflow progress. |
+| **Runtime-fit failure** | Production failure caused by choosing abstractions that do not expose or support the system boundary that later matters most. |
+| **Framework fit matrix** | Decision table that maps product constraints to framework strengths, risks, and prototype requirements. |
+| **Platform leverage** | Advantage gained by using a framework's native ecosystem features such as managed tools, tracing, evals, deployment, or realtime capabilities. |
+| **Provider coupling** | Degree to which a system depends on one model vendor, cloud provider, hosted API, or framework-specific runtime behavior. |
+| **State ownership map** | Design artifact that states which layer owns conversation history, workflow state, long-term memory, artifacts, approvals, and replay/resume. |
+| **RealtimeAgent** | Agents SDK agent type for live realtime sessions, supporting instructions, tools, handoffs, output guardrails, MCP servers, and hooks with realtime-specific constraints. |
+| **RealtimeRunner** | Realtime equivalent of `Runner` that creates live `RealtimeSession` objects instead of returning completed run results. |
+| **RealtimeSession** | Live bidirectional session that sends text/audio input, streams events, tracks history, executes tools, handles approvals, and manages handoffs. |
+| **RealtimeModel** | Transport abstraction behind realtime sessions; the default Python path uses OpenAI's server-side WebSocket realtime model. |
+| **OpenAIRealtimeWebSocketModel** | Default Python SDK realtime model implementation using a server-side WebSocket connection to the Realtime API. |
+| **OpenAIRealtimeSIPModel** | Realtime model implementation for attaching an agent session to an existing SIP/realtime call through `call_id`. |
+| **RealtimeSessionModelSettings** | Session-level realtime model settings for model name, audio input/output formats, transcription, turn detection, voice, modalities, and tool choice. |
+| **Turn detection** | Mechanism that decides when user audio should be committed and the model should respond. |
+| **Semantic VAD** | Semantic voice activity detection mode that uses meaning and speech cues to decide turn boundaries and support natural interruptions. |
+| **RealtimePlaybackTracker** | Playback tracking helper used to align interruption/history truncation with audio the user actually heard. |
+| **`audio_interrupted`** | Realtime session event indicating active assistant audio was interrupted and playback/history should be adjusted. |
+| **`tool_approval_required`** | Realtime session event emitted when a tool call pauses until the app approves or rejects it. |
+| **Realtime handoff** | Live-session delegation where one realtime agent transfers the active conversation to another specialist. |
+| **VoicePipeline** | Voice pathway that transcribes audio, runs an agentic workflow, and synthesizes speech output. |
+| **VoiceWorkflow** | Workflow interface used by `VoicePipeline` to run application or agent logic after transcription. |
+| **SingleAgentVoiceWorkflow** | Built-in voice workflow wrapper that runs a single regular `Agent` inside a voice pipeline. |
+| **AudioInput** | Voice pipeline input type for complete audio where the turn boundary is already known. |
+| **StreamedAudioInput** | Voice pipeline input type for chunked audio where activity detection decides when to run the workflow. |
+| **StreamedAudioResult** | Voice pipeline result object that streams audio, lifecycle, and error events. |
+| **VoiceStreamEvent** | Voice pipeline event type covering generated audio chunks, lifecycle notifications, and errors. |
+| **Speech-to-text (STT)** | Audio-to-text stage that converts spoken input into transcript text for the workflow. |
+| **Text-to-speech (TTS)** | Text-to-audio stage that turns workflow output into spoken audio. |
 | **Model Context Protocol (MCP)** | Open protocol for exposing tools, resources, and prompts to AI applications through standardized server interfaces. |
 | **HostedMCPTool** | Agents SDK hosted tool that lets the OpenAI Responses API call a remote or connector-backed MCP server on the model's behalf. |
 | **MCPServerStreamableHttp** | Agents SDK local-runtime MCP client for servers using the Streamable HTTP transport. |
