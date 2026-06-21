@@ -19,6 +19,9 @@
 | 22.2.b | Tradeoff justification: why this model, retrieval strategy, and workflow (1.25h) | ✅ Done |
 | 22.2.c | Evaluation reports that show before-vs-after improvement (1.25h) | ✅ Done |
 | 22.2.d | Rejected alternatives and why they lost (1.25h) | ✅ Done |
+| **Topic 22.3** | **Hiring-facing packaging (6h)** | |
+| 22.3.a | Resume bullets grounded in measurable system outcomes (1.5h) | ✅ Done |
+| 22.3.b | Project case-study pages and portfolio summaries (1.5h) | ✅ Done |
 
 **Covered so far:**
 - 22.1.a - Architecture diagrams that show system layers clearly: reading path by level, layered architecture storytelling model, strong-vs-weak diagram patterns, production constraints framing, review-loop system view, hiring tradeoffs, common mistakes and debugging checks, hands-on lab (Build -> Break -> Measure -> Explain), recall drills, practice prompts, production reality check, curiosity bridge, exit check, glossary
@@ -29,6 +32,8 @@
 - 22.2.b - Tradeoff justification: why this model, retrieval strategy, and workflow: decision matrix design for model and retrieval choices, workflow selection under latency/cost/reliability constraints, explicit rejected alternatives, measurable acceptance criteria, common tradeoff-justification anti-patterns, hands-on decision-doc lab (Build -> Break -> Measure -> Explain), recall and practice drills, production reality check, curiosity bridge, glossary updates
 - 22.2.c - Evaluation reports that show before-vs-after improvement: baseline-to-intervention reporting design, metric and dataset integrity checks, significance-aware improvement framing, operational and user-impact deltas, common evaluation-reporting anti-patterns, hands-on before-after report lab (Build -> Break -> Measure -> Explain), recall and practice drills, production reality check, curiosity bridge, glossary updates
 - 22.2.d - Rejected alternatives and why they lost: alternative-elimination framework, constraint-weighted rejection logic, anti-handwave decision narratives, comparative failure-risk analysis, common rejection-document anti-patterns, hands-on rejected-alternatives memo lab (Build -> Break -> Measure -> Explain), recall and practice drills, production reality check, curiosity bridge, glossary updates
+- 22.3.a - Resume bullets grounded in measurable system outcomes: impact-first resume signal design, metric-backed bullet construction framework, recruiter and engineering keyword alignment, credibility guardrails for outcome claims, common bullet anti-patterns, hands-on bullet rewrite lab (Build -> Break -> Measure -> Explain), recall and practice drills, production reality check, curiosity bridge, glossary updates
+- 22.3.b - Project case-study pages and portfolio summaries: case-study narrative architecture, evidence-first section ordering, recruiter-to-engineer progressive depth strategy, visual and metric proof packaging, common case-study anti-patterns, hands-on case-study assembly lab (Build -> Break -> Measure -> Explain), recall and practice drills, production reality check, curiosity bridge, glossary updates
 
 ---
 
@@ -2318,6 +2323,579 @@ Carry-Forward Review (interleaved):
 
 ---
 
+## Topic 22.3: Hiring-Facing Packaging
+
+> **Topic time:** 6h
+> Focus: Translating technical work into recruiter-visible, manager-relevant, and engineer-credible hiring artifacts without losing technical truth.
+
+---
+
+## Subtopic 22.3.a: Resume Bullets Grounded In Measurable System Outcomes
+
+### ✅ Add to Knowledge Base
+
+### Reading Path + Level Tags
+
+- **Beginner:** Read sections 0-2 and section 8 (Active Recall).
+- **Intermediate:** Add sections 3-6 and section 9 (Practice).
+- **Pro:** Complete section 7 (Hands-On Lab) and section 12 (Exit Check + Carry-Forward Review).
+
+---
+
+### 0. Pre-Question Hook [Beginner]
+
+Pause: if an interviewer reads one bullet from your resume, will they see what you built, what changed, and why that change mattered?
+
+If the bullet has no measurable outcome, your strongest work can look ordinary.
+
+---
+
+### 1. The Intuition (Plain English) [Beginner]
+
+A strong resume bullet is a compressed system narrative: action + technical mechanism + measurable outcome.
+
+In GenAI hiring, vague bullets like "built an LLM app" are low signal because many candidates can say the same. Measurable outcome bullets differentiate ownership and impact.
+
+Analogy: commit messages. "Fixed bug" is weak; "reduced timeout retries by 42% by adding jittered backoff" is actionable and high-signal. Resume bullets should follow the same precision.
+
+Where the analogy breaks: commit messages target engineers only; resume bullets must communicate value to recruiters, managers, and engineers simultaneously.
+
+**Impact Bullet:** a concise statement that ties a concrete engineering action to a quantified business or system outcome.
+
+**Outcome Metric:** measurable result tied to user value or platform performance (for example p95 latency, groundedness, cost/request, success rate).
+
+**Evidence Anchor:** the source artifact supporting the claim (evaluation report, dashboard snapshot, incident record, or experiment log).
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+```mermaid
+flowchart LR
+    A[Raw Project Work] --> B[Action\nWhat you built/changed]
+    A --> C[Mechanism\nHow it worked technically]
+    A --> D[Outcome\nWhat improved measurably]
+    B --> E[Resume Bullet Draft]
+    C --> E
+    D --> E
+    E --> F[Credibility Check\nMetric + Timeframe + Context]
+    F --> G[Audience Polish\nRecruiter / Manager / Engineer readability]
+    G --> H[Final Impact Bullet]
+```
+
+What this shows:
+- Bullet quality comes from combining mechanism and impact, not impact-only language.
+- Credibility checks prevent inflated or unverifiable claims.
+- Audience polish improves readability without diluting technical truth.
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+#### Scenario A: RAG assistant optimization
+
+Product/use case context:
+- Candidate improved retrieval and prompt strategy for an internal support assistant.
+
+Constraints and practical effects:
+- Recruiter scan time is short; keywords and outcome clarity matter first.
+- Hiring manager needs evidence of ownership and business effect.
+- Engineer interviewer needs mechanism details and metric validity.
+
+Weak bullet:
+- "Improved RAG pipeline for customer support chatbot."
+
+Strong bullet:
+- "Redesigned RAG retrieval from dense-only to hybrid BM25+dense with reranking, improving grounded-answer rate from 71% to 84% while keeping p95 latency under 2.6s across 40k weekly support queries."
+
+What good looks like:
+- Action is specific.
+- Mechanism is identifiable.
+- Outcome is quantified with boundary conditions.
+
+#### Scenario B: Cost optimization with controlled quality tradeoff
+
+Product/use case context:
+- Candidate reduced inference cost by model routing.
+
+Constraints and practical effects:
+- Cost wins without quality guardrails may look reckless.
+- Need to show that degradation risk was managed.
+
+Strong bullet:
+- "Introduced tiered model routing (small model default, frontier fallback for complex queries), cutting cost/request by 38% while maintaining task success above 92% via weekly eval gates."
+
+What good looks like:
+- Tradeoff is acknowledged and bounded.
+- Guardrail is visible (eval gate/threshold).
+
+---
+
+### 4. System View (Think Like a Systems Engineer) [Intermediate]
+
+Inputs -> Transformations -> Outputs
+
+- Inputs:
+  - Project changes, metrics, and supporting artifacts
+  - Target role and job description keywords
+  - Space constraints (1-2 lines per bullet)
+- Transformations:
+  - Convert project work into action/mechanism/outcome structure.
+  - Select one primary metric and one optional guardrail metric.
+  - Add scope/timeframe to prevent ambiguity.
+  - Validate claim against evidence anchors.
+- Outputs:
+  - Resume bullets that are concise, credible, and technically differentiated.
+
+Observability for bullet quality:
+- Interview callback rate change after bullet revision
+- Interviewer follow-up depth (basic vs technical)
+- Clarification requests caused by ambiguity
+
+Failure points:
+- Metric without context -> can look inflated or irrelevant.
+- Mechanism without outcome -> reads like task list.
+- Outcome without mechanism -> sounds ungrounded.
+
+---
+
+### 5. System Design Flavor (Practical and Concise) [Intermediate]
+
+Recommended bullet formula:
+- Action verb + technical mechanism + measurable outcome + scope/timeframe + guardrail
+
+Example template:
+- "[Actioned system change] by [mechanism], improving [metric] from [before] to [after] for [scope], while [guardrail condition]."
+
+Tradeoffs in plain language:
+- Precision vs brevity:
+  - More numbers increase credibility.
+  - Too many numbers reduce readability.
+  - Keep one primary outcome metric plus one guardrail.
+- Technical depth vs recruiter readability:
+  - Deep terms show expertise.
+  - Excess jargon can reduce first-pass clarity.
+  - Use one core technical term and one plain-language impact phrase.
+- Ambitious claims vs verification risk:
+  - Big numbers attract attention.
+  - Unverifiable claims hurt trust if challenged.
+  - Only use metrics you can defend with evidence anchors.
+
+Scaling consideration (many applications):
+- Maintain a bullet bank mapped to role types so you can swap emphasis quickly without rewriting from scratch.
+
+---
+
+### 6. Common Mistakes + Debugging [Intermediate]
+
+Mistake 1:
+- Symptom: bullet sounds impressive but interviewers ask, "How was this measured?"
+- Likely cause: no evidence anchor or unclear metric definition.
+- First debugging step: attach source (eval report/dashboard) and define measurement window.
+
+Mistake 2:
+- Symptom: recruiters skip bullets despite strong project work.
+- Likely cause: bullets are mechanism-heavy and value-light.
+- First debugging step: rewrite opening phrase to foreground user/business/system impact.
+
+Mistake 3:
+- Symptom: engineering interview reveals overclaim risk.
+- Likely cause: bullet omits guardrail tradeoff (for example latency or quality floor).
+- First debugging step: add one balancing clause that shows constraint management.
+
+---
+
+### 7. Hands-On Lab (Concept -> Build -> Break -> Measure -> Explain) [Pro]
+
+Goal:
+- Convert 5 weak GenAI resume bullets into measurable, defensible impact bullets.
+
+Build:
+1. Collect 5 existing bullets from your project history.
+2. For each bullet, extract action, mechanism, and outcome metric.
+3. Add one scope/timeframe phrase and one guardrail clause.
+4. Validate each metric against an evidence anchor.
+
+Break:
+1. Remove outcome metric and test distinctiveness.
+2. Remove mechanism and test technical credibility.
+3. Remove scope/timeframe and test interpretability.
+
+Measure:
+- Evaluate with 2-3 reviewers:
+  - Clarity score (1-5)
+  - Credibility score (1-5)
+  - Technical depth score (1-5)
+  - Time to understand each bullet (seconds)
+
+Explain:
+- Why it broke:
+  - Missing metrics collapses impact proof.
+  - Missing mechanism collapses ownership depth.
+  - Missing context collapses comparability.
+- Guardrail:
+  - Use a fixed bullet checklist: mechanism, metric, scope, tradeoff, evidence anchor.
+
+---
+
+### 8. Active Recall (Spaced Repetition)
+
+Questions:
+1. What are the three mandatory parts of a high-signal GenAI resume bullet?
+2. Why is a guardrail clause useful in an outcome bullet?
+3. What makes a metric claim interview-safe?
+4. How does scope/timeframe improve bullet quality?
+
+Answer key:
+1. Action/mechanism/outcome with measurable evidence.
+2. It shows tradeoff awareness and production maturity.
+3. Clear definition plus traceable evidence anchor.
+4. It makes outcomes interpretable and less likely to be overstated.
+
+---
+
+### 9. Practice
+
+Mini-exercise:
+- Rewrite this weak bullet into a high-signal one: "Built an LLM chatbot for internal support."
+
+Suggested answer outline:
+- Include mechanism (RAG/agent/workflow), metric deltas, user scope, and constraint guardrail.
+
+Capstone-style question:
+- You have one resume line to summarize a complex GenAI project. How do you balance recruiter readability and engineering depth without using buzzword-heavy language?
+
+Suggested answer outline:
+1. Start with user-impact verb.
+2. Add one key technical mechanism.
+3. Add one primary quantified result.
+4. Add one guardrail/constraint phrase.
+5. Keep sentence under two lines.
+
+---
+
+### 10. Production Reality Check (Mandatory Ending)
+
+If this fails in prod, what is the first thing we inspect?
+
+- First inspect whether the metric in the resume bullet is still reproducible from current evaluation/dashboard data.
+- Why: stale or non-reproducible claims are the fastest way to lose trust in interviews.
+
+---
+
+### 11. Curiosity Bridge (Mandatory Ending)
+
+Strong bullets get attention, but hiring conversion improves most when bullets connect directly to demo artifacts and decision documents.
+
+That leads to the next packaging layer: linking resume claims to evidence packets for fast interviewer verification.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+Exit Check:
+- You are done when you can defend every major resume bullet with a specific mechanism, a measurable outcome, and a concrete evidence anchor.
+
+Carry-Forward Review (interleaved):
+- Q: From 22.2.c, what makes improvement claims trustworthy?
+- A: Controlled baseline-vs-intervention comparisons with quality and operational deltas.
+- Q: From 22.2.d, what strengthens decision credibility beyond the final choice?
+- A: Documented rejected alternatives with explicit constraint mismatch and revisit triggers.
+
+---
+
+## Subtopic 22.3.b: Project Case-Study Pages And Portfolio Summaries
+
+### ✅ Add to Knowledge Base
+
+### Reading Path + Level Tags
+
+- **Beginner:** Read sections 0-2 and section 8 (Active Recall).
+- **Intermediate:** Add sections 3-6 and section 9 (Practice).
+- **Pro:** Complete section 7 (Hands-On Lab) and section 12 (Exit Check + Carry-Forward Review).
+
+---
+
+### 0. Pre-Question Hook [Beginner]
+
+Pause: if someone reads your case-study page for 3 minutes, can they clearly answer these questions?
+
+1. What problem did you solve?
+2. What did you personally design and ship?
+3. What measurable outcomes proved it worked?
+
+If not, your project portfolio may look interesting but not hiring-convincing.
+
+---
+
+### 1. The Intuition (Plain English) [Beginner]
+
+A project case-study page is the long-form version of a resume bullet: it expands claim -> mechanism -> evidence -> lesson.
+
+Portfolio summaries are not blog posts and not raw docs dumps. They are structured evidence pages optimized for fast trust, then deeper technical validation.
+
+Analogy: movie trailer and full film.
+- Portfolio summary = trailer (high-signal overview).
+- Case-study page = full film (technical depth and decision detail).
+
+Where the analogy breaks: entertainment can hide behind emotion; hiring artifacts cannot. Every key claim must be traceable to measurable evidence.
+
+**Case-Study Spine:** the fixed narrative backbone of a project page (problem, constraints, architecture, decisions, results, failures, next steps).
+
+**Portfolio Summary Card:** compact project overview artifact linking to deeper case-study and supporting evidence.
+
+**Progressive Depth:** information ordering strategy where early sections are broadly readable and later sections carry technical depth for engineers.
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+```mermaid
+flowchart TD
+    A[Portfolio Landing Page] --> B[Project Summary Card]
+    B --> C[Case-Study Page]
+
+    C --> C1[Problem + User Context]
+    C --> C2[Constraints + Success Metrics]
+    C --> C3[Architecture + Workflow]
+    C --> C4[Tradeoffs + Rejected Alternatives]
+    C --> C5[Before-vs-After Results]
+    C --> C6[Failure Analysis + Lessons]
+    C --> C7[Demo + Repo + Appendix Evidence]
+
+    C5 --> D[Hiring Signal Outcome\nTrust + Depth + Ownership]
+```
+
+What this shows:
+- Summary cards and case-study pages should work as a system.
+- Case-study sections should follow a stable spine to reduce reviewer confusion.
+- Results and failure lessons must be first-class sections, not hidden appendices.
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+#### Scenario A: Recruiter and hiring manager first pass
+
+Product/use case context:
+- Reviewer has limited time and checks multiple candidates in a short window.
+- They need fast relevance and credibility signals.
+
+Constraints and practical effects:
+- Time: 2-5 minutes initial scan.
+- Over-dense technical sections can delay core understanding.
+- Missing outcomes makes project feel unfinished.
+
+What good looks like:
+- Summary card shows domain, role fit, and one measurable outcome.
+- Case-study opening clearly states problem, your ownership, and outcome deltas.
+
+#### Scenario B: Engineer deep-dive follow-up
+
+Product/use case context:
+- Engineer interviewer asks for architecture rationale and failure handling.
+
+Constraints and practical effects:
+- Needs technical truth with evidence links.
+- High-level storytelling without artifacts loses confidence quickly.
+
+What good looks like:
+- Case-study has architecture diagram, tradeoff memo excerpt, and evaluation table.
+- Includes one incident/failure section and mitigation proof.
+
+---
+
+### 4. System View (Think Like a Systems Engineer) [Intermediate]
+
+Inputs -> Transformations -> Outputs
+
+- Inputs:
+  - Project artifacts (README, demos, eval reports, tradeoff docs, incident notes)
+  - Target role expectations
+  - Viewer time budgets (2 min summary, 10 min deep read)
+- Transformations:
+  - Map artifacts to case-study spine sections.
+  - Prioritize summary card for quick trust trigger.
+  - Layer technical depth progressively.
+  - Link every major claim to evidence anchor.
+- Outputs:
+  - One portfolio summary card per project
+  - One structured case-study page per project
+  - Reusable interview evidence path
+
+Observability for packaging quality:
+- Click-through rate from summary cards to case-study pages
+- Time-on-page by section
+- Interview questions quality (surface-level vs systems-level)
+- Number of clarification questions caused by missing context
+
+Failure points:
+- Case-study reads like chronological diary -> weak decision signal.
+- No ownership separation -> unclear personal contribution.
+- No measurable outcomes -> low hiring trust.
+
+---
+
+### 5. System Design Flavor (Practical and Concise) [Intermediate]
+
+Recommended case-study page sections:
+- TL;DR summary (3-5 lines)
+- Problem and user context
+- Constraints and success criteria
+- Architecture and system flow
+- Key decisions and rejected alternatives
+- Evaluation and before-vs-after outcomes
+- Failures, postmortem-lite insights, and mitigations
+- What you owned and what changed because of your work
+- Links to repo/demo/evidence appendix
+
+Recommended summary card fields:
+- Project title and one-line value proposition
+- Stack tag (RAG, agent, multimodal, etc.)
+- One high-impact metric delta
+- Role-fit keywords
+- Link to full case-study
+
+Tradeoffs in plain language:
+- Story richness vs scan speed:
+  - Rich stories show nuance.
+  - Long openings reduce first-pass retention.
+  - Use TL;DR + expandable depth sections.
+- Visual polish vs technical depth:
+  - Beautiful pages attract attention.
+  - Substance wins interviews.
+  - Treat visuals as navigation, not evidence replacement.
+- Single template vs project-specific narrative:
+  - Templates improve consistency.
+  - Over-template can hide unique impact.
+  - Keep spine fixed, customize decision/results sections per project.
+
+Scaling consideration (many projects):
+- Build a shared case-study template and an evidence inventory table so updates propagate quickly across your portfolio.
+
+---
+
+### 6. Common Mistakes + Debugging [Intermediate]
+
+Mistake 1:
+- Symptom: reviewer says, "Interesting project, but what was the outcome?"
+- Likely cause: page emphasizes build process but omits measurable impact.
+- First debugging step: add a results block near top with before-vs-after metrics.
+
+Mistake 2:
+- Symptom: interviewer cannot tell your contribution from team work.
+- Likely cause: ownership boundaries are implicit.
+- First debugging step: add explicit "My role and ownership" subsection with decision and implementation scope.
+
+Mistake 3:
+- Symptom: case-study feels polished but not credible.
+- Likely cause: claims are not linked to evidence anchors.
+- First debugging step: add inline links to eval reports, dashboard captures, and tradeoff notes for each major claim.
+
+---
+
+### 7. Hands-On Lab (Concept -> Build -> Break -> Measure -> Explain) [Pro]
+
+Goal:
+- Produce one hiring-grade case-study page plus a summary card for a GenAI project in one iteration cycle.
+
+Build:
+1. Draft one summary card with role-fit headline and one measurable outcome.
+2. Build case-study page using the spine (problem -> constraints -> architecture -> decisions -> outcomes -> failures -> ownership).
+3. Attach at least 4 evidence anchors (demo, eval table, tradeoff note, incident note).
+4. Add one "what I would improve next" section.
+
+Break:
+1. Remove outcome metrics and assess trust drop.
+2. Remove ownership section and test interviewer clarity.
+3. Remove evidence links and test credibility.
+
+Measure:
+- Have 2-3 reviewers score:
+  - Clarity in first 2 minutes (1-5)
+  - Technical credibility (1-5)
+  - Ownership clarity (1-5)
+  - Interview readiness (1-5)
+
+Explain:
+- Why it broke:
+  - Missing outcomes weakens impact signal.
+  - Missing ownership weakens accountability signal.
+  - Missing evidence weakens truth signal.
+- Guardrail:
+  - Use a publishing checklist with mandatory sections and evidence anchors.
+
+---
+
+### 8. Active Recall (Spaced Repetition)
+
+Questions:
+1. What is the minimum spine of a high-signal case-study page?
+2. Why should summary cards and case-study pages be designed together?
+3. What section most improves ownership clarity?
+4. Why are evidence anchors mandatory for case-study claims?
+
+Answer key:
+1. Problem, constraints, architecture, decisions, outcomes, failures, ownership.
+2. They support fast trust first and deep validation next.
+3. Explicit "my role and ownership" section.
+4. They make claims verifiable and interview-safe.
+
+---
+
+### 9. Practice
+
+Mini-exercise:
+- Create a 5-line portfolio summary card for one project.
+
+Suggested answer outline:
+- Line 1: project title and user problem.
+- Line 2: core technical approach.
+- Line 3: measurable outcome.
+- Line 4: your ownership statement.
+- Line 5: link to full case-study and demo.
+
+Capstone-style question:
+- You must present one project to recruiter, hiring manager, and engineer using the same case-study page. How do you sequence sections so each audience sees its trust trigger first?
+
+Suggested answer outline:
+1. Start with TL;DR + impact metric for recruiter.
+2. Move to ownership, constraints, and decisions for manager.
+3. Deep dive into architecture, tradeoffs, and failure analysis for engineer.
+4. Close with evidence links and next-step improvements.
+
+---
+
+### 10. Production Reality Check (Mandatory Ending)
+
+If this fails in prod, what is the first thing we inspect?
+
+- First inspect whether case-study claims remain aligned with current system behavior and latest evaluation evidence.
+- Why: stale portfolio pages can create interview-time trust gaps even when the underlying project is strong.
+
+---
+
+### 11. Curiosity Bridge (Mandatory Ending)
+
+Case-study pages and summaries package one project well, but final hiring leverage comes from connecting multiple projects into a coherent capability narrative.
+
+That leads to cross-project portfolio architecture: sequencing projects to show breadth, depth, and growth trajectory.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+Exit Check:
+- You are done when a reviewer can understand your project in 2 minutes and verify your deepest claim within 10 minutes using linked evidence.
+
+Carry-Forward Review (interleaved):
+- Q: From 22.3.a, what makes a resume bullet interview-safe?
+- A: Action-mechanism-outcome with a verifiable evidence anchor.
+- Q: From 22.2.c, what must accompany quality improvement claims?
+- A: Operational deltas (latency, cost, reliability) and segment-level checks.
+
+---
+
 ## Module Glossary
 
 - **Architecture Storytelling Asset:** A visual-plus-narrative artifact that translates system design into fast, evaluable hiring evidence.
@@ -2348,3 +2926,9 @@ Carry-Forward Review (interleaved):
 - **Alternative Elimination Log:** Structured record of viable options that were considered and rejected with evidence.
 - **Constraint Mismatch:** The decisive conflict between an option and critical system constraints.
 - **Time-Bound Rejection:** A rejected option that is explicitly eligible for future reconsideration when assumptions shift.
+- **Impact Bullet:** A resume statement linking technical action to measurable system or business outcome.
+- **Outcome Metric:** Quantified result used to validate claimed impact.
+- **Evidence Anchor:** Concrete artifact that verifies a metric claim.
+- **Case-Study Spine:** Standard section sequence that keeps project narratives clear and decision-focused.
+- **Portfolio Summary Card:** Compact project overview optimized for fast first-pass hiring review.
+- **Progressive Depth:** Content layering strategy from broad readability to deep technical detail.
