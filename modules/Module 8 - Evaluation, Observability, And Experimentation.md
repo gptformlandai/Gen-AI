@@ -5591,6 +5591,374 @@ Carry-forward review from Subtopic 8.3.c:
 
 ---
 
+## Module 8 Checkpoint: Evaluation Story, Separate Measurement, and Trace-to-Change Loop
+
+### ✅ Add to Knowledge Base
+
+This checkpoint tests whether Module 8 has become a usable engineering habit, not just a list of metrics.
+
+Checkpoint outcomes:
+
+- Build an evaluation story for any GenAI system you discuss.
+- Measure retrieval and generation separately.
+- Explain how tracing leads to concrete system changes.
+
+---
+
+### 1. The Core Mental Model [Beginner]
+
+**Pause: before reading, if someone asks "how do you know this GenAI system is good?" can you answer without saying only "we tested it"?**
+
+An **Evaluation story** is the complete argument for how a GenAI system defines quality, measures quality, catches regressions, observes production behavior, and improves from failures. It is not one metric. It is the narrative that connects user goals, risks, offline evals, online traces, feedback, cost, latency, and release decisions.
+
+A strong evaluation story answers six questions:
+
+1. What task is the system supposed to accomplish?
+2. What can go wrong, and which failures are most costly?
+3. How do we measure each layer separately?
+4. What test sets, judges, and regression suites protect quality before release?
+5. What traces and feedback show what happened in production?
+6. How do production failures become fixes and future eval cases?
+
+The checkpoint mental model:
+
+> Evaluation is the system's quality contract. Retrieval metrics test whether the right evidence arrived. Generation metrics test whether the answer used that evidence correctly. Traces explain why production behavior happened. Closed-loop improvement turns that explanation into better systems.
+
+**Real-world analogy:** Think of a pilot's flight-readiness process. A plane is not considered safe because one gauge looks good. The team checks fuel, engine health, weather, route, crew readiness, maintenance history, cockpit signals, and post-flight incident reports. GenAI evaluation is similar: one score cannot prove readiness. The analogy breaks down because GenAI quality can involve subjective language, changing corpora, probabilistic outputs, user feedback, and privacy-sensitive production traces.
+
+---
+
+### 2. Visual Checkpoint Diagram [Intermediate]
+
+```mermaid
+flowchart TD
+    System[GenAI system]
+    Story[Evaluation story]
+    Retrieval[Retrieval measurement]
+    Generation[Generation measurement]
+    Regression[Regression suites and gates]
+    Tracing[Production traces]
+    Feedback[Feedback and labels]
+    Fixes[System improvements]
+
+    System --> Story
+    Story --> Retrieval
+    Story --> Generation
+    Story --> Regression
+    Regression -->|pre-release confidence| System
+    System --> Tracing
+    System --> Feedback
+    Tracing --> Fixes
+    Feedback --> Fixes
+    Fixes --> Regression
+    Fixes --> Story
+```
+
+The key is the loop: the evaluation story defines what should be true, regression systems test whether candidates still satisfy it, traces reveal what actually happened, and improvements update both the system and the eval assets.
+
+---
+
+### 3. Build an Evaluation Story for Any GenAI System [Intermediate]
+
+Use this template whenever you discuss a GenAI product, project, interview design, or production incident.
+
+#### Step 1: Define the System and User Outcome
+
+- Product: What does the system do?
+- User job: What outcome is the user trying to achieve?
+- Task types: What categories of requests exist?
+- Success condition: What must be true for the task to count as successful?
+- Failure cost: What happens if the system is wrong, slow, unsafe, or expensive?
+
+Example for a policy RAG assistant:
+
+- Product: Answers policy questions using internal documents.
+- User job: Get accurate policy guidance with source citations.
+- Success condition: Correct answer, supported by current policy, with exact citations and no unsupported claim.
+- Failure cost: Wrong policy guidance, compliance risk, user mistrust, or unnecessary escalation.
+
+#### Step 2: Define the Quality Contract
+
+A **Quality contract** is a testable statement of what good behavior requires.
+
+For RAG:
+
+- Required evidence must be retrieved and selected.
+- The answer must be grounded in selected evidence.
+- Citations must support the exact claims.
+- The system must refuse or escalate when evidence is missing.
+- Latency and cost must fit the product budget.
+
+For tool agents:
+
+- The correct tool must be selected.
+- Arguments must be valid and permission-safe.
+- State changes must match the user's authorized intent.
+- The final answer must honestly reflect tool results.
+
+For creative or summarization systems:
+
+- Output must satisfy task constraints.
+- Important content must be preserved.
+- Style and format must match the requested use case.
+- Unsafe, private, or unsupported content must be avoided.
+
+#### Step 3: Choose Evaluation Assets
+
+- Golden sets for trusted representative examples.
+- Regression suites for known failures and critical contracts.
+- LLM-as-judge only where calibrated against human labels.
+- Pairwise evals for preference-sensitive outputs.
+- Ablations for understanding which component caused improvement.
+- Production traces and feedback for real-world failure discovery.
+
+#### Step 4: Define Release Gates
+
+- Retrieval gates: Recall@k, MRR, NDCG, hit rate, permission filtering, freshness, and source-version correctness.
+- Generation gates: groundedness, faithfulness, citation accuracy, task success, refusal quality, tool correctness, and safety.
+- Product gates: p95 latency, cost per successful task, error rate, feedback label trend, and slice regressions.
+- Operational gates: trace coverage, redaction success, evaluator drift, flaky test rate, and recurrence of fixed failures.
+
+---
+
+### 4. Measure Retrieval and Generation Separately [Intermediate]
+
+A **Retrieval-generation split** is the habit of measuring evidence selection and answer generation as separate layers. Without this split, teams waste time fixing prompts when retrieval failed, or tuning retrieval when generation ignored good evidence.
+
+#### Retrieval Measurement: Did the Right Evidence Arrive?
+
+Ask:
+
+- Did the retriever find the required evidence?
+- Was the evidence high enough in the ranking?
+- Did filters enforce permissions and source freshness?
+- Did context packing keep the right chunks?
+- Did reranking improve or demote critical evidence?
+
+Useful metrics and checks:
+
+- Recall@k: Was required evidence in the top `k`?
+- Hit rate: Did at least one relevant item appear?
+- MRR: How high was the first relevant item?
+- NDCG: Did the ranking prioritize the most useful evidence?
+- Permission leakage rate: Did the system retrieve unauthorized content?
+- Freshness/version correctness: Did it retrieve the current source?
+- Context selection rate: Was retrieved evidence actually passed to the model?
+
+#### Generation Measurement: Did the Model Use Evidence Correctly?
+
+Ask:
+
+- Did the answer preserve the evidence?
+- Are claims supported, contradicted, or unsupported?
+- Are citations exact and attached to the right claims?
+- Did the answer complete the user's task?
+- Did it refuse safely when evidence or permission was missing?
+- Did tool use match the user's authorized intent?
+
+Useful metrics and checks:
+
+- Groundedness score and unsupported-claim rate.
+- Faithfulness and contradiction rate.
+- Citation precision, citation recall, and citation exactness.
+- Task success and task completion rate.
+- Tool selection, argument validity, state diff correctness, and final-answer consistency.
+- Refusal correctness and unsafe-compliance rate.
+- Answer polish only after correctness and task success are measured.
+
+#### Why the Split Matters
+
+| Symptom | Retrieval Signal | Generation Signal | Likely Fix |
+| --- | --- | --- | --- |
+| Wrong answer, required doc absent | Low Recall@k | Grounding may look weak | Improve indexing, query rewrite, filters, reranking, or corpus coverage |
+| Wrong answer, required doc present | Good Recall@k | Unsupported or contradicted claims | Improve prompt, context ordering, claim checking, or answer verifier |
+| Good answer, wrong citation | Evidence may be present | Citation exactness fails | Fix citation attachment or claim-to-span mapping |
+| Tool action wrong | Retrieval may be irrelevant | Tool argument/state check fails | Fix tool schema, validator, permission check, or planner |
+| User unhappy with correct refusal | Retrieval/generation may be correct | Task satisfaction low | Improve explanation, next-step UX, or escalation path |
+
+---
+
+### 5. Explain How Tracing Leads to Concrete System Changes [Intermediate]
+
+A **Trace-to-change loop** is the path from observed production behavior to a targeted system improvement.
+
+The loop:
+
+1. Start with a user complaint, negative feedback, failed task, latency spike, safety event, or suspicious metric.
+2. Open the request trace and inspect spans, captured payloads, state snapshots, tool calls, and model output.
+3. Identify the earliest layer where expected state diverged from actual state.
+4. Apply an error label and cluster similar traces.
+5. Route the cluster to the owner of the likely failing layer.
+6. Create a fix hypothesis.
+7. Convert representative traces into sanitized eval or regression cases.
+8. Implement the fix and run retrieval, generation, latency, cost, and slice checks.
+9. Ship only if release gates pass.
+10. Monitor production recurrence.
+
+#### Trace Signal to System Change Map
+
+| Trace Evidence | Likely Root Cause | Concrete System Change | Eval or Gate to Add |
+| --- | --- | --- | --- |
+| Required doc missing from top-k | Retrieval miss | Improve query rewrite, embeddings, metadata filters, index coverage, or reranker | Recall@k and hit-rate regression for that slice |
+| Required doc retrieved but not selected | Context packing failure | Change packing rules, chunk ordering, deduplication, or token budget | Context selection regression |
+| Evidence selected but answer contradicts it | Generation faithfulness failure | Prompt change, claim verifier, grounding check, lower-risk model route | Groundedness and contradiction gate |
+| Citation points to broad/wrong source | Citation attachment failure | Claim-to-span citation mapping or citation validator | Citation precision/exactness gate |
+| Tool called with wrong argument | Tool planning or validation failure | Tool schema description, argument validator, permission check, clarification step | Tool fixture regression |
+| Tool succeeded but answer says wrong thing | Final response mismatch | Tool-result summarizer or final-answer consistency validator | Tool-result consistency gate |
+| p95 latency spike in reranker span | Slow retrieval/reranking | Cache, reduce candidates, route by risk, optimize reranker | Latency budget gate |
+| Negative feedback on correct refusal | UX/product issue | Better explanation, safe next step, escalation flow | Correct-refusal and task-success-after-refusal eval |
+
+---
+
+### 6. Checkpoint Hands-On Lab: Build -> Break -> Measure -> Explain [Pro]
+
+This lab builds a tiny evaluation story checker. It verifies whether a system description covers retrieval, generation, tracing, feedback, and closed-loop improvement.
+
+#### Build: Minimal Evaluation Story Checker
+
+```python
+evaluation_story = {
+    "system": "policy_rag_assistant",
+    "user_outcome": "answer policy questions with exact citations",
+    "risk_slices": ["billing", "refunds", "current_policy", "high_confidence_answers"],
+    "retrieval_metrics": ["recall@5", "mrr", "source_version_correctness", "permission_filter_pass_rate"],
+    "generation_metrics": ["groundedness", "citation_exactness", "unsupported_claim_rate", "task_success"],
+    "latency_cost_metrics": ["p95_latency", "cost_per_successful_task"],
+    "regression_assets": ["golden_set", "retrieval_regression_suite", "citation_regression_suite"],
+    "production_observability": ["trace_id", "retrieval_spans", "prompt_capture", "context_capture", "feedback_labels"],
+    "closed_loop": ["trace_to_fix_workflow", "eval_promotion", "release_guardrail", "recurrence_monitor"],
+}
+
+required_sections = {
+    "user_outcome": "What success means for the user.",
+    "risk_slices": "Where failures matter most.",
+    "retrieval_metrics": "How evidence selection is measured.",
+    "generation_metrics": "How answer quality is measured.",
+    "latency_cost_metrics": "How production constraints are measured.",
+    "regression_assets": "How known behavior is protected before release.",
+    "production_observability": "How production behavior is inspected.",
+    "closed_loop": "How traces become fixes and evals.",
+}
+
+def check_evaluation_story(story):
+    missing = []
+    weak = []
+    for section in required_sections:
+        value = story.get(section)
+        if not value:
+            missing.append(section)
+        elif isinstance(value, list) and len(value) < 2:
+            weak.append(section)
+    separate_layers = bool(story.get("retrieval_metrics")) and bool(story.get("generation_metrics"))
+    has_closed_loop = "eval_promotion" in story.get("closed_loop", []) and "recurrence_monitor" in story.get("closed_loop", [])
+    return {
+        "missing_sections": missing,
+        "weak_sections": weak,
+        "retrieval_generation_split": separate_layers,
+        "closed_loop_ready": has_closed_loop,
+        "checkpoint_pass": not missing and separate_layers and has_closed_loop,
+    }
+
+print(check_evaluation_story(evaluation_story))
+```
+
+#### Break: Remove the Separation
+
+```python
+broken_story = {
+    "system": "policy_rag_assistant",
+    "user_outcome": "answer policy questions",
+    "quality_metric": ["thumbs_up_rate"],
+    "production_observability": ["logs"],
+}
+
+print(check_evaluation_story(broken_story))
+```
+
+This broken story fails because it has no retrieval-generation split, no risk slices, no regression assets, no latency/cost constraints, and no closed-loop path from trace to fix.
+
+#### Measure: What the Checker Teaches
+
+Useful checkpoint measures:
+
+- Does the system define task success, not only answer polish?
+- Are retrieval and generation measured separately?
+- Are high-risk slices explicit?
+- Are golden sets and regression suites versioned?
+- Are judges calibrated where used?
+- Are latency and cost treated as quality constraints?
+- Are traces connected to feedback, labels, eval promotion, and recurrence monitoring?
+
+#### Explain: Why This Matters
+
+The strong story can diagnose where quality fails and protect improvements over time. The weak story only says whether users seemed happy or unhappy, which is not enough for engineering. In real GenAI systems, evaluation becomes useful only when it separates layers, links offline and online evidence, and creates a path from production failure to durable system change.
+
+---
+
+### 7. Checkpoint Practice [Intermediate]
+
+#### Mini-Exercise: Evaluation Story in 90 Seconds
+
+Pick any GenAI system and answer:
+
+- What is the user outcome?
+- What are the top 3 failure modes?
+- Which retrieval metrics apply, if any?
+- Which generation/task metrics apply?
+- Which slices are high-risk?
+- What regression suite protects known failures?
+- What trace spans and payloads are captured?
+- How does a production failure become a fix and future eval?
+
+Suggested answer shape for a RAG tool agent:
+
+- Outcome: answer policy questions and create allowed support cases.
+- Failures: stale retrieval, unsupported answer, wrong tool argument.
+- Retrieval: Recall@5, MRR, source version correctness, permission filtering.
+- Generation: groundedness, citation exactness, task success, tool argument validity, final-answer consistency.
+- Slices: refunds, claim approval, high-risk tool actions, current-policy questions.
+- Regression: stale-policy retrieval fixtures, citation fixtures, tool-call fixtures, correct-refusal fixtures.
+- Traces: retrieval spans, selected context, prompt version, tool call, tool result, state diff, model output, feedback label.
+- Loop: label trace, cluster failures, route owner, fix hypothesis, eval promotion, release gate, recurrence monitor.
+
+#### Capstone-Style Checkpoint Question [Pro]
+
+You are interviewing for a GenAI systems role. The interviewer asks: "How would you evaluate and operate a RAG agent that answers internal policy questions and can create support tickets?"
+
+Answer outline:
+
+- Start with the task contract: accurate policy answer, exact citation, safe refusal when evidence is missing, and authorized ticket creation.
+- Build separate retrieval evals: Recall@k, MRR, NDCG, hit rate, source freshness, permission filtering, and selected-context coverage.
+- Build separate generation evals: groundedness, faithfulness, citation precision/recall/exactness, task success, refusal correctness, and tool-result consistency.
+- Add regression suites for stale sources, wrong citations, wrong tool arguments, unsafe refusals, and high-risk slices.
+- Use calibrated LLM-as-judge only for clearly defined rubric tasks and verify against human labels.
+- Track latency, cost per successful task, timeout rate, and cache hit rate as quality constraints.
+- Instrument traces for prompt version, retrieved docs, selected context, model output, tool calls, state diffs, feedback, and labels.
+- Close the loop: production trace -> error label -> root-cause cluster -> owner -> fix hypothesis -> trace-derived eval -> release gate -> recurrence monitoring.
+
+---
+
+### 8. Module 8 Exit Check [Beginner]
+
+You're done with Module 8 when you can do these three things without notes:
+
+1. Build an evaluation story for any GenAI system.
+2. Explain why retrieval and generation must be measured separately.
+3. Show how a production trace leads to a concrete system change and future regression protection.
+
+Carry-forward review:
+
+- **Question:** Why can answer polish hide product failure?
+- **Answer:** A fluent answer can still be unsupported, cite the wrong source, fail the user's task, call the wrong tool, or violate policy.
+
+- **Question:** Why does tracing matter after offline evals pass?
+- **Answer:** Production includes real users, changing data, permissions, latency, tool failures, and feedback patterns that offline evals may not fully represent.
+
+- **Question:** What is the fastest way to debug a bad RAG answer?
+- **Answer:** Check whether required evidence was retrieved, selected into context, used faithfully, and cited correctly before changing prompts blindly.
+
+---
+
 ## Module Glossary
 
 - **Acceptance rate:** The fraction of generated drafts, answers, plans, patches, or actions accepted by users or downstream systems.
@@ -5646,6 +6014,7 @@ Carry-forward review from Subtopic 8.3.c:
 - **Error labeling queue:** A workflow where reviewers assign structured labels to feedback events and production failures.
 - **Error taxonomy:** A controlled vocabulary of failure categories used to label feedback consistently.
 - **Evaluation dataset:** A set of test queries with known relevant documents, passages, answers, or relevance grades.
+- **Evaluation story:** The complete argument for how a GenAI system defines quality, measures it, catches regressions, observes production behavior, and improves from failures.
 - **Experiment gate:** A pass/fail rule that determines whether a candidate can ship or move to the next testing stage.
 - **Experiment hypothesis:** A clear statement of what change should improve which metric for which task slice.
 - **Experiment registry:** Versioned storage for hypotheses, variants, owners, datasets, metrics, gates, and decisions.
@@ -5719,6 +6088,7 @@ Carry-forward review from Subtopic 8.3.c:
 - **Prompt regression:** A quality or behavior drop caused by changes to prompts, model routing, model settings, or policy instructions.
 - **Prompt sensitivity:** Variation in judge results caused by small changes to the judge prompt, rubric wording, or output format.
 - **Proxy metric:** An indirect metric that is easier to measure but only approximates the real product goal.
+- **Quality contract:** A testable statement of what good behavior requires for a GenAI system or workflow.
 - **Quality-cost frontier:** The best achievable quality for each cost or latency budget.
 - **Reference-based judge:** A judge that evaluates output against a gold answer, evidence, expected tool state, or other reference material.
 - **Reference-free judge:** A judge that evaluates output without a gold answer or explicit reference.
@@ -5736,6 +6106,7 @@ Carry-forward review from Subtopic 8.3.c:
 - **Replay artifact:** A sanitized package of inputs, configs, and expected behavior that can reproduce a production issue offline.
 - **Retention tier:** A policy category that controls how long a captured payload or metadata record is retained.
 - **Retrieval fixture:** A regression test case focused on required evidence, document version, permission filters, or relevance in top results.
+- **Retrieval-generation split:** The practice of measuring evidence retrieval and answer generation as separate system layers.
 - **Retrieval regression:** A retrieval quality drop caused by changes to chunking, embeddings, indexing, reranking, query rewriting, corpus, or permissions.
 - **Root-cause cluster:** A group of similar labeled failures that likely share the same underlying cause.
 - **Rubric:** A scoring guide that defines what good, partial, failed, unsafe, or correct-refusal outputs look like.
@@ -5781,6 +6152,7 @@ Carry-forward review from Subtopic 8.3.c:
 - **Trace ID:** A unique identifier that connects every span, log line, model call, tool call, and feedback event for one request.
 - **Trace instrumentation:** Logging and tracing that captures per-stage timing, tokens, model calls, tool calls, retries, cache hits, and errors.
 - **Trace join rate:** The fraction of feedback events that can be connected to the underlying trace, output, model version, tool call, or workflow state.
+- **Trace-to-change loop:** The path from observed production behavior to a targeted system improvement and future regression protection.
 - **Trace-to-fix workflow:** The workflow from production trace or feedback signal to root cause, fix hypothesis, system change, eval case, and verification.
 - **Trace viewer:** A UI for inspecting one request as a timeline or waterfall with spans, attributes, errors, and state.
 - **Treatment:** The changed condition being tested against the control.
