@@ -22,6 +22,8 @@
 | **Topic 22.3** | **Hiring-facing packaging (6h)** | |
 | 22.3.a | Resume bullets grounded in measurable system outcomes (1.5h) | ✅ Done |
 | 22.3.b | Project case-study pages and portfolio summaries (1.5h) | ✅ Done |
+| 22.3.c | Interview walkthroughs for architecture, failures, and tradeoffs (1.5h) | ✅ Done |
+| 22.3.d | Open-source hygiene, visuals, and presentation quality (1.5h) | ✅ Done |
 
 **Covered so far:**
 - 22.1.a - Architecture diagrams that show system layers clearly: reading path by level, layered architecture storytelling model, strong-vs-weak diagram patterns, production constraints framing, review-loop system view, hiring tradeoffs, common mistakes and debugging checks, hands-on lab (Build -> Break -> Measure -> Explain), recall drills, practice prompts, production reality check, curiosity bridge, exit check, glossary
@@ -34,6 +36,8 @@
 - 22.2.d - Rejected alternatives and why they lost: alternative-elimination framework, constraint-weighted rejection logic, anti-handwave decision narratives, comparative failure-risk analysis, common rejection-document anti-patterns, hands-on rejected-alternatives memo lab (Build -> Break -> Measure -> Explain), recall and practice drills, production reality check, curiosity bridge, glossary updates
 - 22.3.a - Resume bullets grounded in measurable system outcomes: impact-first resume signal design, metric-backed bullet construction framework, recruiter and engineering keyword alignment, credibility guardrails for outcome claims, common bullet anti-patterns, hands-on bullet rewrite lab (Build -> Break -> Measure -> Explain), recall and practice drills, production reality check, curiosity bridge, glossary updates
 - 22.3.b - Project case-study pages and portfolio summaries: case-study narrative architecture, evidence-first section ordering, recruiter-to-engineer progressive depth strategy, visual and metric proof packaging, common case-study anti-patterns, hands-on case-study assembly lab (Build -> Break -> Measure -> Explain), recall and practice drills, production reality check, curiosity bridge, glossary updates
+- 22.3.c - Interview walkthroughs for architecture, failures, and tradeoffs: structured live walkthrough flow design, architecture-failure-tradeoff narrative sequencing, interruption handling and depth branching, evidence-backed verbal reasoning patterns, common walkthrough anti-patterns, hands-on mock-interview walkthrough lab (Build -> Break -> Measure -> Explain), recall and practice drills, production reality check, curiosity bridge, glossary updates
+- 22.3.d - Open-source hygiene, visuals, and presentation quality: repository hygiene standards for hiring trust, visual communication quality bars for architecture and results, contribution and maintainability signaling, artifact polish without substance loss, common presentation anti-patterns, hands-on repo-polish and presentation lab (Build -> Break -> Measure -> Explain), recall and practice drills, production reality check, curiosity bridge, glossary updates
 
 ---
 
@@ -1377,6 +1381,45 @@ Build:
 4. Add tradeoff debt section and remediation plan with owners.
 5. Define verification metrics and alert thresholds.
 
+**Reference Artifact — filled postmortem-lite example:**
+
+**Weak version (symptom labeling — avoid):**
+> Root cause: LLM started giving outdated answers after document refresh.
+> Action: We updated the pipeline.
+> Verification: Tested and it seems better now.
+
+*Why this is weak:* Names the symptom, not the causal mechanism. No timeline, no tradeoff debt, no measurable verification. Any senior reviewer can immediately see it was written retrospectively without rigour.
+
+---
+
+**Strong version (causal chain — target):**
+
+> **Incident:** 2024-10-14 09:42 UTC — Policy assistant returning 2023 policy text for 18% of compliance queries. Flagged by 3 support agents within 22 minutes of policy document refresh deployment.
+>
+> **Root cause:** Embedding cache TTL was set to 7 days. Post-refresh invalidation job had a silent config bug that skipped documents in the "policy" document class. Model retrieved stale embeddings with high cosine similarity scores, producing answers that looked high-confidence but cited expired guidance.
+>
+> **Contributing factor 1:** Dense-only retrieval relies entirely on embedding freshness. No freshness validator existed in the pipeline to detect stale hits.
+>
+> **Contributing factor 2 — Tradeoff Debt:** The 7-day TTL was introduced in Sprint 21 explicitly to hit p95 <1.8s by reducing embedding recompute overhead. That performance optimization accepted a freshness risk that was never instrumented with an alert.
+>
+> **Timeline:**
+> - 09:31 UTC — Policy doc refresh job initiated (automatic, scheduled).
+> - 09:42 UTC — First agent reports wrong compliance answer.
+> - 09:50 UTC — Three additional reports; on-call engineer paged.
+> - 09:58 UTC — Root cause confirmed via cache logs (stale embeddings for "policy" class).
+> - 10:08 UTC — Forced full cache invalidation for "policy" class deployed (+26 min from incident start).
+> - 10:15 UTC — Staleness rate returns to <0.5%.
+>
+> **Remediation:**
+> - Short-term (Owner: Platform Eng; Due: Same day): Force cache invalidation on any regulated document class immediately after refresh job completes.
+> - Long-term (Owner: Eval team; Due: 2 weeks): Add freshness SLO alert — fire if cache hit rate for recently-modified docs exceeds 40% within 10 minutes of any refresh event.
+>
+> **Verification:** Freshness alert deployed 2024-10-16. Tested with synthetic doc refresh; alert fires within 8 minutes. Staleness metric monitored on daily dashboard.
+
+*Why this is strong:* Timeline anchors causality precisely. Tradeoff debt explains **why** the vulnerability existed, showing design maturity not blame. Each remediation has a named owner and measurable done-signal. A reviewer can verify prevention was real, not aspirational.
+
+---
+
 Break:
 1. Remove timeline precision and re-read for causal clarity.
 2. Replace root cause with generic language ("system issue") and re-evaluate.
@@ -1668,6 +1711,25 @@ Build:
 4. Select one stack and write rationale with rejected alternatives.
 5. Define acceptance criteria and re-evaluation triggers.
 
+**Reference Artifact — filled decision matrix (support RAG assistant, 40k weekly queries):**
+
+| Option | Quality (recall@5) | p95 Latency | Cost/req | Reliability | Verdict |
+|---|---|---|---|---|---|
+| gpt-4o + dense retrieval | 91% | 3.8s | $0.11 | High | ❌ Latency and cost exceed both targets |
+| **gpt-4o-mini + hybrid BM25+dense + cross-encoder rerank** | **87%** | **1.9s** | **$0.04** | **High** | **✅ Chosen** |
+| gpt-4o-mini + dense-only | 81% | 1.7s | $0.03 | High | ❌ Recall gap on lexical policy queries — 6pp below quality threshold |
+| Local Llama 3.1 70B + hybrid | 83% | 2.4s | $0.01 | Medium | ❌ Infra ops overhead + 4pp quality shortfall + medium reliability |
+
+**Constraint weights applied:** Latency 35% · Quality 30% · Cost 20% · Reliability 15%
+
+**Acceptance criteria:** p95 <2.5s AND recall@5 ≥85% AND cost/req <$0.05
+
+**Re-evaluation trigger:** cost/req rises above $0.06 OR recall@5 drops below 83% for 3 consecutive weekly evaluation runs
+
+*Why this matrix is high-signal:* It shows not just the winner, but why every alternative was rejected on comparable evidence. The constraint weights reveal prioritisation logic. The re-evaluation trigger proves the decision is treated as time-bounded, not permanent — a mature production engineering signal.
+
+---
+
 Break:
 1. Remove rejected alternatives and test if rationale still feels credible.
 2. Remove latency/cost metrics and test if production readiness remains defensible.
@@ -1831,14 +1893,15 @@ Product/use case context:
 - Goal is fewer factual misses on policy queries.
 
 Constraints and practical effects:
-- Quality target: increase grounded answer rate.
-- Latency budget: p95 must stay under existing SLA.
-- Cost budget: retrieval and reranking costs must remain within envelope.
+- Quality target: increase grounded answer rate from a ~73% baseline to ≥80%. At 73%, roughly 1-in-4 answers lacks source grounding — unacceptable for compliance queries where agents act directly on the response without a secondary check.
+- Latency budget: p95 must stay under 2.5s SLA. Current p95 is 1.71s; adding hybrid retrieval and a cross-encoder reranker adds ~400–500ms median overhead. The 0.79s headroom is enough to absorb this only if the reranker runs in-process rather than as a remote service hop.
+- Cost budget: retrieval and reranking costs must stay within $0.05/request. BM25 is near-zero incremental cost; a lightweight cross-encoder reranker adds approximately $0.008/request, keeping the total within envelope.
 
 What good looks like:
-- Report shows baseline vs new strategy on same dataset and query buckets.
-- Quality improves, latency/cost increases are quantified and judged acceptable.
-- Includes error analysis for cases that still fail.
+- Report shows dense-only baseline (recall@5 = 82%, grounded rate = 73.4%, p95 = 1.71s, cost = $0.031) vs hybrid + rerank (recall@5 = 87%, grounded rate = 84.1%, p95 = 2.18s, cost = $0.041) on 1,200 stratified queries from a production traffic sample.
+- Quality improvement of +10.7 pp is validated; latency increase of +0.47s stays within SLA with 0.32s headroom; cost increase of +$0.010 is within budget.
+- Segment analysis shows the bottom-20% hardest queries (multi-document synthesis) improved most — recall@5 from 58% to 71% — accounting for most of the overall grounded-rate gain.
+- Error analysis identifies the remaining 15–16% non-grounded answers as concentrated on ambiguous or conflicting multi-policy queries; flagged for a routing experiment to a higher-capability model fallback.
 
 #### Scenario B: Model downshift for cost optimization
 
@@ -1847,13 +1910,15 @@ Product/use case context:
 - Objective is cost reduction with minimal quality regression.
 
 Constraints and practical effects:
-- Cost target: reduce cost/request significantly.
-- Quality floor: task success cannot drop below threshold.
-- Reliability: refusal/error rates must not spike.
+- Cost target: reduce cost/request from $0.09 (gpt-4o default) to ≤$0.04. At 40,000 weekly queries, the current spend is ~$3,600/week ($187k/year). The target cost of $0.04/request brings this to ~$1,600/week — roughly $100k/year in savings for a single product. That makes the business case explicit and the tradeoff worth engineering effort.
+- Quality floor: task success rate cannot drop below 88%. Current baseline is 93%; accepting a floor of 88% still delivers a strong user experience while capturing the cost reduction. Dropping below 88% would visibly degrade agent trust in the assistant.
+- Reliability: refusal and error rates must not increase above 2%. Smaller models are more likely to refuse or produce empty responses on edge-case queries — this must be tracked explicitly, not assumed safe.
 
 What good looks like:
-- Report presents cost savings and quality movement by task type.
-- Regression segments are identified with mitigation plan (fallback routing for hard queries).
+- Report compares gpt-4o baseline (task success = 93%, cost = $0.09/req, p95 = 2.1s) vs gpt-4o-mini + tighter prompt structure (task success = 91%, cost = $0.037/req, p95 = 1.4s) on a stratified 1,000-query set.
+- Cost savings of −59% confirmed; task success regression of −2pp is within the acceptable quality floor.
+- Regression segment identified: complex multi-document synthesis queries drop from 87% to 74% success on gpt-4o-mini. Mitigation: route queries that retrieve >3 documents to gpt-4o as a targeted fallback — adds only $0.002 to the weighted average per-request cost, preserving the bulk of savings.
+- Recommendation: ship to 100% traffic with the fallback routing rule active and a weekly task-success monitor against the 88% floor.
 
 ---
 
@@ -1948,6 +2013,27 @@ Build:
 3. Evaluate on a fixed dataset and one sampled production slice.
 4. Produce metric table with before, after, delta, and threshold status.
 5. Add segment analysis plus recommendation (rollout, partial rollout, or reject).
+
+**Reference Artifact — filled before-vs-after metric table:**
+
+| Metric | Baseline (dense-only) | After (hybrid + rerank) | Delta | Threshold | Status |
+|---|---|---|---|---|---|
+| Grounded answer rate | 73.4% | 84.1% | +10.7 pp | ≥80% | ✅ Pass |
+| Factual miss rate | 14.2% | 6.8% | −7.4 pp | ≤8% | ✅ Pass |
+| p95 latency | 1.71s | 2.18s | +0.47s | ≤2.5s | ✅ Pass |
+| Cost/request | $0.031 | $0.041 | +$0.010 | ≤$0.05 | ✅ Pass |
+| Failure / timeout rate | 1.1% | 1.3% | +0.2 pp | ≤2% | ✅ Pass |
+| recall@5 (hard queries, bottom 20%) | 58% | 71% | +13 pp | ≥65% | ✅ Pass |
+
+**Evaluation set:** 1,200 stratified queries — production traffic sample, Q4 2024, held out from any tuning.
+
+**Segment analysis:** The bottom-20% hardest queries (multi-policy synthesis) improved the most — recall@5 from 58% to 71%. Simple single-document lookups improved only marginally (+2 pp) since dense retrieval already solved them. This tells you where hybrid retrieval actually earns its overhead cost.
+
+**Recommendation:** Ship to 100% traffic. Monitor p95 latency at 10× traffic milestone — reranker inference is the most pressure-sensitive component. Re-evaluate if grounded-answer rate drops below 80% for two consecutive weekly evaluation runs.
+
+*Why this table is high-signal:* Every metric has a before value, an after value, an explicit threshold, and a binary pass/fail verdict. A reviewer immediately sees not just "it improved" but by precisely how much, at what operational cost, and whether it is production-ready. This is the format that closes an interview conversation.
+
+---
 
 Break:
 1. Change dataset between baseline and intervention and observe comparison collapse.
@@ -2896,6 +2982,644 @@ Carry-Forward Review (interleaved):
 
 ---
 
+## Subtopic 22.3.c: Interview Walkthroughs For Architecture, Failures, And Tradeoffs
+
+### ✅ Add to Knowledge Base
+
+### Reading Path + Level Tags
+
+- **Beginner:** Read sections 0-2 and section 8 (Active Recall).
+- **Intermediate:** Add sections 3-6 and section 9 (Practice).
+- **Pro:** Complete section 7 (Hands-On Lab) and section 12 (Exit Check + Carry-Forward Review).
+
+---
+
+### 0. Pre-Question Hook [Beginner]
+
+Pause: if an interviewer interrupts your architecture explanation and asks about a failure you had not planned to discuss yet, can you pivot without losing narrative clarity?
+
+Strong interview walkthroughs are designed for interruption, not for perfect linear delivery.
+
+---
+
+### 1. The Intuition (Plain English) [Beginner]
+
+An interview walkthrough is a controlled reasoning performance: you guide the listener through system architecture, known failures, and design tradeoffs while proving ownership and judgment.
+
+The most effective pattern is architecture -> failure lens -> tradeoff justification -> measurable outcomes.
+
+Analogy: city tour with detours. A good guide has a core route and optional detours based on audience questions, but always reconnects to the main route.
+
+Where the analogy breaks: interviewers actively test weak points. Your walkthrough must survive adversarial questioning and evidence challenges, not just curiosity detours.
+
+**Walkthrough Backbone:** the stable sequence of points you can deliver in 4-8 minutes regardless of interruptions.
+
+**Interruption Pivot:** a practiced transition from unexpected question back to core narrative without losing structure.
+
+**Depth Branch:** optional deep-dive segment entered when interviewers request details on failure analysis, metrics, or alternatives.
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+```mermaid
+flowchart LR
+    S0[Start: Problem + Scope] --> S1[Architecture Overview]
+    S1 --> S2[Critical Flow + Constraints]
+    S2 --> S3[Failure Case + Root Cause]
+    S3 --> S4[Tradeoff Decision + Rejected Option]
+    S4 --> S5[Measured Outcomes + Guardrails]
+    S5 --> S6[Close: Lessons + Next Iteration]
+
+    S1 -. interviewer deep dive .-> D1[Depth Branch: Component Details]
+    S3 -. interviewer challenge .-> D2[Depth Branch: Incident Timeline]
+    S4 -. interviewer challenge .-> D3[Depth Branch: Decision Matrix]
+    D1 --> S2
+    D2 --> S4
+    D3 --> S5
+```
+
+What this shows:
+- Walkthroughs need a fixed backbone and intentional deep-dive branches.
+- Failure and tradeoff sections are core, not optional add-ons.
+- Good transitions reconnect every branch to outcomes.
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+#### Scenario A: Mid-level AI engineer technical round
+
+Product/use case context:
+- Candidate gets 20-25 minutes for one project walkthrough plus Q/A.
+
+Constraints and practical effects:
+- Time is limited; over-detail in architecture can starve failure/tradeoff discussion.
+- Interviewer may intentionally jump to "what broke" to test maturity.
+- Pure feature storytelling without tradeoffs looks junior.
+
+What good looks like:
+- Candidate completes backbone in <= 7 minutes.
+- Uses one failure case and one tradeoff decision with metrics.
+- Handles interruptions while preserving flow.
+
+#### Scenario B: Senior-level loop with system ownership focus
+
+Product/use case context:
+- Panel expects incident handling, decision quality, and long-term thinking.
+
+Constraints and practical effects:
+- Need to prove operational judgment, not only architecture knowledge.
+- Must show both what worked and what failed.
+- Must defend rejected alternatives under pressure.
+
+What good looks like:
+- Candidate presents architecture and incident in integrated way.
+- Tradeoff choices are framed with acceptance criteria and revisit triggers.
+- Ends with measurable outcomes and improvement roadmap.
+
+---
+
+### 4. System View (Think Like a Systems Engineer) [Intermediate]
+
+Inputs -> Transformations -> Outputs
+
+- Inputs:
+  - Architecture diagram, incident note, tradeoff document, evaluation results
+  - Interview format and time budget
+  - Common challenge questions
+- Transformations:
+  - Build a timed backbone (problem, architecture, failure, tradeoff, outcomes).
+  - Attach evidence anchors to each segment.
+  - Define interruption pivots and depth branches.
+  - Rehearse transitions and concise answers.
+- Outputs:
+  - Interview walkthrough script that is concise, resilient, and evidence-backed.
+
+Observability for walkthrough quality:
+- Completion rate of full backbone in time
+- Number of claims backed by evidence in live responses
+- Recovery time after interruption
+- Follow-up question depth (surface vs systems-level)
+
+Failure points:
+- Architecture-heavy monologue with no failure discussion.
+- Failure discussion without root cause or prevention evidence.
+- Tradeoff claims without rejected alternatives or metrics.
+
+---
+
+### 5. System Design Flavor (Practical and Concise) [Intermediate]
+
+Recommended 6-part walkthrough structure:
+- Problem and scope (30-45s)
+- Architecture and critical path (90s)
+- Failure case and diagnosis (90s)
+- Tradeoff decision and rejected option (90s)
+- Outcomes and guardrails (60s)
+- Lessons and next iteration (30-45s)
+
+Tradeoffs in plain language:
+- Polished script vs adaptive reasoning:
+  - Scripts improve timing.
+  - Over-scripting sounds robotic.
+  - Use structured points with flexible wording.
+- Breadth vs depth:
+  - Breadth shows range.
+  - Depth proves ownership.
+  - Use one project with one deep failure/tradeoff example.
+- Confidence vs defensibility:
+  - Confident delivery matters.
+  - Unsupported claims collapse under questions.
+  - Pair every major claim with an evidence anchor.
+
+Scaling consideration (multiple interviews):
+- Maintain role-specific variants (recruiter-friendly, manager-focused, engineer-deep) from the same evidence backbone.
+
+---
+
+### 6. Common Mistakes + Debugging [Intermediate]
+
+Mistake 1:
+- Symptom: interviewer says, "You explained what it is, but not why these choices were made."
+- Likely cause: walkthrough focuses on components, not constraints and decisions.
+- First debugging step: add explicit constraint statements before each major design decision.
+
+Mistake 2:
+- Symptom: failure section sounds vague and defensive.
+- Likely cause: no clear causal chain or measurable remediation evidence.
+- First debugging step: structure failure as symptom -> root cause -> fix -> verification.
+
+Mistake 3:
+- Symptom: candidate loses flow after interruptions.
+- Likely cause: no rehearsed interruption pivots.
+- First debugging step: prepare 3 pivot phrases that reconnect question answers back to the backbone.
+
+---
+
+### 7. Hands-On Lab (Concept -> Build -> Break -> Measure -> Explain) [Pro]
+
+Goal:
+- Build and rehearse a 7-minute interview walkthrough covering architecture, one failure, and one tradeoff with measurable outcomes.
+
+Build:
+1. Draft 6-part backbone with time boxes.
+2. Attach one evidence anchor per part.
+3. Add 3 likely interruption questions and pivot responses.
+4. Rehearse with timer and record delivery.
+
+**Reference Artifact — filled 7-minute walkthrough backbone:**
+
+**Scene 1 — Problem + scope (45 seconds):**
+> "We built a policy assistant for 240 support agents handling compliance queries. The baseline was dense-only RAG with gpt-3.5-turbo — 68% grounded-answer rate and $0.09/request. My objective was to push quality above 80% while keeping cost under $0.05/request and p95 under 2.5 seconds."
+
+**Scene 2 — Architecture (90 seconds):**
+> "The system has five layers: a React interface, a LangGraph orchestrator managing retrieval and generation state, a hybrid retrieval stage — BM25 plus dense embeddings with a cross-encoder reranker selecting top-5 chunks — gpt-4o-mini with a structured prompt enforcing source citation, and an observability stack logging every retrieval hit, model confidence score, and per-request cost. The critical path on each query is: hybrid search → rerank → prompt assembly → model call → citation validator → response delivery."
+
+**Scene 3 — Failure case (90 seconds):**
+> "In sprint 8, after a scheduled policy document refresh, 18% of answers cited outdated 2023 policy text. Support agents noticed wrong compliance guidance within 22 minutes of deployment. Root cause: the embedding cache had a 7-day TTL, and the invalidation job silently skipped the 'policy' document class due to a config bug. That TTL was introduced in Sprint 21 to hit p95 <1.8s — a performance optimisation that accepted freshness risk without adding an instrument to detect it. Fix: forced cache invalidation for regulated document classes after any refresh job, plus a freshness staleness alert. Recovery was 26 minutes from first report. The alert now detects similar drift within 8 minutes in test environments."
+
+**Scene 4 — Tradeoff (90 seconds):**
+> "We rejected gpt-4o as the default model. It scored 91% recall@5 against our 87% — a 4-point gap — but at $0.11/request versus $0.04, and p95 of 3.8 seconds against our 2.5s SLA. At 40,000 weekly queries, that $0.07 difference is roughly $145k/year. The 4-point quality increment did not justify that. We kept gpt-4o as a targeted fallback for multi-document synthesis queries — roughly 8% of traffic — adding $0.002 to the weighted average cost per request, which is still well within budget."
+
+**Scene 5 — Outcomes (60 seconds):**
+> "Post-rollout: grounded-answer rate from 73.4% to 84.1%, cost from $0.031 to $0.041/request, p95 from 1.71s to 2.18s, factual miss rate from 14% to 6.8%. All metrics within threshold. The hardest query cohort — bottom 20% by complexity — improved the most: recall@5 from 58% to 71%."
+
+**Scene 6 — Lessons (45 seconds):**
+> "Two things I'd enforce from day one on any future RAG system: freshness monitoring as a first-class SLO at design time, not retrofit; and the before-vs-after metric table built before committing to an architecture, so every architectural choice carries traceable evidence rather than retrospective narrative."
+
+*Why this walkthrough is high-signal:* Every scene is time-boxed and grounded in real production numbers. The failure scene shows operational maturity beyond feature-level knowledge. The tradeoff scene demonstrates cost-aware engineering thinking. An interviewer can interrupt after any scene and you can answer a deep-dive question and pivot back to the backbone cleanly.
+
+---
+
+Break:
+1. Interrupt yourself at random points and resume flow.
+2. Remove metrics and test claim defensibility.
+3. Remove rejected alternatives and test tradeoff credibility.
+
+Measure:
+- Have 2-3 mock interviewers score:
+  - Clarity (1-5)
+  - Technical depth (1-5)
+  - Tradeoff rigor (1-5)
+  - Interruption recovery (1-5)
+
+Explain:
+- Why it broke:
+  - Without evidence anchors, confident delivery is insufficient.
+  - Without pivots, interruptions fragment narrative coherence.
+- Guardrail:
+  - Use timed backbone + branch map + evidence checklist.
+
+---
+
+### 8. Active Recall (Spaced Repetition)
+
+Questions:
+1. What is the minimum backbone sequence for a high-signal walkthrough?
+2. Why must failures be integrated into architecture explanation?
+3. What makes tradeoff discussion credible in interviews?
+4. How do interruption pivots improve interview performance?
+
+Answer key:
+1. Problem, architecture, failure, tradeoff, outcomes, lessons.
+2. It proves operational maturity beyond feature implementation.
+3. Constraint framing, rejected alternatives, and measurable outcomes.
+4. They preserve structure and prevent narrative collapse under questioning.
+
+---
+
+### 9. Practice
+
+Mini-exercise:
+- Write a 60-second segment that transitions from architecture overview into a concrete failure case.
+
+Suggested answer outline:
+- Start with architecture critical path.
+- Identify stress point.
+- Describe observed failure symptom.
+- Preview root-cause and mitigation.
+
+Capstone-style question:
+- You are challenged: "Your architecture seems over-engineered. Why not a simpler design?" Provide a concise response grounded in constraints, failure history, and measurable results.
+
+Suggested answer outline:
+1. State constraints that demanded current design.
+2. Reference failure from simpler approach (or tested alternative).
+3. Explain tradeoff and measured outcome improvements.
+4. Acknowledge residual complexity and mitigation plan.
+
+---
+
+### 10. Production Reality Check (Mandatory Ending)
+
+If this fails in prod, what is the first thing we inspect?
+
+- First inspect whether your stated walkthrough backbone still matches the current production architecture, incident history, and evaluation metrics.
+- Why: interview trust breaks quickly when the narrative and real system drift apart.
+
+---
+
+### 11. Curiosity Bridge (Mandatory Ending)
+
+Strong walkthroughs prove you can explain one project deeply, but final hiring advantage comes from connecting multiple walkthroughs into a coherent capability trajectory.
+
+That leads to portfolio sequencing across projects: showing increasing scope, reliability ownership, and decision sophistication over time.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+Exit Check:
+- You are done when you can deliver a 7-minute architecture-failure-tradeoff walkthrough, handle interruptions, and defend each major claim with evidence.
+
+Carry-Forward Review (interleaved):
+- Q: From 22.3.b, what keeps case-study pages both skimmable and deep?
+- A: A stable case-study spine with progressive depth and linked evidence anchors.
+- Q: From 22.3.a, what differentiates strong bullets from generic task statements?
+- A: Action-mechanism-outcome with measurable, verifiable impact.
+
+---
+
+## Subtopic 22.3.d: Open-Source Hygiene, Visuals, And Presentation Quality
+
+### ✅ Add to Knowledge Base
+
+### Reading Path + Level Tags
+
+- **Beginner:** Read sections 0-2 and section 8 (Active Recall).
+- **Intermediate:** Add sections 3-6 and section 9 (Practice).
+- **Pro:** Complete section 7 (Hands-On Lab) and section 12 (Exit Check + Carry-Forward Review).
+
+---
+
+### 0. Pre-Question Hook [Beginner]
+
+Pause: if a hiring reviewer clones your repository, can they understand project purpose, run it safely, and trust your engineering discipline within 10 minutes?
+
+Open-source hygiene and visual quality are often interpreted as proxies for production discipline.
+
+---
+
+### 1. The Intuition (Plain English) [Beginner]
+
+Open-source hygiene is not cosmetic. It is an operational signal about how you organize, validate, and communicate software.
+
+Visual and presentation quality matter because reviewers process structure before details. Clean visuals reduce cognitive load and make technical depth discoverable.
+
+Analogy: clean lab notebook. In science, strong experiments lose credibility if records are disorganized. In portfolios, strong projects lose signal if repos are hard to navigate or results are poorly presented.
+
+Where the analogy breaks: software portfolios are interactive systems, not static notebooks. Your presentation must support execution (quickstart, env setup, tests), not only readability.
+
+**Repository Hygiene:** practices that make codebases predictable, runnable, maintainable, and safe to evaluate.
+
+**Presentation Quality Bar:** minimum standard for visuals and artifacts so technical claims are understandable without confusion.
+
+**Signal Friction:** avoidable reviewer effort caused by unclear structure, missing docs, broken setup, or inconsistent visuals.
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+```mermaid
+flowchart TD
+    A[Repository Entry] --> B[README + Quickstart]
+    B --> C[Project Structure + Docs]
+    C --> D[Run/Test/Validate]
+    D --> E[Results + Visual Evidence]
+    E --> F[Tradeoffs + Failures + Next Steps]
+
+    G[Hygiene Signals\nLicensing, CI, formatting, issue templates] --> H[Trust Lift]
+    I[Visual Signals\nDiagrams, tables, consistent styling] --> H
+    J[Presentation Signals\nconcise narrative, evidence links] --> H
+    H --> K[Hiring Confidence]
+```
+
+What this shows:
+- Hygiene, visuals, and narrative are interconnected trust signals.
+- Reviewers need both runnable structure and understandable evidence.
+- Signal friction at any stage reduces perceived engineering maturity.
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+#### Scenario A: Recruiter and manager first-pass repo screen
+
+Product/use case context:
+- Reviewer opens your repo link directly from resume.
+- Decision to move forward often happens in minutes.
+
+Constraints and practical effects:
+- If quickstart fails, reviewer rarely retries.
+- Missing license, unclear dependencies, and stale docs reduce trust.
+- Visual clutter obscures impact metrics and ownership story.
+
+What good looks like:
+- Clean README hierarchy with one-command quickstart.
+- Clear architecture/result visuals and concise summary blocks.
+- Obvious links to case-study, demo, and evaluation artifacts.
+
+#### Scenario B: Engineer reviewer deep validation
+
+Product/use case context:
+- Engineer checks reproducibility and code quality signals.
+
+Constraints and practical effects:
+- Broken tests or inconsistent formatting suggest weak discipline.
+- No contribution guidelines and no issue templates imply low maintainability.
+- Inconsistent visual artifacts (different styles, unlabeled axes) weaken result credibility.
+
+What good looks like:
+- Standard repo hygiene files and passable CI checks.
+- Consistent diagram/table style with clear labels and units.
+- Changelog or release notes showing iterative maturity.
+
+---
+
+### 4. System View (Think Like a Systems Engineer) [Intermediate]
+
+Inputs -> Transformations -> Outputs
+
+- Inputs:
+  - Existing repository, docs, visuals, and demo artifacts
+  - Reviewer goals (scan, run, verify, challenge)
+  - Quality standards for maintainability and presentation
+- Transformations:
+  - Normalize repo structure and top-level documentation.
+  - Add reproducibility guardrails (setup, tests, env examples).
+  - Standardize visual assets (labels, legends, consistent style).
+  - Integrate evidence links and narrative clarity checks.
+- Outputs:
+  - Low-friction, high-trust portfolio repository.
+  - Faster reviewer understanding and stronger interview conversion.
+
+Observability signals:
+- Setup success rate from clean environments
+- Time-to-first-successful-run
+- README navigation bounce points
+- Reviewer clarification count on visuals
+
+Failure points:
+- Setup drift between docs and code.
+- Visuals that communicate aesthetics but not measurement context.
+- Over-polish with weak technical evidence.
+
+---
+
+### 5. System Design Flavor (Practical and Concise) [Intermediate]
+
+Repository hygiene checklist components:
+- Clear README with prerequisites and quickstart
+- Dependency and environment pinning
+- Basic tests and lint/format checks
+- License, contribution guide, and issue templates
+- Changelog or release notes
+- Security/privacy notes where relevant
+
+Visual quality checklist components:
+- Diagrams with labeled boundaries and data flow direction
+- Result charts with units, baseline, and timeframe
+- Consistent color and typography choices across assets
+- Captions that explain "what changed and why it matters"
+
+Presentation quality checklist components:
+- TL;DR summary for each major artifact
+- Claim -> evidence link pairing
+- Ownership and tradeoff clarity
+- Known limitations and next steps
+
+Tradeoffs in plain language:
+- Polish vs shipping speed:
+  - More polish improves readability.
+  - Over-polish can delay learning and delivery.
+  - Prioritize hygiene and evidence before visual refinements.
+- Minimal docs vs comprehensive docs:
+  - Minimal docs are fast.
+  - Too minimal increases reviewer friction.
+  - Keep docs concise but complete for setup and validation.
+- Fancy visuals vs interpretability:
+  - Fancy visuals attract attention.
+  - Poor labeling destroys trust.
+  - Favor clarity-first visual design.
+
+Scaling consideration (multiple repos):
+- Use a reusable repository quality template and visual style guide so every project meets the same trust baseline.
+
+---
+
+### 6. Common Mistakes + Debugging [Intermediate]
+
+Mistake 1:
+- Symptom: reviewer says, "I couldn't run this quickly."
+- Likely cause: setup instructions stale or environment assumptions implicit.
+- First debugging step: run quickstart on a clean machine and patch every missing prerequisite.
+
+Mistake 2:
+- Symptom: result chart looks good but interviewer challenges validity.
+- Likely cause: missing baseline, units, or experimental context.
+- First debugging step: add baseline lines, axis units, sample size/time window, and experiment notes.
+
+Mistake 3:
+- Symptom: repo feels polished but technical trust remains low.
+- Likely cause: presentation quality overshadowed evidence and tradeoff discussion.
+- First debugging step: add explicit claim-evidence pairs and one failure/tradeoff section near results.
+
+---
+
+### 7. Hands-On Lab (Concept -> Build -> Break -> Measure -> Explain) [Pro]
+
+Goal:
+- Upgrade one project repository to hiring-grade hygiene and presentation quality in a single iteration.
+
+Build:
+1. Apply repo hygiene checklist (README, setup, tests, license, contribution docs).
+2. Standardize two visuals (architecture and results) with clarity labels.
+3. Add one portfolio summary section linking key evidence artifacts.
+4. Run clean-environment setup and validation pass.
+
+Break:
+1. Remove quickstart prerequisites and test onboarding failure.
+2. Remove chart labels/baselines and test interpretability.
+3. Remove evidence links and test trust degradation.
+
+Measure:
+- Ask 2-3 reviewers to score:
+  - Setup friction (1-5, lower is better)
+  - Visual clarity (1-5)
+  - Perceived engineering discipline (1-5)
+  - Hiring confidence (1-5)
+
+Explain:
+- Why it broke:
+  - Missing hygiene creates immediate execution friction.
+  - Missing visual context invalidates result interpretation.
+  - Missing evidence linkage reduces credibility.
+- Guardrail:
+  - Use a pre-publish checklist for hygiene, visuals, and claim-evidence integrity.
+
+---
+
+### 8. Active Recall (Spaced Repetition)
+
+Questions:
+1. Why is open-source hygiene a hiring signal, not just a style preference?
+2. What makes a result visual interview-safe?
+3. What is signal friction and why does it matter?
+4. Which three artifact classes should always be linked in a polished portfolio repo?
+
+Answer key:
+1. It reflects maintainability, reproducibility, and operational discipline.
+2. Baseline, units, timeframe/context, and clear interpretation caption.
+3. Extra reviewer effort from unclear structure; it reduces trust and conversion.
+4. Setup docs, evidence artifacts, and decision/failure context.
+
+---
+
+### 9. Practice
+
+Mini-exercise:
+- Audit one project repository and list 5 hygiene gaps plus 3 visual clarity gaps.
+
+Suggested answer outline:
+- Hygiene gaps: setup, tests, docs, licensing, contribution guidance.
+- Visual gaps: labeling, baseline/reference, explanatory captions.
+
+Capstone-style question:
+- You have two days before interviews. Do you improve model quality by a small margin or invest in repo hygiene and visual clarity? Explain your decision for maximizing hiring signal.
+
+Suggested answer outline:
+1. Assess current evidence quality and execution friction.
+2. If setup/clarity is weak, prioritize hygiene and presentation first.
+3. Pair with one measurable quality metric already achieved.
+4. Explain that trust and reproducibility are multipliers for all other signals.
+
+---
+
+### 10. Production Reality Check (Mandatory Ending)
+
+If this fails in prod, what is the first thing we inspect?
+
+- First inspect reproducibility and documentation drift between repository claims and current runnable behavior.
+- Why: presentation quality without executable truth creates rapid trust failure when reviewers validate hands-on.
+
+---
+
+### 11. Curiosity Bridge (Mandatory Ending)
+
+With Topic 22.3 complete, you now have strong per-project packaging signals, but hiring leverage improves further when multiple projects are sequenced into a coherent growth narrative.
+
+This naturally opens the next step: cross-project storyline design that shows expanding scope, deeper reliability ownership, and sharper tradeoff judgment over time.
+
+---
+
+### 12. Exit Check + Carry-Forward Review
+
+Exit Check:
+- You are done when a reviewer can clone, run, and understand your project evidence path with low friction and high confidence in under 10 minutes.
+
+Carry-Forward Review (interleaved):
+- Q: From 22.3.c, what keeps walkthroughs robust under interruptions?
+- A: A stable walkthrough backbone with prepared pivots and depth branches.
+- Q: From 22.3.b, what converts case-study claims into trust?
+- A: Clear structure plus direct links to verifiable evidence anchors.
+
+---
+
+## Module Checkpoint (Comprehensive)
+
+### ✅ Add to Knowledge Base
+
+Use this checkpoint to verify Module 22 is complete in a hiring-relevant way.
+
+### 1) Project Packaging Completeness
+
+For each serious project, confirm all three artifacts exist and are interview-usable:
+- Architecture diagram: clear layers, critical flow, and reliability boundaries.
+- Failure analysis document: symptom -> root cause -> remediation -> verification.
+- Tradeoff justification: chosen option, rejected alternatives, constraints, and measurable rationale.
+
+Pass criteria:
+- Every major technical claim in these artifacts has at least one evidence anchor.
+- A reviewer can find all three artifacts within 2 clicks from your project summary.
+
+### 2) Systems Evidence Over Feature Hype
+
+Rewrite project presentation from "what feature exists" to "what system changed and what improved."
+
+Required evidence pattern:
+- Constraint context: latency/cost/reliability/privacy target.
+- Engineering decision: what was changed and why.
+- Measurable delta: before-vs-after outcome with guardrail metric.
+- Operational reality: known failure mode and mitigation.
+
+Pass criteria:
+- Resume bullets, case-study sections, and walkthrough script all follow action-mechanism-outcome structure.
+- At least one failure and one tradeoff are explained with measurable evidence, not generic claims.
+
+### 3) Capstone Interview-Readiness Without Live Dependency
+
+Select one capstone project and make it self-explanatory even without you in the room.
+
+Capstone readiness pack:
+- Recruiter pass: summary card + role relevance + one outcome metric.
+- Hiring manager pass: ownership, constraints, decisions, and business impact.
+- Engineer pass: architecture, failure case, tradeoff matrix, and eval report.
+- Reproducibility pass: quickstart works, key claims are verifiable from linked artifacts.
+
+Pass criteria:
+- A reviewer can understand value in 2 minutes, verify core claims in 10 minutes, and run a basic path without external help.
+- Your 7-minute walkthrough remains coherent under interruption using the same evidence pack.
+
+### Final Exit Standard
+
+You have completed Module 22 when:
+- Each serious project is packaged with architecture + failure + tradeoff artifacts.
+- Your narrative consistently communicates systems engineering evidence over feature hype.
+- One capstone is interview-ready as a standalone evidence system, not dependent on live explanation quality.
+
+---
+
 ## Module Glossary
 
 - **Architecture Storytelling Asset:** A visual-plus-narrative artifact that translates system design into fast, evaluable hiring evidence.
@@ -2932,3 +3656,9 @@ Carry-Forward Review (interleaved):
 - **Case-Study Spine:** Standard section sequence that keeps project narratives clear and decision-focused.
 - **Portfolio Summary Card:** Compact project overview optimized for fast first-pass hiring review.
 - **Progressive Depth:** Content layering strategy from broad readability to deep technical detail.
+- **Walkthrough Backbone:** Fixed sequence for live project explanation that preserves clarity under time and interruptions.
+- **Interruption Pivot:** Prepared transition that answers a detour question and reconnects to the main narrative.
+- **Depth Branch:** Optional deep-dive path used when interviewers request detailed technical evidence.
+- **Repository Hygiene:** Practices that keep a repo runnable, predictable, maintainable, and trustworthy for reviewers.
+- **Presentation Quality Bar:** Minimum artifact clarity standard needed to communicate technical value without confusion.
+- **Signal Friction:** Avoidable reviewer effort caused by poor structure, missing context, or broken reproducibility.
