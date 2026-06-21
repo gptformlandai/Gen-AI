@@ -24,6 +24,7 @@ This is the evolving knowledge base for Module 7.
     - [Subtopic 7.3.a: HyDE, Self-RAG, and Agentic Retrieval Patterns](#subtopic-73a-hyde-self-rag-and-agentic-retrieval-patterns)
     - [Subtopic 7.3.b: Multi-Hop Retrieval and Decomposition](#subtopic-73b-multi-hop-retrieval-and-decomposition)
     - [Subtopic 7.3.c: Knowledge Graph and GraphRAG Fundamentals](#subtopic-73c-knowledge-graph-and-graphrag-fundamentals)
+    - [Subtopic 7.3.d: Conversation-Aware and Personalized Retrieval](#subtopic-73d-conversation-aware-and-personalized-retrieval)
 - [Module 7 Checkpoint: Retrieval Quality Engineering](#module-7-checkpoint-retrieval-quality-engineering)
 - [Module Glossary](#module-glossary)
 
@@ -39,6 +40,8 @@ This is the evolving knowledge base for Module 7.
 - Subtopic 7.3.a: HyDE, self-RAG, and agentic retrieval patterns
 - Subtopic 7.3.b: Multi-hop retrieval and decomposition
 - Subtopic 7.3.c: Knowledge graph and GraphRAG fundamentals
+- Subtopic 7.3.d: Conversation-aware and personalized retrieval
+- Module 7 checkpoint: Retrieval quality engineering all-round review
 
 ---
 
@@ -5609,13 +5612,824 @@ Carry-forward review from 7.3.b:
 
 ---
 
+## Subtopic 7.3.d: Conversation-Aware and Personalized Retrieval
+
+Added to Knowledge Base.
+
+**Subtopic time:** 3.5h
+
+### 0. Reading Path + Level Tags
+
+- **Beginner:** Read sections 1-2, section 6, and Active Recall.
+- **Intermediate:** Add sections 3-5 and the Hands-On Lab.
+- **Pro:** Do the full lab, compare session-only vs long-term personalization, and answer the capstone system-design question.
+
+---
+
+### 1. Pre-Question Hook + The Intuition [Beginner]
+
+**Pause: before reading, if a user asks "what about the second one?" or "use my usual format," what exactly should retrieval remember, and what should it intentionally forget?**
+
+**Conversation-aware retrieval** means retrieval uses the current conversation context to understand the user's latest query. It handles follow-ups, pronouns, ellipsis, earlier constraints, referenced entities, and the user's current task. Without it, the query "what about the second one?" is impossible to retrieve against because the retriever does not know what "second one" means.
+
+**Personalized retrieval** means retrieval uses durable user-specific or account-specific context to improve relevance. This can include preferences, role, permissions, projects, region, product usage, past issues, saved documents, expertise level, or preferred output style.
+
+The hard part is not storing more context. The hard part is deciding which context is relevant, allowed, fresh, and safe to use. Conversation-aware retrieval is usually short-lived and session-scoped. Personalized retrieval can be long-lived, so it needs stronger controls: consent, privacy boundaries, memory write policy, memory read policy, deletion, and auditability.
+
+Example:
+
+```text
+Turn 1: Compare API gateway options for our EU healthcare workload.
+Turn 2: Focus on the cheaper one, but keep HIPAA and EU residency in mind.
+
+Bad retrieval query:
+    cheaper one
+
+Conversation-aware retrieval query:
+    cheaper API gateway option from the previous comparison for an EU healthcare workload, considering HIPAA and EU data residency
+
+Personalized retrieval addition, if allowed:
+    user works on Project Atlas, prefers AWS-native services, and cannot use non-approved vendors
+```
+
+Real-world analogy: conversation-aware retrieval is like a colleague following the meeting notes from the last ten minutes. Personalized retrieval is like a teammate who knows your role, current project, constraints, and preferences. The analogy breaks down because software memory must be permissioned, inspectable, erasable, and resistant to stale or sensitive context leaks.
+
+Key terms:
+- **Conversation-aware retrieval:** Retrieval that uses current dialogue context to interpret and retrieve for the latest user query.
+- **Personalized retrieval:** Retrieval that uses user-specific, account-specific, or preference-specific context to improve relevance.
+- **Session context:** Short-lived context from the current conversation or task.
+- **Long-term memory:** Durable stored context that can be reused across sessions when permitted.
+- **User profile:** A structured representation of stable user attributes, preferences, permissions, projects, and constraints.
+- **Memory retrieval:** Retrieving stored memories or profile facts that may help answer the current query.
+- **Memory write policy:** Rules that decide what information is allowed to be saved as memory.
+- **Memory read policy:** Rules that decide which saved memory can be retrieved for a request.
+- **Consent gate:** A control that requires user or policy permission before saving or using certain personal context.
+- **Privacy boundary:** A rule separating what context can and cannot cross between users, tenants, roles, sessions, or tools.
+- **Context carryover:** Bringing relevant earlier conversation facts into the current retrieval request.
+- **Query contextualization:** Rewriting a follow-up query into a standalone retrieval query using relevant context.
+- **Preference signal:** A stored or inferred indication of what the user prefers, such as style, region, tool, product, or depth.
+- **Salience scoring:** Estimating which memories or conversation facts matter for the current query.
+- **Recency weighting:** Favoring newer context when older context may be stale.
+- **Personalization drift:** A failure where old, weak, or overfit preferences distort retrieval away from the user's actual current need.
+- **Memory provenance:** Metadata showing where a memory came from, when it was written, and why it is trusted.
+
+The mental model to keep permanently: **conversation-aware retrieval resolves the current dialogue; personalized retrieval adapts retrieval to the user, but only within explicit safety and relevance boundaries.**
+
+---
+
+### 2. Visual Diagram (Mermaid) [Beginner]
+
+```mermaid
+flowchart TD
+        Q[Latest User Message] --> C[Conversation Context Selector]
+        C --> R[Standalone Contextualized Query]
+
+        Q --> M[Memory Router]
+        M --> G{Allowed to use memory?}
+        G -->|No| R
+        G -->|Yes| MR[Memory Retrieval]
+        MR --> S[Salience + Freshness + Permission Filter]
+        S --> P[Personalization Context]
+
+        R --> H[Hybrid Retrieval]
+        P --> H
+        H --> E[Evidence Candidates]
+        E --> X[Context Packing]
+        X --> A[Grounded Answer]
+        A --> W{Should anything be saved?}
+        W -->|No| Done[Done]
+        W -->|Yes| WP[Memory Write Policy + Consent Gate]
+        WP --> Store[(Memory Store)]
+```
+
+What the diagram is really saying:
+
+- The latest message is rarely enough for retrieval in a conversation.
+- Conversation context is used to make the query standalone.
+- Personalized memory is optional, permissioned, and filtered.
+- Retrieval should still ground answers in source evidence, not memory alone.
+- Memory writes need stronger rules than temporary context carryover.
+
+---
+
+### 3. Real-World Industry Scenarios [Intermediate]
+
+#### Scenario A - Enterprise Copilot for Internal Support
+
+**Product/use case context:** An employee asks, "Can I use that for Project Atlas?" The previous turns compared two data-processing tools. The user's profile says they work in the EU healthcare division and Project Atlas has restricted vendor rules.
+
+**How the pattern works:** Conversation-aware retrieval resolves "that" to the selected tool from the previous turn. Personalized retrieval adds permitted project and region constraints. Retrieval then searches policy docs, approved vendor lists, and project-specific architecture standards.
+
+**Constraints:**
+- **Latency:** Contextualization and memory retrieval add steps, so keep the session-context selector cheap and memory top-k small.
+- **Cost:** Most follow-ups only need conversation context, not long-term memory. Route memory retrieval only when the query mentions personal/project/account scope or when user profile materially changes the answer.
+- **Reliability:** The system must not use stale project rules or infer sensitive role information without permission.
+- **Security/privacy:** Project membership, region, and restricted vendor rules must be tenant- and role-scoped. Memory cannot cross users or projects.
+
+**What good looks like in production:** The answer applies the correct previous tool, current project policy, and approved source citations. The trace shows which conversation facts and profile facts were used.
+
+#### Scenario B - Customer Support Assistant
+
+**Product/use case context:** A customer says, "This is the same export issue as last week. Can you check the faster workaround?" The support assistant may know the customer's product plan, connector version, recent tickets, and support entitlements.
+
+**How the pattern works:** Conversation-aware retrieval resolves the current issue in the active chat. Personalized retrieval may retrieve recent ticket summaries, connector version, and account-specific configuration if authorized. Retrieval searches docs and known issues for the exact connector version and allowed workaround.
+
+**Constraints:**
+- **Latency:** Support users expect fast response. Recent ticket lookup should be targeted by account ID and issue type.
+- **Cost:** Long-term account memory can reduce repeated diagnostic questions but must not fetch all customer history.
+- **Reliability:** A workaround from last week may no longer apply after a patch or plan change.
+- **Security/privacy:** Account history and configuration are sensitive. The assistant must enforce account isolation and avoid exposing another customer's history.
+
+**What good looks like in production:** The assistant cites current docs or ticket evidence, states whether the workaround still applies, and avoids treating stale ticket notes as current truth.
+
+#### Scenario C - Learning Assistant
+
+**Product/use case context:** A learner asks, "Can you explain it at my level and connect it to what we covered yesterday?" The system may know the learner's module progress, weak areas, preferred examples, and previous mistakes.
+
+**How the pattern works:** Conversation-aware retrieval uses recent dialogue. Personalized retrieval pulls learning progress and prior misconceptions. The retriever selects module notes, exercises, and examples at the right depth.
+
+**Constraints:**
+- **Latency:** Learning systems can tolerate modest memory retrieval, but interaction should feel responsive.
+- **Cost:** Personalized retrieval improves instruction quality but should be filtered to the current topic.
+- **Reliability:** Over-personalization can trap the learner at an old skill level.
+- **Security/privacy:** Learning history may be personal. The user should be able to inspect, correct, or delete it.
+
+**What good looks like in production:** The answer uses current module context, retrieves only relevant prior concepts, and updates memory only for durable learning signals, not every transient message.
+
+---
+
+### 4. System View [Intermediate]
+
+#### Inputs -> Transformations -> Outputs
+
+```text
+Inputs
+    -> latest user message
+    -> current conversation turns
+    -> task/session state
+    -> user/account/profile memory
+    -> permissions, consent, retention rules
+    -> corpus indexes and tools
+
+Transformations
+    -> select relevant conversation facts
+    -> contextualize the query into standalone form
+    -> decide whether personalization is needed
+    -> retrieve memory candidates
+    -> filter by permission, consent, freshness, and salience
+    -> combine query + conversation + memory constraints
+    -> retrieve source evidence
+    -> rerank and pack context
+    -> answer with citations and context-use trace
+    -> decide whether to write/update/delete memory
+
+Outputs
+    -> grounded answer
+    -> contextualized query
+    -> used conversation facts
+    -> used memory facts with provenance
+    -> memory write/no-write decision
+```
+
+#### Trace Record Example
+
+```json
+{
+    "query_id": "q-1772",
+    "latest_message": "Can I use that for Project Atlas?",
+    "contextualized_query": "Can the selected streaming ETL tool from the previous comparison be used for Project Atlas?",
+    "conversation_facts_used": [
+        {"fact": "selected_tool=Tool B", "source_turn": 6},
+        {"fact": "comparison_scope=streaming ETL", "source_turn": 3}
+    ],
+    "memory_retrieval": {
+        "used": true,
+        "facts": [
+            {"fact": "Project Atlas requires EU data residency", "provenance": "project_profile", "freshness_days": 14},
+            {"fact": "User belongs to EU healthcare division", "provenance": "user_profile", "freshness_days": 30}
+        ],
+        "filtered_out": ["old_preference_for_tool_a"]
+    },
+    "retrieval_filters": {
+        "region": "EU",
+        "project": "Atlas",
+        "source_authority": "approved_policy"
+    },
+    "memory_write_decision": "no_write_transient_question"
+}
+```
+
+#### Conversation-Aware vs Personalized Retrieval
+
+| Pattern | Main context source | Best for | Main risk |
+|---|---|---|---|
+| Conversation-aware retrieval | Current dialogue/session | Follow-ups, pronouns, earlier constraints | Carrying irrelevant stale turns |
+| Personalized retrieval | User/account/project memory | Preferences, roles, projects, history | Privacy leaks and personalization drift |
+| Account-aware retrieval | Account/customer metadata | Support, billing, configuration, entitlements | Cross-account data exposure |
+| Task-aware retrieval | Current workflow state | Multi-step tools, coding, analysis workflows | Using incomplete state as truth |
+
+#### Observability: What We Log, Trace, and Measure
+
+- `contextualized_query`: the standalone query produced from conversation context.
+- `conversation_facts_used`: which previous turns influenced retrieval.
+- `memory_candidates`: memory facts considered before filtering.
+- `memory_facts_used`: memory facts actually used in retrieval or answer generation.
+- `memory_provenance`: source, timestamp, confidence, and write reason for each memory.
+- `consent_status`: whether memory use was allowed.
+- `privacy_filter_decisions`: memories or data excluded by boundary rules.
+- `salience_score`: relevance of a memory to the current query.
+- `freshness_score`: whether memory is current enough.
+- `personalization_lift`: quality gain from personalization compared with non-personalized retrieval.
+- `personalization_harm_rate`: cases where memory made retrieval worse, biased, stale, or unsafe.
+
+---
+
+### 5. System Design Flavor [Intermediate]
+
+#### Key Components and Interfaces
+
+1. **Conversation context selector:** Selects the few prior turns/facts needed to interpret the latest query.
+2. **Query contextualizer:** Rewrites follow-ups into standalone retrieval queries while preserving constraints.
+3. **Memory router:** Decides whether long-term memory is relevant and allowed for the request.
+4. **Memory store:** Stores user, account, project, task, or preference facts with metadata.
+5. **Memory retriever:** Retrieves candidate memories by semantic match, structured keys, or recency.
+6. **Salience ranker:** Scores memory candidates by relevance, freshness, authority, and task fit.
+7. **Privacy filter:** Enforces tenant, user, role, consent, retention, and tool-access boundaries.
+8. **Personalized retrieval composer:** Combines query, conversation facts, memory facts, and source filters.
+9. **Source retriever:** Retrieves grounded evidence from documents, databases, tools, or graphs.
+10. **Memory writer:** Decides whether new durable memory should be saved, updated, ignored, or deleted.
+11. **Memory auditor:** Lets systems and users inspect what memory was used and why.
+
+#### Important Tradeoffs
+
+| Tradeoff | Choose lighter context when... | Choose deeper personalization when... |
+|---|---|---|
+| Latency vs continuity | The query is standalone | The query references previous turns, project, account, or preferences |
+| Privacy vs relevance | User context is sensitive or ambiguous | The user has consented and memory materially improves correctness |
+| Recency vs stability | Current conversation contradicts old memory | Stable preferences or roles are more reliable than a transient turn |
+| Personalization vs grounding | The answer depends on facts from sources | Personal context only scopes retrieval, not replaces evidence |
+| Write more vs write less | The fact is transient, emotional, or sensitive | The fact is stable, user-approved, useful, and non-sensitive enough to store |
+
+In plain terms: use the conversation to understand the question; use personalization only when it changes retrieval in a justified, permissioned, inspectable way.
+
+#### Practical Defaults
+
+- Always contextualize ambiguous follow-ups before retrieval.
+- Prefer session context over long-term memory when both can resolve the query.
+- Retrieve memories only when they are relevant to task, account, role, project, preferences, or prior durable user constraints.
+- Never let memory override source evidence for factual claims.
+- Store memory only when it is stable, useful later, allowed by policy, and ideally user-confirmed.
+- Attach provenance, timestamp, confidence, and deletion/update path to every durable memory.
+- Filter memories by user, tenant, role, tool, region, and consent.
+- Use recency and salience scoring to avoid stale personalization.
+- Make memory use auditable: the system should be able to answer, "What did you remember and why?"
+
+#### Scaling Consideration: What Changes at 10x Traffic or Data
+
+At 10x users, personalized retrieval becomes an isolation problem. The biggest risk is not slow retrieval; it is cross-user, cross-tenant, or stale-memory leakage. Memory stores need strong partitioning, retention rules, access controls, and deletion workflows.
+
+At 10x memory volume, salience scoring matters. A user may have thousands of past interactions, but only a few facts should influence retrieval. Use memory types, structured keys, recency, source authority, and task matching to retrieve a small, high-signal set.
+
+At 10x product complexity, personalization must be evaluated by segment. A preference that helps one workflow may harm another. Measure personalized vs non-personalized retrieval quality, refusal quality, privacy incidents, and user correction rates.
+
+---
+
+### 6. Common Mistakes + Debugging [Beginner]
+
+#### Mistake 1 - Retrieving with the Raw Follow-Up Query
+
+- **Symptom:** The retriever returns irrelevant results for queries like "what about the second one?" or "does that apply to us?"
+- **Likely cause:** The system skipped query contextualization and sent the ambiguous message directly to retrieval.
+- **First debugging step:** Inspect the contextualized query. If it does not include the referenced entity and constraints, fix the context selector or rewrite prompt.
+
+#### Mistake 2 - Treating Memory as Ground Truth
+
+- **Symptom:** The assistant answers from a stored user preference or old ticket note instead of current source evidence.
+- **Likely cause:** Memory was packed into the answer context without fetching authoritative evidence.
+- **First debugging step:** Check claim-to-source mapping. Memory can scope retrieval, but factual claims need current source citations.
+
+#### Mistake 3 - Personalization Drift
+
+- **Symptom:** The assistant keeps assuming an old preference, role, project, or tech stack even after the user has moved on.
+- **Likely cause:** Old memory has too much weight or no expiration/update path.
+- **First debugging step:** Inspect memory age, provenance, confidence, and contradiction with recent turns. Add recency weighting and correction handling.
+
+#### Mistake 4 - Privacy Boundary Leakage
+
+- **Symptom:** Retrieval uses another user's, tenant's, account's, or project team's memory.
+- **Likely cause:** Memory retrieval missed partition filters or tool-level authorization checks.
+- **First debugging step:** Audit memory read policy and filters: user ID, tenant ID, role, project, region, and consent status.
+
+---
+
+### 7. Hands-On Lab: Build -> Break -> Measure -> Explain [Pro]
+
+This lab simulates conversation-aware and personalized retrieval with a tiny memory store. The goal is to see how contextualization, memory filters, and stale-memory controls change retrieval.
+
+#### Build: Tiny Conversation-Aware Personalized Retriever
+
+```python
+import re
+
+
+docs = [
+        {
+                "id": "policy-eu-residency",
+                "text": "Project Atlas workloads must use EU data residency for customer data.",
+                "metadata": {"project": "Atlas", "region": "EU", "authority": "policy"},
+        },
+        {
+                "id": "tool-b-approval",
+                "text": "Tool B is approved for streaming ETL when EU residency controls are enabled.",
+                "metadata": {"tool": "Tool B", "region": "EU", "authority": "approved_vendor"},
+        },
+        {
+                "id": "tool-a-legacy",
+                "text": "Tool A was previously used for batch ETL but is not approved for new Atlas workloads.",
+                "metadata": {"tool": "Tool A", "project": "Atlas", "authority": "approved_vendor"},
+        },
+]
+
+conversation = [
+        {"turn": 1, "text": "Compare Tool A and Tool B for streaming ETL."},
+        {"turn": 2, "text": "Tool B is cheaper and has better EU controls."},
+        {"turn": 3, "text": "Can I use that for Project Atlas?"},
+]
+
+memory_store = [
+        {
+                "fact": "User works on Project Atlas",
+                "user_id": "u1",
+                "tenant_id": "t1",
+                "salience": 0.95,
+                "age_days": 7,
+                "sensitive": False,
+        },
+        {
+                "fact": "User used to prefer Tool A",
+                "user_id": "u1",
+                "tenant_id": "t1",
+                "salience": 0.40,
+                "age_days": 240,
+                "sensitive": False,
+        },
+        {
+                "fact": "Another tenant uses Tool C",
+                "user_id": "u2",
+                "tenant_id": "t2",
+                "salience": 0.99,
+                "age_days": 1,
+                "sensitive": False,
+        },
+]
+
+
+def tokens(text):
+        return set(re.findall(r"[a-z0-9]+", text.lower()))
+
+
+def contextualize(conversation):
+        latest = conversation[-1]["text"]
+        if "that" in latest.lower():
+                return "Can Tool B be used for Project Atlas streaming ETL with EU controls?"
+        return latest
+
+
+def retrieve_memories(query, user_id, tenant_id):
+        query_terms = tokens(query)
+        candidates = []
+        for memory in memory_store:
+                if memory["user_id"] != user_id or memory["tenant_id"] != tenant_id:
+                        continue
+                if memory["age_days"] > 180:
+                        continue
+                overlap = len(query_terms & tokens(memory["fact"]))
+                score = overlap + memory["salience"]
+                if score > 0.5:
+                        candidates.append((score, memory))
+        return [memory for score, memory in sorted(candidates, reverse=True, key=lambda item: item[0])]
+
+
+def search_docs(query, memories):
+        expanded = query + " " + " ".join(memory["fact"] for memory in memories)
+        query_terms = tokens(expanded)
+        scored = []
+        for doc in docs:
+                score = len(query_terms & tokens(doc["text"]))
+                scored.append((score, doc))
+        return [doc for score, doc in sorted(scored, reverse=True, key=lambda item: item[0]) if score > 0]
+
+
+query = contextualize(conversation)
+memories = retrieve_memories(query, user_id="u1", tenant_id="t1")
+results = search_docs(query, memories)
+
+print("contextualized query:", query)
+print("memories used:", [memory["fact"] for memory in memories])
+print("docs:", [doc["id"] for doc in results])
+```
+
+Expected behavior: the raw follow-up becomes a standalone query about Tool B and Project Atlas. Memory retrieval includes the Project Atlas fact, excludes another tenant's memory, and excludes the stale Tool A preference.
+
+#### Break Case 1: Skip Contextualization
+
+Set `query = conversation[-1]["text"]`.
+
+What breaks:
+- Retrieval searches for "that" without knowing it refers to Tool B.
+- The system may retrieve project docs but miss the selected tool.
+
+#### Break Case 2: Remove Tenant/User Filters
+
+Remove the `user_id` and `tenant_id` checks in `retrieve_memories`.
+
+What breaks:
+- Another tenant's memory can influence retrieval.
+- This simulates a serious privacy boundary failure.
+
+#### Break Case 3: Remove the Staleness Check
+
+Remove `if memory["age_days"] > 180: continue`.
+
+What breaks:
+- The old Tool A preference can re-enter retrieval and distort results.
+- This simulates personalization drift.
+
+#### Measure: Signals to Capture
+
+| Metric | What it tells you | Healthy direction |
+|---|---|---|
+| `contextualization_accuracy` | Whether follow-up queries become correct standalone queries | Higher |
+| `memory_relevance_precision` | Share of retrieved memories that truly help this query | Higher |
+| `privacy_filter_pass_rate` | Whether unauthorized memories are excluded | Near 100 percent |
+| `stale_memory_use_rate` | How often old memories influence retrieval incorrectly | Lower |
+| `personalization_lift` | Quality improvement over no-memory retrieval | Positive for memory-worthy queries |
+| `personalization_harm_rate` | Cases where memory worsens answer quality or safety | Lower |
+| `memory_write_precision` | Share of saved memories that are stable and useful later | Higher |
+
+#### Explain: Why It Broke and How to Fix It
+
+Skipping contextualization breaks retrieval because the latest message lacks the entity and constraints. Missing privacy filters can leak another user's context into retrieval. Removing freshness controls lets old preferences overpower current needs. The fix is to contextualize ambiguous queries, partition memory by authorization boundaries, and rank memory by relevance, recency, provenance, and consent.
+
+Production guardrail: every memory used in retrieval should answer four questions: is it relevant, allowed, current, and sourceable?
+
+---
+
+### 8. Active Recall (Spaced Repetition) [Beginner]
+
+1. What is the difference between conversation-aware retrieval and personalized retrieval?
+2. Why should memory usually scope retrieval rather than replace source evidence?
+3. What causes personalization drift?
+4. What should a memory read policy enforce?
+5. When should a system avoid writing a durable memory?
+
+Answer key:
+
+1. Conversation-aware retrieval uses current dialogue context; personalized retrieval uses durable user/account/project context when allowed.
+2. Memory can be stale, subjective, or preference-like. Factual answers still need authoritative source evidence.
+3. Old, weak, or over-weighted memories keep influencing retrieval after the user's needs change.
+4. User, tenant, role, consent, sensitivity, freshness, task relevance, and tool-access boundaries.
+5. When the fact is transient, sensitive, unconfirmed, low utility, or not permitted by policy/user consent.
+
+---
+
+### 9. Practice [Intermediate]
+
+#### Mini-Exercise
+
+For this conversation, write the contextualized retrieval query and decide whether long-term memory should be used:
+
+```text
+Turn 1: Compare vector databases for our clinical search app.
+Turn 2: We chose Option B because it supports hybrid search and EU deployment.
+Turn 3: Does it fit my team's usual compliance constraints?
+```
+
+Suggested answer outline:
+
+- Contextualized query: "Does Option B, the selected vector database for the clinical search app with hybrid search and EU deployment, satisfy the user's/team's compliance constraints?"
+- Use conversation context: selected option, clinical search app, hybrid search, EU deployment.
+- Use long-term memory only if the user's team compliance constraints are stored with consent and are current.
+- Retrieve authoritative compliance docs, approved vendor list, regional data residency policy, and team-specific standards.
+- Do not answer from memory alone; memory should point retrieval toward the right constraints.
+
+#### Capstone-Style System Design Question
+
+Design a retrieval system for an enterprise assistant that supports follow-up questions, user preferences, project context, and account-specific support history. How do you personalize safely?
+
+Suggested answer outline:
+
+- Start with conversation-aware contextualization for every ambiguous follow-up.
+- Add a memory router that decides whether durable memory is needed.
+- Partition memory by user, tenant, project, account, role, and tool authorization.
+- Store memory with provenance, timestamp, confidence, consent status, sensitivity, and deletion/update path.
+- Retrieve memories by salience, recency, structured keys, and task relevance.
+- Use memory to shape filters, query expansion, source selection, and answer style, but require source evidence for factual claims.
+- Log memory facts used and expose them for audit/debugging.
+- Measure contextualization accuracy, memory relevance, personalization lift, stale-memory harm, privacy incidents, and correction rates.
+
+---
+
+### 10. Production Reality Check [Pro]
+
+**If this fails in prod, what's the first thing we inspect?**
+
+Inspect the context and memory trace: raw latest message -> contextualized query -> conversation facts used -> memory candidates -> memory filters -> memory facts used -> retrieval filters -> source evidence -> final claims. If the answer is wrong, the likely first failure is missing query contextualization, irrelevant/stale memory, or memory crossing a privacy boundary.
+
+---
+
+### 11. Curiosity Bridge [Beginner]
+
+This completes the advanced retrieval pattern arc: hierarchy, query transformation, reranking, HyDE/self-RAG/agents, multi-hop, GraphRAG, and personalization. The next natural step is evaluation: proving which retrieval pattern helped, where it failed, and how to measure quality beyond vibes.
+
+---
+
+### 12. Exit Check + Carry-Forward Review [Beginner]
+
+**You're done when you can:** contextualize ambiguous follow-ups, decide when personalization is justified, design memory read/write policies, and debug stale memory, privacy leakage, or personalization drift.
+
+Carry-forward review from 7.3.c:
+
+1. Why might personalized retrieval still need GraphRAG?
+     - A user's project or account context may identify seed entities, but GraphRAG may still be needed to follow relationships like dependencies, ownership, or policy scope.
+2. Why must both GraphRAG and personalized retrieval preserve provenance?
+     - Graph edges and memories are both claims. Production systems need to know where each claim came from, when it was created, and whether it is allowed and current.
+
+---
+
 ## Module 7 Checkpoint: Retrieval Quality Engineering
 
-By the end of this module, you should be able to:
+Added to Knowledge Base.
+
+### Checkpoint Goal
+
+By the end of this checkpoint, you should be able to:
 
 - Improve retrieval quality using retrieval techniques, not only better prompts.
 - Explain when reranking is mandatory.
 - Compare baseline RAG, multi-hop RAG, and GraphRAG without confusing them.
+
+The core checkpoint idea: retrieval quality is a system property. A better prompt can hide retrieval weakness for a demo, but production RAG improves when the retrieval pipeline finds the right evidence, filters the wrong evidence, ranks candidates correctly, packs context deliberately, and exposes traces when it fails.
+
+---
+
+### 1. One-Page Mental Model
+
+RAG quality is usually limited by one of five retrieval failures:
+
+1. The right evidence was never indexed correctly.
+2. The query did not match the corpus language.
+3. The first-stage retriever found the right evidence but buried it.
+4. Context packing dropped, duplicated, or poorly ordered the evidence.
+5. The question needed relationships, multiple hops, or personalization that simple retrieval could not represent.
+
+Prompting helps after evidence is present. Retrieval engineering helps make sure the evidence is present in the first place.
+
+Use this simple rule:
+
+```text
+If the model cannot see the right evidence, fix retrieval.
+If the model sees too much noisy evidence, fix reranking and packing.
+If the model sees the evidence but answers badly, fix generation, grounding, or evaluation.
+```
+
+---
+
+### 2. Retrieval Strategy Decision Flow
+
+```mermaid
+flowchart TD
+    Q[User Query] --> A{Is the query self-contained?}
+    A -->|No| CA[Conversation-aware rewrite]
+    A -->|Yes| B[Baseline retrieval]
+    CA --> B
+
+    B --> C{Right evidence in candidate pool?}
+    C -->|No| D{Why missing?}
+    D -->|Chunk too small or missing context| H[Parent-child or hierarchical retrieval]
+    D -->|Wrong vocabulary| QR[Query rewriting, expansion, HyDE]
+    D -->|Wrong scope/filter| M[Metadata filters, boosts, routing]
+    D -->|Multiple facts needed| MH[Multi-hop decomposition]
+    D -->|Relationship/path needed| GR[GraphRAG]
+
+    C -->|Yes| E{Right evidence ranked high?}
+    E -->|No| RR[Rerank, fuse, deduplicate]
+    E -->|Yes| F{Context packed well?}
+    F -->|No| CP[Context compaction, ordering, citation packing]
+    F -->|Yes| G[Generate grounded answer]
+
+    RR --> CP
+    H --> RR
+    QR --> RR
+    M --> RR
+    MH --> RR
+    GR --> RR
+    CP --> G
+```
+
+Read the diagram as a debugging sequence. Do not jump to agents, GraphRAG, or long prompts before checking whether simple retrieval, metadata, and reranking already solve the failure.
+
+---
+
+### 3. Improve Retrieval Quality Without Reaching for Prompts First
+
+| Symptom | Likely retrieval cause | Best first move |
+|---|---|---|
+| Answer is confident but unsupported | Wrong or missing evidence in context | Inspect retrieved chunks and claim-to-citation mapping |
+| Answer is too generic | Retrieval returned broad overview chunks | Use metadata filters, parent-child expansion, and better context packing |
+| Correct document exists but is not found | Query-corpus vocabulary mismatch | Use query rewriting, expansion, controlled vocabulary, or HyDE |
+| Correct chunk is found but ranked low | First-stage retriever optimized for recall, not precision | Add reranking and tune rerank depth |
+| Many duplicate chunks crowd the prompt | Overlap and near-duplicate retrieval | Deduplicate and compact context |
+| Important evidence is split across chunks | Chunk boundary problem | Use parent-child retrieval, adjacency merge, or section graph expansion |
+| Policy answer misses an exception | Single query missed one evidence slot | Use multi-hop decomposition with required evidence slots |
+| Incident impact answer misses dependencies | Relationships are the real evidence | Use GraphRAG or graph-backed retrieval |
+| Follow-up query retrieves nonsense | Query depends on prior turns | Use conversation-aware query contextualization |
+| Personalized answer uses wrong project/account | Memory or profile leak/staleness | Inspect memory scope, freshness, consent, and provenance |
+
+Retrieval quality improves when you can name the failure mode. If the only diagnosis is "the model hallucinated," the debugging is too shallow.
+
+---
+
+### 4. When Reranking Is Mandatory
+
+Reranking is mandatory when candidate generation is not enough to decide what the model should trust.
+
+Use reranking when any of these are true:
+
+- The answer depends on exact evidence selection, not just rough relevance.
+- The corpus has many near-duplicates, versions, policy variants, or similar product docs.
+- Top vector results are semantically similar but not answer-sufficient.
+- You use multi-query retrieval, fusion, HyDE, or query expansion and need to sort noisy candidates.
+- You have a tight context budget and can only pack a few candidates.
+- The task is high-risk: policy, legal, medical, security, financial, compliance, access control, or customer-impacting workflows.
+- You need to choose between old and current docs, official and unofficial sources, or general and project-specific sources.
+- You need evidence diversity: rule + exception + approver + expiry, not four copies of the same paragraph.
+
+Reranking is less urgent when:
+
+- The corpus is small and clean.
+- Queries are direct and exact.
+- Metadata filters already narrow the candidate pool to a few authoritative documents.
+- The answer is low-risk and the top candidate is clearly sufficient.
+
+Reranking rule of thumb:
+
+```text
+First-stage retrieval should maximize recall.
+Reranking should maximize answer-useful precision.
+Context packing should maximize grounded coverage under the token budget.
+```
+
+---
+
+### 5. Baseline RAG vs Multi-Hop RAG vs GraphRAG
+
+| Pattern | What it retrieves | Best for | Do not confuse it with | Main failure mode |
+|---|---|---|---|---|
+| Baseline RAG | Top chunks for one query | Simple factual or procedural questions | Multi-hop reasoning | Missing evidence when the answer spans sources |
+| Multi-hop RAG | Multiple evidence slots or sequential subquestions | Questions needing rule + exception, cause + effect, comparison, or chained facts | GraphRAG | Bad decomposition or missing evidence slot |
+| GraphRAG | Entities, relationships, paths, neighborhoods, or communities plus source evidence | Dependency, ownership, impact, citation, policy scope, and relationship-heavy questions | Generic multi-step retrieval | Bad entity resolution, stale edge, or unsupported graph fact |
+
+Practical distinction:
+
+- Baseline RAG asks: "Which chunks answer this query?"
+- Multi-hop RAG asks: "Which pieces of evidence are needed, and in what dependency order?"
+- GraphRAG asks: "Which entities and relationships connect the evidence, and what source text proves those edges?"
+
+Use baseline RAG when one source likely contains the answer. Use multi-hop when the answer needs multiple evidence slots. Use GraphRAG when explicit relationships are the retrieval target.
+
+---
+
+### 6. Retrieval Technique Selection Matrix
+
+| Need | Technique | Why it helps | What to measure |
+|---|---|---|---|
+| Preserve context around small matches | Parent-child retrieval | Search precise child chunks, answer from larger parents | parent recall@k, citation correctness |
+| Use document structure | Section graphs and hierarchy | Expands across headings, tables, adjacent sections, and references | graph expansion precision, structural confidence |
+| Enforce scope | Metadata filters and boosts | Routes by version, region, tenant, source, authority, freshness | filter recall cliff, precision, permission violations |
+| Fix vocabulary mismatch | Query rewriting and expansion | Aligns user language with corpus language | rewrite recall lift, query drift rate |
+| Search multiple angles | Multi-query retrieval and fusion | Captures different intents or terms | branch diversity, recall lift, fusion noise |
+| Rank candidates precisely | Cross-encoder or LLM reranking | Reads query and candidate together | reranker accuracy, latency, score calibration |
+| Combine ranked lists | RRF and late fusion | Avoids brittle score normalization | MRR, NDCG, candidate provenance |
+| Help vague queries | HyDE | Generates richer search text | recall lift, hypothesis drift rate |
+| Decide if more retrieval is needed | Self-RAG | Critiques evidence sufficiency | false sufficient rate, groundedness |
+| Plan retrieval steps | Agentic retrieval | Chooses tools and follow-up searches | step count, evidence added per step |
+| Answer chained questions | Multi-hop decomposition | Retrieves required evidence slots | chain completeness, slot recall |
+| Follow relationships | GraphRAG | Traverses entities, edges, paths, communities | edge precision, path validity, provenance coverage |
+| Handle follow-ups and preferences | Conversation-aware/personalized retrieval | Resolves dialogue and allowed memory context | contextualization accuracy, personalization harm rate |
+
+---
+
+### 7. Production Debugging Checklist
+
+When a RAG answer fails, inspect in this order:
+
+1. User query and contextualized query.
+2. Metadata filters, permissions, tenant scope, freshness, and source authority.
+3. Candidate pool before reranking.
+4. Candidate pool after reranking and fusion.
+5. Deduplication and context packing order.
+6. Final prompt context and citations.
+7. Claim-to-evidence mapping.
+8. Missing evidence slots for multi-hop questions.
+9. Graph paths, edge provenance, and entity resolution for GraphRAG.
+10. Memory facts used, freshness, consent, and scope for personalized retrieval.
+
+The first question is not "what prompt did we use?" The first question is "what evidence did the model actually receive, and why?"
+
+---
+
+### 8. Checkpoint Drills
+
+#### Drill A - Choose the Retrieval Fix
+
+Scenario: A policy assistant answers whether vendors can get emergency production access. It retrieves the normal vendor policy but misses the SEV1 exception and expiry rule.
+
+Suggested answer:
+
+- This is not primarily a prompt problem.
+- The query needs multiple evidence slots: normal vendor rule, SEV1 exception, approver, expiry/audit rule.
+- Use multi-hop decomposition and chain completeness checks.
+- Add reranking after each hop if policy documents are noisy or versioned.
+- Final answer should refuse or caveat if any required slot is missing.
+
+#### Drill B - Explain Reranking Requirement
+
+Scenario: A search system retrieves 30 candidate chunks from hybrid search across old docs, new docs, examples, release notes, and forum posts. Only 5 chunks fit in context.
+
+Suggested answer:
+
+- Reranking is mandatory because first-stage retrieval has high recall but low answer-useful precision.
+- The system must choose current, authoritative, answer-sufficient chunks.
+- Reranking should prefer official, fresh, directly relevant evidence and maintain diversity across required facts.
+- Measure NDCG/MRR, grounded answer success, source authority selection, and latency.
+
+#### Drill C - Baseline vs Multi-Hop vs GraphRAG
+
+Scenario: An SRE asks, "If Payment API is degraded, which checkout workflows and owning teams are affected?"
+
+Suggested answer:
+
+- Baseline RAG may retrieve Payment API docs but miss dependency and ownership paths.
+- Multi-hop RAG could decompose into affected services, workflows, and owners.
+- GraphRAG is stronger if a service graph exists because the answer depends on explicit relationships: workflow -> depends_on -> service -> owned_by -> team.
+- The final answer still needs source evidence for each edge.
+
+---
+
+### 9. Capstone System Design Prompt
+
+Design a retrieval-quality layer for an enterprise assistant that answers support, policy, incident, and learning questions. It has vector search, keyword search, metadata filters, reranking, graph data, user memory, and tool access.
+
+Suggested answer outline:
+
+- Classify the query: direct fact, troubleshooting, policy application, comparison, relationship, follow-up, personalized/account-specific, or high-risk.
+- Contextualize follow-ups before retrieval.
+- Apply hard filters first: permissions, tenant, region, version, source authority, freshness.
+- Use baseline hybrid retrieval for simple direct questions.
+- Use query rewriting, expansion, or HyDE for vocabulary mismatch.
+- Use multi-query retrieval and RRF when multiple lexical/semantic branches help.
+- Use reranking whenever candidate selection affects answer correctness.
+- Use multi-hop decomposition when multiple evidence slots are required.
+- Use GraphRAG when entities and relationships are the evidence.
+- Use personalized retrieval only when memory is allowed, relevant, current, and provenance-backed.
+- Pack context by coverage, authority, diversity, and citation traceability.
+- Log every decision: query rewrite, filters, candidates, reranks, graph paths, memories, and final citations.
+- Evaluate by query class, not one blended average.
+
+---
+
+### 10. Production Reality Check
+
+If retrieval quality fails in production, the first thing we inspect is the retrieval trace: contextualized query, filters, candidate generation, reranking, context packing, citations, graph paths, memory facts, and final claim-to-evidence mapping.
+
+Why: almost every RAG failure leaves a fingerprint before generation. The right evidence was missing, buried, filtered out, duplicated, stale, unauthorized, unsupported, or packed poorly. Fixing that fingerprint is more reliable than asking the model to "be more accurate."
+
+---
+
+### 11. Final Active Recall
+
+1. Why is better prompting not enough to fix most retrieval failures?
+2. What condition makes reranking mandatory?
+3. How do baseline RAG, multi-hop RAG, and GraphRAG differ?
+4. Why can GraphRAG still hallucinate?
+5. What should be logged for personalized retrieval?
+
+Answer key:
+
+1. If the model does not receive the right evidence, a better prompt cannot reliably create grounded facts.
+2. Reranking is mandatory when candidate selection affects correctness, especially in noisy, high-risk, multi-branch, or tight-context settings.
+3. Baseline RAG retrieves chunks for one query; multi-hop retrieves multiple evidence slots; GraphRAG retrieves entities, relationships, paths, or communities plus source evidence.
+4. Graph edges can be wrong, stale, unsupported, or over-traversed; the answer must still cite source evidence.
+5. Log memory candidates, memory facts used, scope, consent, freshness, provenance, and how memory changed retrieval.
+
+---
+
+### 12. Exit Check + Carry-Forward
+
+You are done with Module 7 when you can diagnose a bad RAG answer by reading its retrieval trace, choose the smallest retrieval technique that fixes the failure, justify when reranking is mandatory, and explain baseline RAG vs multi-hop RAG vs GraphRAG without mixing them up.
+
+Carry-forward into the next module: retrieval engineering is only half the production story. The next layer is evaluation: building datasets, metrics, traces, and failure taxonomies that prove whether a retrieval change actually improved quality.
 
 ---
 
@@ -5648,10 +6462,14 @@ By the end of this module, you should be able to:
 - **compression loss:** Relevant evidence removed or distorted during context compaction.
 - **compositional query:** A query whose answer depends on combining multiple facts, constraints, or entities.
 - **compositionality classifier:** A component that decides whether a query likely needs multiple evidence pieces or a simpler retrieval path.
+- **consent gate:** A control that requires user or policy permission before saving or using certain personal context.
+- **context carryover:** Bringing relevant earlier conversation facts into the current retrieval request.
 - **context expansion:** The step where a retrieved child hit is expanded into a parent, neighboring chunk, or larger evidence unit.
 - **context compaction:** Reducing retrieved evidence into a smaller, answer-sufficient context while preserving grounding and citations.
 - **context packing:** The process of selecting, ordering, and fitting retrieved evidence into the LLM prompt budget.
 - **context window:** The maximum amount of input and output tokens a model can process in one request.
+- **conversation-aware retrieval:** Retrieval that uses current dialogue context to interpret and retrieve for the latest user query.
+- **conversation context selector:** A component that selects the prior turns or facts needed to interpret the latest query.
 - **containment edge:** An edge showing parent-child structure, such as a section containing a paragraph or table.
 - **cross-encoder:** A reranking model that reads the query and candidate together and outputs a relevance score.
 - **deduplication:** Collapsing repeated or equivalent retrieval results so the prompt does not waste space on duplicate evidence.
@@ -5704,11 +6522,20 @@ By the end of this module, you should be able to:
 - **intermediate answer:** A temporary answer to a subquestion that may guide later retrieval but must still be grounded in evidence.
 - **knowledge graph:** A structured graph of entities and relationships used to represent domain knowledge.
 - **local GraphRAG:** GraphRAG focused on a small neighborhood around query-relevant entities.
+- **long-term memory:** Durable stored context that can be reused across sessions when permitted.
 - **lost-in-the-middle:** A failure mode where the model pays less attention to important evidence placed deep in the middle of a long context.
 - **listwise reranking:** Ranking a list of candidates together in one pass.
 - **metadata:** Structured fields attached to chunks or documents, such as source, section, version, permissions, freshness, and offsets.
 - **metadata coverage:** The percentage of documents or chunks that have a usable value for a metadata field.
 - **metadata-driven recall:** Improving retrieval coverage by using structured fields to filter, boost, route, expand, or rerank evidence.
+- **memory auditor:** A component that makes memory use inspectable for debugging, compliance, or user control.
+- **memory provenance:** Metadata showing where a memory came from, when it was written, and why it is trusted.
+- **memory read policy:** Rules that decide which saved memory can be retrieved for a request.
+- **memory retrieval:** Retrieving stored memories or profile facts that may help answer the current query.
+- **memory router:** A component that decides whether long-term memory is relevant and allowed for a request.
+- **memory store:** Storage for user, account, project, task, or preference facts with scope and provenance.
+- **memory write policy:** Rules that decide what information is allowed to be saved as memory.
+- **memory writer:** A component that decides whether new durable memory should be saved, updated, ignored, or deleted.
 - **multi-hop retrieval:** A retrieval pattern where a question is answered by gathering multiple connected evidence pieces across two or more retrieval steps.
 - **multi-query retrieval:** Running multiple query variants or retrieval branches for one user request, then combining their results.
 - **node:** A graph unit such as a section, paragraph, table, appendix, figure, code block, or clause.
@@ -5722,10 +6549,16 @@ By the end of this module, you should be able to:
 - **parallel decomposition:** A decomposition strategy where independent subquestions are retrieved at the same time.
 - **path retrieval:** Retrieving evidence by following one or more graph paths between entities.
 - **pattern router:** A routing component that selects baseline retrieval, HyDE, self-RAG, agentic retrieval, or a hybrid based on query risk and confidence.
+- **personalization drift:** A failure where old, weak, or overfit preferences distort retrieval away from the user's actual current need.
+- **personalized retrieval:** Retrieval that uses user-specific, account-specific, or preference-specific context to improve relevance.
+- **personalized retrieval composer:** A component that combines query, conversation facts, memory facts, and source filters for retrieval.
 - **pairwise reranking:** Comparing two candidates at a time and choosing the better one.
 - **pointwise reranking:** Scoring each candidate independently against the query.
 - **position bias:** A failure where a reranker favors candidates based on order rather than relevance.
 - **precision:** The share of retrieved results that are actually relevant.
+- **preference signal:** A stored or inferred indication of what the user prefers, such as style, region, tool, product, or depth.
+- **privacy boundary:** A rule separating what context can and cannot cross between users, tenants, roles, sessions, or tools.
+- **privacy filter:** A component that enforces tenant, user, role, consent, retention, and tool-access boundaries.
 - **post-filtering:** Applying metadata constraints after candidate retrieval.
 - **pre-filtering:** Applying metadata constraints before vector or hybrid search.
 - **controlled vocabulary:** A curated mapping of domain terms, synonyms, acronyms, and canonical labels.
@@ -5736,6 +6569,8 @@ By the end of this module, you should be able to:
 - **query drift:** A failure where rewriting or expansion changes the user's original intent.
 - **query expansion:** Adding related terms, synonyms, acronyms, entities, or domain vocabulary to improve recall.
 - **query branch:** One retrieval path, such as raw query, rewritten query, keyword query, vector query, metadata-scoped query, or error-code query.
+- **query contextualization:** Rewriting a follow-up query into a standalone retrieval query using relevant context.
+- **query contextualizer:** A component that rewrites follow-up or ambiguous requests into standalone retrieval queries.
 - **query rewriting:** Transforming a user query into a clearer or more retrievable query while preserving intent.
 - **precision-oriented rewrite:** A rewrite designed to narrow retrieval toward the exact scope.
 - **recall-oriented rewrite:** A rewrite designed to find more potentially relevant evidence.
@@ -5747,6 +6582,7 @@ By the end of this module, you should be able to:
 - **retrieval decision model:** A model or rule set that decides whether to retrieve, retrieve more, answer, refuse, or ask for clarification.
 - **recall:** The share of all relevant evidence that retrieval successfully finds.
 - **recall lift:** The improvement in finding relevant evidence compared with a single-query baseline.
+- **recency weighting:** Favoring newer context when older context may be stale.
 - **relationship:** A typed connection between entities, such as owns, depends_on, cites, approves, contains, or affected_by.
 - **relationship extraction:** Extracting typed relationships from text, metadata, code, logs, tickets, or databases.
 - **rank aggregation:** Combining ranked lists into one final ranked list.
@@ -5758,12 +6594,16 @@ By the end of this module, you should be able to:
 - **RRF constant:** The `k` value in RRF that controls how much top ranks dominate over lower ranks.
 - **score calibration:** Making reranker scores comparable enough to support thresholds and ranking decisions.
 - **score-based fusion:** Fusion that combines normalized scores from different retrievers or models.
+- **salience ranker:** A component that scores memory candidates by relevance, freshness, authority, and task fit.
+- **salience scoring:** Estimating which memories or conversation facts matter for the current query.
 - **reference edge:** An edge created from explicit document references such as links, "see Section X," or "as defined in Y."
 - **reranking:** A second-stage ranking step that reorders retrieved candidates using a stronger but usually slower model or scoring method.
 - **section graph:** A graph where document parts are nodes and structural or semantic relationships are edges.
 - **Self-RAG:** A retrieval pattern where the system decides when to retrieve, evaluates retrieved evidence, and critiques answer grounding.
 - **semantic embedding:** An embedding intended to place similar meanings near each other in vector space.
+- **session context:** Short-lived context from the current conversation or task.
 - **soft boost:** A ranking preference that raises matching documents without excluding non-matching documents.
+- **source retriever:** A component that retrieves grounded evidence from documents, databases, tools, or graphs.
 - **stable ID:** An identifier that remains consistent enough across ingestion, indexing, retrieval, expansion, and citation mapping to preserve traceability.
 - **stop condition:** A rule that tells an iterative retrieval workflow when to stop searching and answer, refuse, or ask for clarification.
 - **stop-condition evaluator:** The component that decides whether an iterative retrieval workflow should continue, stop, refuse, or ask for clarification.
@@ -5774,6 +6614,7 @@ By the end of this module, you should be able to:
 - **token budget:** The maximum input tokens available for retrieved context after reserving space for instructions, conversation, and output.
 - **trace logger:** A component that records retrieval decisions, tool calls, evidence, critiques, and citations for debugging and evaluation.
 - **triple:** A subject-relationship-object fact used to represent a graph edge.
+- **user profile:** A structured representation of stable user attributes, preferences, permissions, projects, and constraints.
 - **vector index:** A search structure optimized for nearest-neighbor lookup over embeddings.
 - **verifier:** A component that checks whether each final claim is supported and whether any required hop is missing.
 - **versioning:** Recording document and chunk versions so retrieval does not mix old child vectors with newer parent text.
