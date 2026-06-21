@@ -5939,7 +5939,7 @@ Attempt these from memory before checking the answers. These span all three topi
 - [ ] Name the single first metric to check for each of the three major failure classes: retrieval miss, stale answer, epistemic blur
 - [ ] Design a freshness + permissions metadata schema for a new corpus from scratch
 
-If you can do all seven, you are ready for **Module 7 (RAG Evaluation and Quality Metrics)** — where you will learn to measure retrieval precision, answer faithfulness, and context coverage at production scale using RAGAS-style frameworks.
+If you can do all seven, you are ready for **Module 7 (Advanced Retrieval Engineering)** — where you will learn to improve retrieval quality using hierarchy, metadata, query transformation, reranking, and advanced RAG patterns.
 
 ---
 
