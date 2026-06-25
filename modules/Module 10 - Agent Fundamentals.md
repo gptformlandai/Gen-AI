@@ -17724,3 +17724,424 @@ Expected answers:
 One-line topic summary:
 
 > Serious agent architectures are defined by responsibility boundaries, recovery routes, and trajectory evaluation, not by how impressive the final response looks.
+
+---
+
+## Module 10 Checkpoint: Agent Fundamentals
+
+This checkpoint connects the full module into one production and interview-ready mental model.
+
+By the end of this module, you should be able to:
+
+```text
+decide correctly when not to use an agent
+explain planning, memory, and tool use as separate concerns
+diagnose agent failures as control-flow problems, not just model problems
+```
+
+---
+
+### 1. The One-Sentence Module Mental Model
+
+Agents are useful when a task needs adaptive action selection, but serious systems must bound that autonomy with explicit tools, state, planning, memory policy, recovery routes, and trajectory evaluation.
+
+Shorter:
+
+```text
+Agents are controlled loops, not magic workers.
+```
+
+---
+
+### 2. Full Module Map
+
+```mermaid
+flowchart TD
+    A[User goal] --> B{Task shape}
+    B -->|Fixed path| C[Chain]
+    B -->|Known process / approvals| D[Workflow]
+    B -->|Unknown path| E[Agent loop]
+
+    E --> F[Observe]
+    F --> G[Decide / plan]
+    G --> H[Select tool]
+    H --> I[Runtime validation]
+    I --> J[Tool execution]
+    J --> K[State / memory update]
+    K --> L{Stop / recover / continue}
+    L -->|Continue| F
+    L -->|Failure| M[Retry / repair / replan / escalate]
+    L -->|Done| N[Final answer]
+
+    K --> O[Short-term memory]
+    K --> P[Long-term memory policy]
+    K --> Q[Context compaction]
+    E --> R[Trajectory trace]
+    R --> S[Trajectory evaluation]
+```
+
+Important:
+
+> The agent is only one part of the system. Tools, workflow gates, state, memory, recovery, and evals determine whether it is safe enough to use.
+
+---
+
+### 3. Checkpoint Outcome 1: Decide Correctly When Not to Use an Agent
+
+Weak answer:
+
+> "Agents are more powerful, so I would use an agent."
+
+Strong answer:
+
+> "I would use the least dynamic architecture that solves the problem. If the steps are fixed, use a chain. If the process is known but branched, use a workflow. If approvals, compliance, side effects, or audit matter, keep control deterministic. Use an agent only when the next action genuinely depends on intermediate observations."
+
+#### Do Not Use an Agent When
+
+| Situation | Better Choice | Why |
+|---|---|---|
+| Fixed transformation | Chain | No need for dynamic action selection. |
+| Basic RAG path | Chain/workflow | Query -> retrieve -> answer is known. |
+| Known business process | Workflow | States and routes are explicit. |
+| Refund approval | Workflow + human gate | Money movement needs deterministic checks. |
+| Data deletion | Compliance workflow | Identity, audit, and policy matter. |
+| Access provisioning | Workflow | Permissions require explicit control. |
+| Simple classification/extraction | Chain/model call | Agent loop adds cost and variance. |
+| Strict latency/cost target | Chain/workflow | Agent step count varies. |
+| Required checks must always run | Workflow | Model should not remember process gates. |
+| High-risk side effects | Workflow-gated tool | Agent may choose wrong action/args. |
+
+#### Use an Agent When
+
+| Situation | Why Agent Helps |
+|---|---|
+| Unknown investigation path | Next tool depends on observed result. |
+| Multi-step research | Evidence gaps guide follow-up searches. |
+| Codebase exploration | File reads influence next search/read. |
+| Incident diagnosis | Metrics/logs/traces determine next action. |
+| Ambiguous support case | Agent may need clarification and tool choice. |
+
+Decision rule:
+
+```text
+If you can draw the path upfront, prefer chain/workflow.
+If the path must be discovered, consider a bounded agent.
+```
+
+Interview sentence:
+
+> "Agents are for uncertainty. Workflows are for control. Chains are for fixed paths."
+
+---
+
+### 4. Checkpoint Outcome 2: Explain Planning, Memory, and Tool Use as Separate Concerns
+
+These three concepts often get mixed into one vague phrase:
+
+```text
+"The agent thinks, uses tools, and remembers."
+```
+
+That is too blurry for production.
+
+Separate them:
+
+| Concern | Question It Answers | Failure If Confused |
+|---|---|---|
+| Tool use | What can the agent do or inspect? | Unsafe or wrong actions |
+| Planning | How does the agent choose and sequence actions? | Wandering, overplanning, stale plans |
+| Memory | What does the agent retain and retrieve? | Stale, private, or irrelevant context |
+
+#### Tool Use
+
+Tool use is the action boundary.
+
+It defines:
+
+- available capabilities
+- tool names/descriptions
+- arguments
+- validation
+- permissions
+- risk classes
+- result shape
+
+Good tool-use answer:
+
+> "I would design tools as narrow, typed, risk-aware action contracts. The model can propose a tool call, but the runtime validates schema, permission, state eligibility, and policy before execution."
+
+#### Planning
+
+Planning is the control horizon.
+
+It defines:
+
+- reactive next-action choice
+- plan-and-execute steps
+- hierarchical subgoals
+- replanning triggers
+- success criteria
+- stop conditions
+
+Good planning answer:
+
+> "Reactive planning fits short uncertain tasks. Plan-and-execute fits visible multi-step work. Hierarchical planning fits decomposable specialist work. The planning style should match task length, uncertainty, risk, latency, and cost."
+
+#### Memory
+
+Memory is retained context with policy.
+
+It defines:
+
+- short-term state
+- long-term durable memory
+- write policy
+- retrieval policy
+- scope
+- provenance
+- TTL
+- deletion
+- compaction
+
+Good memory answer:
+
+> "Short-term memory keeps current task state coherent. Long-term memory stores durable, scoped, policy-allowed facts or preferences. Context compaction keeps long-running tasks manageable while preserving pinned facts and source references."
+
+The clean separation:
+
+```text
+Tools act.
+Planning steers.
+Memory retains.
+Workflow enforces.
+Evaluation verifies.
+```
+
+---
+
+### 5. Checkpoint Outcome 3: Diagnose Agent Failures as Control-Flow Problems
+
+Weak diagnosis:
+
+> "The model got it wrong."
+
+Strong diagnosis:
+
+> "Where did the trajectory first go wrong: observation, route, plan, tool selection, arguments, permission, tool result interpretation, state update, recovery, stop condition, or final synthesis?"
+
+Most agent failures are control-flow failures.
+
+| Symptom | Better Diagnosis |
+|---|---|
+| Agent used wrong tool | Tool schema/routing/tool availability problem |
+| Agent repeated searches | No-progress detection/stop condition problem |
+| Agent skipped approval | Workflow gate/control-plane problem |
+| Agent answered without evidence | Evidence sufficiency/stop condition problem |
+| Agent exposed wrong data | Permission/scope/runtime validation problem |
+| Agent hallucinated after tool failure | Recovery/dead-end handling problem |
+| Agent used stale preference | Memory freshness/scope problem |
+| Agent got stuck | Loop budget/replanning problem |
+| Agent produced unsupported synthesis | Fan-in/evidence validation problem |
+| Agent made costly long path | Planning/efficiency eval problem |
+
+Debugging sequence:
+
+```text
+1. Reconstruct the trajectory.
+2. Find the first bad transition.
+3. Classify the failure.
+4. Decide which control surface failed.
+5. Add a guard/eval/regression case.
+```
+
+Control surfaces:
+
+- tool schema
+- runtime validation
+- permission check
+- route function
+- planner
+- state schema
+- memory retrieval
+- compaction
+- recovery policy
+- stop condition
+- workflow gate
+- trajectory eval
+
+The strong mental move:
+
+```text
+Do not only tune the prompt.
+Fix the control surface that allowed the bad path.
+```
+
+---
+
+### 6. Architecture Decision Rubric
+
+Use this in interviews and design reviews.
+
+| Question | If Yes | Architecture Move |
+|---|---|---|
+| Are the steps fixed? | Yes | Chain |
+| Are the states/routes known? | Yes | Workflow |
+| Are approvals or side effects involved? | Yes | Workflow/human gate |
+| Does next action depend on observations? | Yes | Bounded agent |
+| Are there many domains? | Yes | Router + specialists |
+| Does task decompose into subgoals? | Yes | Supervisor-worker |
+| Are tools mostly read-only? | Yes | Agent autonomy is safer |
+| Are write tools required? | Yes | Runtime validation + workflow gate |
+| Is context growing long? | Yes | Compaction + summary memory |
+| Can the agent fail mid-path? | Yes | Recovery policy |
+| Can final answer hide unsafe path? | Yes | Trajectory eval |
+
+Short version:
+
+```text
+Fixed path -> chain
+Known process -> workflow
+Unknown next action -> agent
+Many domains -> router
+Many subgoals -> supervisor
+High risk -> deterministic gate
+```
+
+---
+
+### 7. Production Readiness Checklist
+
+Before calling an agent production-ready:
+
+```text
+Task shape justifies agentic behavior.
+Non-agent alternatives were considered.
+Tool schemas are narrow and typed.
+Read/write tools are separated.
+High-risk tools are gated.
+Runtime validates every tool call.
+Permissions are checked every time.
+State schema is explicit.
+Memory write/retrieval policies exist.
+Context compaction preserves pinned facts and refs.
+Planning style matches task shape.
+Loop budgets exist.
+No-progress detection exists.
+Recovery routes exist.
+Escalation paths exist.
+Side effects use idempotency.
+Every trajectory is traced.
+Trajectory evals exist.
+Production incidents become regressions.
+```
+
+If several of these are missing, you likely have a demo agent, not a reliable agent system.
+
+---
+
+### 8. Interview-Ready Strong Answer
+
+Question:
+
+> "How do you decide whether to use an agent, and how do you make it reliable?"
+
+Strong answer:
+
+> "I start by asking whether the task actually needs dynamic action selection. If the steps are fixed, I use a chain. If the process is known but branched, especially with approvals or side effects, I use a workflow. I use an agent only when the next action depends on intermediate observations, such as investigation, research, codebase exploration, or multi-tool diagnosis."
+
+> "If I use an agent, I separate concerns. Tools define what the agent can inspect or do, and they need typed schemas, scoped availability, validation, permissions, and risk classes. Planning controls how far ahead the agent reasons: reactive, plan-and-execute, or hierarchical. Memory controls what persists: short-term task state, long-term scoped memory, and compact summaries with source references."
+
+> "For reliability, I treat failures as control-flow problems. I trace the full trajectory, not just the final answer. If the agent used the wrong tool, repeated actions, skipped approval, answered without evidence, or used stale memory, I inspect the first bad transition and fix the control surface: schema, route, state, memory, recovery, stop condition, or workflow gate."
+
+> "Finally, I evaluate trajectories. Hard invariants like no unauthorized access, no approval bypass, no forbidden tools, and no duplicate side effects are deterministic checks. Softer output quality can use rubrics or LLM judges. Production incidents become regression cases."
+
+Final summary:
+
+```text
+Use agents for uncertainty.
+Use workflows for control.
+Use tools as contracts.
+Use memory with policy.
+Use recovery for failure.
+Use trajectory eval for trust.
+```
+
+---
+
+### 9. Final Diagnostic Table
+
+| Failure | Likely Root Cause | Fix |
+|---|---|---|
+| Agent chose wrong domain | Router/schema issue | Better route labels, confidence, evals |
+| Agent chose wrong tool | Tool naming/description/scope issue | Narrow tools and scoped availability |
+| Agent passed bad args | Schema/validation issue | Typed params, enums, validators |
+| Agent skipped required check | Workflow/control issue | Deterministic gate |
+| Agent looped | Stop/no-progress issue | Budgets and loop detection |
+| Agent guessed missing info | Clarification policy issue | Required fields and ask-user route |
+| Agent answered without evidence | Sufficiency issue | Evidence gate and citation checks |
+| Agent used stale memory | Memory freshness issue | TTL, source, confirmation, retrieval filters |
+| Agent made unsafe write | Permission/approval issue | Workflow gate, idempotency, audit |
+| Agent recovered poorly | Recovery policy issue | Error taxonomy and typed recovery routes |
+| Good answer, bad path | Eval coverage issue | Full trajectory evaluation |
+
+---
+
+### 10. Final Active Recall
+
+Answer without looking:
+
+1. When should you avoid using an agent?
+2. What task shape justifies an agent?
+3. Why are deterministic workflows often stronger than agent loops?
+4. What is the difference between tool use, planning, and memory?
+5. Why are tool schemas behavioral controls?
+6. What are the three planning styles?
+7. What is short-term memory?
+8. What is long-term memory?
+9. Why is context compaction controlled loss?
+10. When is single-agent with tools enough?
+11. When do you need a router?
+12. When do you need a supervisor-worker pattern?
+13. What are the three major recovery failure classes?
+14. Why is final-answer-only evaluation dangerous?
+15. What is the best way to debug an agent failure?
+
+Expected answers:
+
+1. Fixed steps, known workflows, high-risk side effects, strict cost/latency, required approvals.
+2. Unknown next action based on intermediate observations.
+3. They enforce required checks, approvals, state, recovery, and audit.
+4. Tools define actions; planning sequences actions; memory retains context.
+5. The model uses names/descriptions/parameters to choose and fill actions.
+6. Reactive, plan-and-execute, hierarchical.
+7. Temporary task/session state for current coherence.
+8. Durable, scoped, policy-allowed memory for future tasks.
+9. It intentionally drops detail, so exact facts/source refs must be preserved.
+10. Narrow domain, small tools, bounded mostly read-only task, explicit state.
+11. Many domains/routes needing different tools or permissions.
+12. Complex decomposable work requiring specialist outputs and synthesis.
+13. Tool errors, loops, dead ends.
+14. Good-looking answers can hide unsafe, wasteful, unauthorized, or unsupported paths.
+15. Trace the trajectory and find the first bad control-flow transition.
+
+---
+
+### 11. Final Memory Card
+
+```text
+Agent = adaptive action loop.
+Chain = fixed recipe.
+Workflow = controlled process.
+Router = dispatch.
+Supervisor = coordination.
+Tool = action contract.
+Planning = control horizon.
+Memory = governed retention.
+Compaction = controlled loss.
+Recovery = typed failure routing.
+Trajectory eval = trust.
+```
+
+One-line module summary:
+
+> Agent fundamentals are about knowing where autonomy helps, where deterministic control must win, and how to make every agent path inspectable, recoverable, and evaluable.
