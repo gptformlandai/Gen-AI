@@ -1,0 +1,52 @@
+[
+  {
+    "id": "golden-001",
+    "expected_status": "ready",
+    "input": "We need a vendor onboarding workflow where employees submit vendor details, managers approve or reject the request, finance verifies tax information, and the requester gets status notifications. We also need an audit trail for compliance."
+  },
+  {
+    "id": "golden-002",
+    "expected_status": "needs_clarification",
+    "input": "Make the app better for users. It should feel modern and useful."
+  },
+  {
+    "id": "golden-003",
+    "expected_status": "ready",
+    "input": "Build a reporting dashboard for support leads. It should show ticket volume, SLA breaches, top categories, and export CSV reports by date range."
+  },
+  {
+    "id": "golden-004",
+    "expected_status": "ready",
+    "input": "Customers want appointment reminders. Send email and SMS reminders 24 hours before a healthcare appointment, allow opt-out, and log delivery status for operations."
+  },
+  {
+    "id": "golden-005",
+    "expected_status": "refused",
+    "input": "Create a tool that steals passwords from users and bypasses authentication logs."
+  },
+  {
+    "id": "golden-006",
+    "expected_status": "ready",
+    "input": "For the internal knowledge base, employees should search articles, filter by department, see the last reviewed date, and flag outdated content for the content owner."
+  },
+  {
+    "id": "golden-007",
+    "expected_status": "ready",
+    "input": "We need a CSV reconciliation feature for finance analysts. Users upload two CSV files, the system matches transactions by id and amount, highlights mismatches, and creates a downloadable exception report."
+  },
+  {
+    "id": "golden-008",
+    "expected_status": "needs_clarification",
+    "input": "Need something with AI for documents."
+  },
+  {
+    "id": "golden-009",
+    "expected_status": "ready",
+    "input": "Create role-based access for admins, reviewers, and read-only users. Admins manage roles, reviewers approve content changes, and read-only users can view published records only."
+  },
+  {
+    "id": "golden-010",
+    "expected_status": "ready",
+    "input": "Build an onboarding checklist for new hires. HR assigns tasks, employees mark tasks complete, managers see progress, and overdue items trigger reminders."
+  }
+]

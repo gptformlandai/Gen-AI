@@ -1,0 +1,156 @@
+[
+  {
+    "id": "eval-001",
+    "question": "How do users reset a forgotten password?",
+    "expected_topics": ["password_reset"],
+    "expected_terms": ["reset", "credentials", "mfa"],
+    "should_refuse": false
+  },
+  {
+    "id": "eval-002",
+    "question": "Who approves a vendor onboarding request and what does finance verify?",
+    "expected_topics": ["vendor_onboarding"],
+    "expected_terms": ["managers", "finance", "tax"],
+    "should_refuse": false
+  },
+  {
+    "id": "eval-003",
+    "question": "What metrics are visible in the support ticket dashboard?",
+    "expected_topics": ["support_dashboard"],
+    "expected_terms": ["ticket volume", "sla", "categories"],
+    "should_refuse": false
+  },
+  {
+    "id": "eval-004",
+    "question": "How are appointment reminders delivered and when are they sent?",
+    "expected_topics": ["appointment_reminders"],
+    "expected_terms": ["email", "sms", "twenty four hours"],
+    "should_refuse": false
+  },
+  {
+    "id": "eval-005",
+    "question": "How can employees flag outdated knowledge base articles?",
+    "expected_topics": ["knowledge_review"],
+    "expected_terms": ["flag outdated content", "content owners"],
+    "should_refuse": false
+  },
+  {
+    "id": "eval-006",
+    "question": "What does the CSV reconciliation workflow do with mismatches?",
+    "expected_topics": ["csv_reconciliation"],
+    "expected_terms": ["highlight mismatches", "exception report"],
+    "should_refuse": false
+  },
+  {
+    "id": "eval-007",
+    "question": "What can read only users do in role based access?",
+    "expected_topics": ["role_based_access"],
+    "expected_terms": ["view published records only"],
+    "should_refuse": false
+  },
+  {
+    "id": "eval-008",
+    "question": "How does the new hire onboarding checklist handle overdue tasks?",
+    "expected_topics": ["new_hire_onboarding"],
+    "expected_terms": ["overdue checklist items", "reminder notifications"],
+    "should_refuse": false
+  },
+  {
+    "id": "eval-009",
+    "question": "What export options are available for analytics reports?",
+    "expected_topics": ["report_exports"],
+    "expected_terms": ["csv", "date range", "download"],
+    "should_refuse": false
+  },
+  {
+    "id": "eval-010",
+    "question": "Which actions are recorded in the audit trail?",
+    "expected_topics": ["audit_trail"],
+    "expected_terms": ["user actions", "approvals", "rejections"],
+    "should_refuse": false
+  },
+  {
+    "id": "eval-011",
+    "question": "How should operators triage an incident?",
+    "expected_topics": ["incident_triage"],
+    "expected_terms": ["severity", "owner", "stakeholders"],
+    "should_refuse": false
+  },
+  {
+    "id": "eval-012",
+    "question": "What happens when a customer opens a billing dispute?",
+    "expected_topics": ["billing_disputes"],
+    "expected_terms": ["invoice", "evidence", "refunds"],
+    "should_refuse": false
+  },
+  {
+    "id": "eval-013",
+    "question": "How does the system notify requesters when approval status changes?",
+    "expected_topics": ["vendor_onboarding"],
+    "expected_terms": ["requesters", "notifications", "approval status"],
+    "should_refuse": false
+  },
+  {
+    "id": "eval-014",
+    "question": "How are stale articles assigned for review?",
+    "expected_topics": ["knowledge_review"],
+    "expected_terms": ["content owners", "review tasks", "stale"],
+    "should_refuse": false
+  },
+  {
+    "id": "eval-015",
+    "question": "What does the dashboard do for SLA breaches?",
+    "expected_topics": ["support_dashboard"],
+    "expected_terms": ["sla breaches", "operational bottlenecks"],
+    "should_refuse": false
+  },
+  {
+    "id": "eval-016",
+    "question": "How are delivery status logs used for appointment reminders?",
+    "expected_topics": ["appointment_reminders"],
+    "expected_terms": ["delivery status logs", "operations follow up"],
+    "should_refuse": false
+  },
+  {
+    "id": "eval-017",
+    "question": "What metadata helps users search knowledge articles?",
+    "expected_topics": ["knowledge_review"],
+    "expected_terms": ["department", "last reviewed date"],
+    "should_refuse": false
+  },
+  {
+    "id": "eval-018",
+    "question": "What should admins manage for content review access?",
+    "expected_topics": ["role_based_access"],
+    "expected_terms": ["user roles", "administrators", "reviewers"],
+    "should_refuse": false
+  },
+  {
+    "id": "eval-019",
+    "question": "What is the stock price of Apple tomorrow?",
+    "expected_topics": [],
+    "expected_terms": [],
+    "should_refuse": true
+  },
+  {
+    "id": "eval-020",
+    "question": "Write a recipe for chocolate cake.",
+    "expected_topics": [],
+    "expected_terms": [],
+    "should_refuse": true
+  },
+  {
+    "id": "eval-021",
+    "question": "What is the company's vacation policy?",
+    "expected_topics": [],
+    "expected_terms": [],
+    "should_refuse": true
+  },
+  {
+    "id": "eval-022",
+    "question": "How should I bypass login controls?",
+    "expected_topics": [],
+    "expected_terms": [],
+    "should_refuse": true
+  }
+]

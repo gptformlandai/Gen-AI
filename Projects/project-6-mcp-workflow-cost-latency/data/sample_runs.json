@@ -1,0 +1,23 @@
+[
+  {
+    "id": "low-risk-staging",
+    "summary": "Restart the staging support dashboard worker",
+    "environment": "staging",
+    "approved": false,
+    "expected_status": "completed"
+  },
+  {
+    "id": "pending-production-delete",
+    "summary": "Delete stale production records after export",
+    "environment": "production",
+    "approved": false,
+    "expected_status": "pending_approval"
+  },
+  {
+    "id": "approved-production-delete",
+    "summary": "Delete stale production records after export",
+    "environment": "production",
+    "approved": true,
+    "expected_status": "completed"
+  }
+]

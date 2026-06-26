@@ -1,0 +1,94 @@
+{
+  "request": {
+    "summary": "Restart the staging support dashboard worker",
+    "environment": "staging",
+    "requester": "ops@example.com",
+    "approved": false
+  },
+  "status": "completed",
+  "risk": {
+    "risk_level": "low",
+    "approval_required": false,
+    "reasons": [
+      "Routine low-risk change."
+    ]
+  },
+  "ticket": {
+    "ticket_id": "CHG-0001",
+    "created": true,
+    "message": "Created CHG-0001 for Restart the staging support dashboard worker"
+  },
+  "notification": {
+    "sent": true,
+    "channel": "change-management",
+    "message": "Notified stakeholders for CHG-0001 in staging risk=low"
+  },
+  "budget": {
+    "estimated_tokens": 81,
+    "estimated_cost_usd": 0.000162,
+    "mcp_request_count": 4,
+    "measured_latency_ms": 0.104,
+    "latency_budget_ms": 500.0,
+    "request_budget": 4,
+    "within_latency_budget": true,
+    "within_request_budget": true
+  },
+  "trace": [
+    {
+      "step": "start",
+      "message": "Workflow started.",
+      "data": {
+        "summary": "Restart the staging support dashboard worker",
+        "environment": "staging",
+        "requester": "ops@example.com",
+        "approved": false
+      }
+    },
+    {
+      "step": "mcp.resource.read",
+      "message": "Read change-management policy resource.",
+      "data": {
+        "uri": "policy://change-management"
+      }
+    },
+    {
+      "step": "mcp.tool.risk",
+      "message": "Risk assessment completed.",
+      "data": {
+        "risk": {
+          "risk_level": "low",
+          "approval_required": false,
+          "reasons": [
+            "Routine low-risk change."
+          ]
+        },
+        "latency_ms": 0.015
+      }
+    },
+    {
+      "step": "mcp.tool.ticket",
+      "message": "Change ticket created.",
+      "data": {
+        "ticket": {
+          "ticket_id": "CHG-0001",
+          "created": true,
+          "message": "Created CHG-0001 for Restart the staging support dashboard worker"
+        },
+        "latency_ms": 0.008
+      }
+    },
+    {
+      "step": "mcp.tool.notify",
+      "message": "Stakeholder notification completed.",
+      "data": {
+        "notification": {
+          "sent": true,
+          "channel": "change-management",
+          "message": "Notified stakeholders for CHG-0001 in staging risk=low"
+        },
+        "latency_ms": 0.001
+      }
+    }
+  ],
+  "errors": []
+}

@@ -1,0 +1,86 @@
+{
+  "request": "Grant temporary admin access to a reviewer for production records.",
+  "status": "pending_human_approval",
+  "classification": {
+    "category": "admin_access",
+    "risk_level": "high",
+    "approval_required": true,
+    "reason": "Access elevation can affect production data and auditability."
+  },
+  "policy": {
+    "policy_id": "POL-ACCESS-002",
+    "summary": "Temporary admin access requires manager approval, expiry, and audit logging.",
+    "requires_approval": true,
+    "source": "tool"
+  },
+  "plan": {
+    "title": "Triage admin access request",
+    "steps": [
+      "Confirm request scope and requester identity.",
+      "Apply policy POL-ACCESS-002: Temporary admin access requires manager approval, expiry, and audit logging.",
+      "Create a traceable work item with owner and next action."
+    ],
+    "assignee_team": "Identity Operations",
+    "approval_required": true,
+    "risk_level": "high"
+  },
+  "execution": null,
+  "trace": [
+    {
+      "node": "receive_request",
+      "message": "Request received.",
+      "data": {
+        "request": "Grant temporary admin access to a reviewer for production records."
+      }
+    },
+    {
+      "node": "classify_request",
+      "message": "Request classified.",
+      "data": {
+        "category": "admin_access",
+        "risk_level": "high",
+        "approval_required": true,
+        "reason": "Access elevation can affect production data and auditability."
+      }
+    },
+    {
+      "node": "lookup_policy",
+      "message": "Policy loaded.",
+      "data": {
+        "attempts": 1,
+        "policy_id": "POL-ACCESS-002",
+        "summary": "Temporary admin access requires manager approval, expiry, and audit logging.",
+        "requires_approval": true,
+        "source": "tool"
+      }
+    },
+    {
+      "node": "draft_plan",
+      "message": "Action plan drafted.",
+      "data": {
+        "title": "Triage admin access request",
+        "steps": [
+          "Confirm request scope and requester identity.",
+          "Apply policy POL-ACCESS-002: Temporary admin access requires manager approval, expiry, and audit logging.",
+          "Create a traceable work item with owner and next action."
+        ],
+        "assignee_team": "Identity Operations",
+        "approval_required": true,
+        "risk_level": "high"
+      }
+    },
+    {
+      "node": "human_approval",
+      "message": "Workflow paused for human approval.",
+      "data": {}
+    },
+    {
+      "node": "finalize",
+      "message": "Workflow finalized.",
+      "data": {
+        "status": "pending_human_approval"
+      }
+    }
+  ],
+  "errors": []
+}

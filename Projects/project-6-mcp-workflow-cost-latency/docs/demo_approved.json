@@ -1,0 +1,96 @@
+{
+  "request": {
+    "summary": "Delete stale production records after export",
+    "environment": "production",
+    "requester": "ops@example.com",
+    "approved": true
+  },
+  "status": "completed",
+  "risk": {
+    "risk_level": "high",
+    "approval_required": true,
+    "reasons": [
+      "Production environment increases blast radius.",
+      "Summary contains destructive action terms."
+    ]
+  },
+  "ticket": {
+    "ticket_id": "PROD-0001",
+    "created": true,
+    "message": "Created PROD-0001 for Delete stale production records after export"
+  },
+  "notification": {
+    "sent": true,
+    "channel": "change-management",
+    "message": "Notified stakeholders for PROD-0001 in production risk=high"
+  },
+  "budget": {
+    "estimated_tokens": 81,
+    "estimated_cost_usd": 0.000162,
+    "mcp_request_count": 4,
+    "measured_latency_ms": 0.101,
+    "latency_budget_ms": 500.0,
+    "request_budget": 4,
+    "within_latency_budget": true,
+    "within_request_budget": true
+  },
+  "trace": [
+    {
+      "step": "start",
+      "message": "Workflow started.",
+      "data": {
+        "summary": "Delete stale production records after export",
+        "environment": "production",
+        "requester": "ops@example.com",
+        "approved": true
+      }
+    },
+    {
+      "step": "mcp.resource.read",
+      "message": "Read change-management policy resource.",
+      "data": {
+        "uri": "policy://change-management"
+      }
+    },
+    {
+      "step": "mcp.tool.risk",
+      "message": "Risk assessment completed.",
+      "data": {
+        "risk": {
+          "risk_level": "high",
+          "approval_required": true,
+          "reasons": [
+            "Production environment increases blast radius.",
+            "Summary contains destructive action terms."
+          ]
+        },
+        "latency_ms": 0.015
+      }
+    },
+    {
+      "step": "mcp.tool.ticket",
+      "message": "Change ticket created.",
+      "data": {
+        "ticket": {
+          "ticket_id": "PROD-0001",
+          "created": true,
+          "message": "Created PROD-0001 for Delete stale production records after export"
+        },
+        "latency_ms": 0.008
+      }
+    },
+    {
+      "step": "mcp.tool.notify",
+      "message": "Stakeholder notification completed.",
+      "data": {
+        "notification": {
+          "sent": true,
+          "channel": "change-management",
+          "message": "Notified stakeholders for PROD-0001 in production risk=high"
+        },
+        "latency_ms": 0.001
+      }
+    }
+  ],
+  "errors": []
+}

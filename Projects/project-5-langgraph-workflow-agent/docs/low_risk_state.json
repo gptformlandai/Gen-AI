@@ -1,0 +1,94 @@
+{
+  "request": "Restart the support dashboard worker after business hours.",
+  "status": "executed",
+  "classification": {
+    "category": "operations",
+    "risk_level": "low",
+    "approval_required": false,
+    "reason": "Routine operational request."
+  },
+  "policy": {
+    "policy_id": "POL-OPS-DEFAULT",
+    "summary": "Low-risk operational tasks can be routed to the owning team with traceable notes.",
+    "requires_approval": false,
+    "source": "tool"
+  },
+  "plan": {
+    "title": "Triage operations request",
+    "steps": [
+      "Confirm request scope and requester identity.",
+      "Apply policy POL-OPS-DEFAULT: Low-risk operational tasks can be routed to the owning team with traceable notes.",
+      "Create a traceable work item with owner and next action."
+    ],
+    "assignee_team": "Platform Operations",
+    "approval_required": false,
+    "risk_level": "low"
+  },
+  "execution": {
+    "executed": true,
+    "message": "Created execution ticket for: Triage operations request",
+    "ticket_id": "OPS-0001"
+  },
+  "trace": [
+    {
+      "node": "receive_request",
+      "message": "Request received.",
+      "data": {
+        "request": "Restart the support dashboard worker after business hours."
+      }
+    },
+    {
+      "node": "classify_request",
+      "message": "Request classified.",
+      "data": {
+        "category": "operations",
+        "risk_level": "low",
+        "approval_required": false,
+        "reason": "Routine operational request."
+      }
+    },
+    {
+      "node": "lookup_policy",
+      "message": "Policy loaded.",
+      "data": {
+        "attempts": 1,
+        "policy_id": "POL-OPS-DEFAULT",
+        "summary": "Low-risk operational tasks can be routed to the owning team with traceable notes.",
+        "requires_approval": false,
+        "source": "tool"
+      }
+    },
+    {
+      "node": "draft_plan",
+      "message": "Action plan drafted.",
+      "data": {
+        "title": "Triage operations request",
+        "steps": [
+          "Confirm request scope and requester identity.",
+          "Apply policy POL-OPS-DEFAULT: Low-risk operational tasks can be routed to the owning team with traceable notes.",
+          "Create a traceable work item with owner and next action."
+        ],
+        "assignee_team": "Platform Operations",
+        "approval_required": false,
+        "risk_level": "low"
+      }
+    },
+    {
+      "node": "execute_action",
+      "message": "Execution step completed.",
+      "data": {
+        "executed": true,
+        "message": "Created execution ticket for: Triage operations request",
+        "ticket_id": "OPS-0001"
+      }
+    },
+    {
+      "node": "finalize",
+      "message": "Workflow finalized.",
+      "data": {
+        "status": "executed"
+      }
+    }
+  ],
+  "errors": []
+}

@@ -1,0 +1,72 @@
+{
+  "request": {
+    "summary": "Delete stale production records after export",
+    "environment": "production",
+    "requester": "ops@example.com",
+    "approved": false
+  },
+  "status": "pending_approval",
+  "risk": {
+    "risk_level": "high",
+    "approval_required": true,
+    "reasons": [
+      "Production environment increases blast radius.",
+      "Summary contains destructive action terms."
+    ]
+  },
+  "ticket": null,
+  "notification": null,
+  "budget": {
+    "estimated_tokens": 55,
+    "estimated_cost_usd": 0.00011,
+    "mcp_request_count": 2,
+    "measured_latency_ms": 0.079,
+    "latency_budget_ms": 500.0,
+    "request_budget": 4,
+    "within_latency_budget": true,
+    "within_request_budget": true
+  },
+  "trace": [
+    {
+      "step": "start",
+      "message": "Workflow started.",
+      "data": {
+        "summary": "Delete stale production records after export",
+        "environment": "production",
+        "requester": "ops@example.com",
+        "approved": false
+      }
+    },
+    {
+      "step": "mcp.resource.read",
+      "message": "Read change-management policy resource.",
+      "data": {
+        "uri": "policy://change-management"
+      }
+    },
+    {
+      "step": "mcp.tool.risk",
+      "message": "Risk assessment completed.",
+      "data": {
+        "risk": {
+          "risk_level": "high",
+          "approval_required": true,
+          "reasons": [
+            "Production environment increases blast radius.",
+            "Summary contains destructive action terms."
+          ]
+        },
+        "latency_ms": 0.022
+      }
+    },
+    {
+      "step": "approval.gate",
+      "message": "Workflow stopped before risky MCP ticket creation.",
+      "data": {
+        "approval_required": true,
+        "risk_level": "high"
+      }
+    }
+  ],
+  "errors": []
+}

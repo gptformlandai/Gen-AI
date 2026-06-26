@@ -1,0 +1,14 @@
+[
+  {"id": "q001", "question": "What is the liability cap in the MSA?", "expected_docs": ["msa"], "expected_terms": ["12 months", "fees paid"], "expected_kind": "clause"},
+  {"id": "q002", "question": "What is excluded from the liability cap?", "expected_docs": ["msa"], "expected_terms": ["confidentiality", "payment obligations"], "expected_kind": "clause"},
+  {"id": "q003", "question": "Which law governs the MSA?", "expected_docs": ["msa"], "expected_terms": ["New York"], "expected_kind": "metadata"},
+  {"id": "q004", "question": "Who must protect customer confidential information?", "expected_docs": ["msa"], "expected_terms": ["Vendor", "reasonable safeguards"], "expected_kind": "obligation"},
+  {"id": "q005", "question": "How quickly must security incidents be reported under the DPA?", "expected_docs": ["dpa"], "expected_terms": ["72 hours", "security incident"], "expected_kind": "clause"},
+  {"id": "q006", "question": "What notice is required for new subprocessors?", "expected_docs": ["dpa"], "expected_terms": ["30 days", "subprocessor"], "expected_kind": "clause"},
+  {"id": "q007", "question": "What happens to personal data after termination?", "expected_docs": ["dpa"], "expected_terms": ["delete", "return"], "expected_kind": "clause"},
+  {"id": "q008", "question": "What uptime commitment has a 10 percent service credit?", "expected_docs": ["sla"], "expected_terms": ["99.5%", "10%"], "expected_kind": "table_row"},
+  {"id": "q009", "question": "What is the response time for severity 1 support?", "expected_docs": ["sla"], "expected_terms": ["Severity 1", "1 hour"], "expected_kind": "table_row"},
+  {"id": "q010", "question": "Which document defines the customer as Data Controller?", "expected_docs": ["dpa"], "expected_terms": ["Data Controller", "Customer"], "expected_kind": "metadata"},
+  {"id": "q011", "question": "Which clauses survive termination?", "expected_docs": ["msa"], "expected_terms": ["Confidentiality", "payment", "liability"], "expected_kind": "clause"},
+  {"id": "q012", "question": "What service credit applies below 99.0 uptime?", "expected_docs": ["sla"], "expected_terms": ["25%"], "expected_kind": "table_row"}
+]

@@ -1,0 +1,41 @@
+{
+  "required_assets": [
+    {
+      "path": "README.md",
+      "required_phrases": ["Problem", "System", "Results"]
+    },
+    {
+      "path": "docs/architecture_diagram.md",
+      "required_phrases": ["Architecture Diagram", "mermaid", "Data Flow", "Control Flow"]
+    },
+    {
+      "path": "docs/failure_analysis.md",
+      "required_phrases": ["Failure Analysis", "Retrieval", "Guardrails", "Remaining Risks"]
+    },
+    {
+      "path": "docs/tradeoff_justification_memo.md",
+      "required_phrases": ["Tradeoff", "Why This Choice", "Alternatives"]
+    },
+    {
+      "path": "docs/evaluation_summary.md",
+      "required_phrases": ["Evaluation Summary", "Before", "After", "Metrics"]
+    },
+    {
+      "path": "docs/interview_walkthrough.md",
+      "required_phrases": ["Interview Walkthrough", "System Design", "Debugging"]
+    },
+    {
+      "path": "docs/resume_bullets.md",
+      "required_phrases": ["Resume Bullets", "100.00%", "retrieval failures"]
+    },
+    {
+      "path": "docs/demo_narrative.md",
+      "required_phrases": ["3-Minute Demo Narrative", "Opening", "Close"]
+    },
+    {
+      "path": "docs/faq.md",
+      "required_phrases": ["FAQ", "Why not", "What would you improve"]
+    }
+  ]
+}
+

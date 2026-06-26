@@ -1,0 +1,17 @@
+[
+  {
+    "id": "low-risk-restart",
+    "request": "Restart the support dashboard worker after business hours.",
+    "expected_status": "executed"
+  },
+  {
+    "id": "pending-admin-access",
+    "request": "Grant temporary admin access to a reviewer for production records.",
+    "expected_status": "pending_human_approval"
+  },
+  {
+    "id": "recovery-path",
+    "request": "Simulate policy outage while routing a billing escalation.",
+    "expected_status": "pending_human_approval"
+  }
+]

@@ -1,0 +1,35 @@
+[
+  {
+    "incident_id": "inc-2026-001",
+    "service": "payments-api",
+    "summary": "Payments API latency increased after checkout release.",
+    "root_cause": "New fraud enrichment call added synchronous gateway dependency.",
+    "resolution": "Rolled back release and moved enrichment to async workflow.",
+    "tags": ["payments", "latency", "deployment", "rollback"]
+  },
+  {
+    "incident_id": "inc-2026-002",
+    "service": "kafka-consumers",
+    "summary": "Consumer lag grew after partition skew.",
+    "root_cause": "Hot customer key concentrated events on one partition.",
+    "resolution": "Increased partitions and deployed key salting for high-volume tenants.",
+    "tags": ["kafka", "lag", "partition", "streaming"]
+  },
+  {
+    "incident_id": "inc-2026-003",
+    "service": "search-service",
+    "summary": "Search errors rose after index schema migration.",
+    "root_cause": "New analyzer rejected legacy tokens during refresh.",
+    "resolution": "Reverted analyzer migration and paused index refresh.",
+    "tags": ["search", "errors", "index", "migration"]
+  },
+  {
+    "incident_id": "inc-2026-004",
+    "service": "shared-postgres",
+    "summary": "Database latency spiked during reporting job.",
+    "root_cause": "Long-running report query held locks on hot table.",
+    "resolution": "Cancelled query and moved report to read replica.",
+    "tags": ["database", "latency", "locks", "replica"]
+  }
+]
+

@@ -1,0 +1,21 @@
+[
+  {
+    "id": "rag-001",
+    "query": "What should I check for payments-api high latency?",
+    "expected_source": "payments_api_runbook.md",
+    "required_terms": ["recent deployments", "database latency", "payment gateway"]
+  },
+  {
+    "id": "rag-002",
+    "query": "How do I remediate Kafka consumer lag?",
+    "expected_source": "kafka_lag_runbook.md",
+    "required_terms": ["partitions", "dead-letter", "lag"]
+  },
+  {
+    "id": "rag-003",
+    "query": "What database latency remediation needs approval?",
+    "expected_source": "database_latency_runbook.md",
+    "required_terms": ["Cancel runaway analytical query", "approval"]
+  }
+]
+

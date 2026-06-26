@@ -1,0 +1,150 @@
+{
+  "incident_id": "demo-checkout-001",
+  "report": {
+    "summary": "Checkout is down after the latest production deploy.",
+    "service": "checkout",
+    "environment": "production",
+    "impact": "Customers cannot complete purchases.",
+    "observed_signals": [
+      "HTTP 500 rate is 38 percent",
+      "error budget burn is critical"
+    ],
+    "requester": "ops@example.com"
+  },
+  "severity": "sev1",
+  "status": "resolved",
+  "boundary": {
+    "requires_human": false,
+    "reason": "Human observation marked the incident stable or resolved.",
+    "unsafe_action_ids": [],
+    "clarification_questions": []
+  },
+  "actions": [
+    {
+      "action_id": "act-001",
+      "name": "collect_diagnostics",
+      "description": "Collect logs, metrics, and recent deploy context for checkout.",
+      "risk": "safe",
+      "approval_status": "not_required",
+      "estimated_latency_ms": 250,
+      "executed": true,
+      "result": "Simulated execution completed for collect_diagnostics."
+    },
+    {
+      "action_id": "act-002",
+      "name": "notify_oncall",
+      "description": "Notify the on-call owner for checkout.",
+      "risk": "safe",
+      "approval_status": "not_required",
+      "estimated_latency_ms": 120,
+      "executed": true,
+      "result": "Simulated execution completed for notify_oncall."
+    },
+    {
+      "action_id": "act-003",
+      "name": "open_incident_channel",
+      "description": "Open a coordination channel for checkout.",
+      "risk": "safe",
+      "approval_status": "not_required",
+      "estimated_latency_ms": 90,
+      "executed": true,
+      "result": "Simulated execution completed for open_incident_channel."
+    },
+    {
+      "action_id": "act-004",
+      "name": "rollback_deploy",
+      "description": "Rollback the most recent deployment after human approval.",
+      "risk": "approval_required",
+      "approval_status": "approved",
+      "estimated_latency_ms": 500,
+      "executed": true,
+      "result": "Simulated execution completed for rollback_deploy."
+    },
+    {
+      "action_id": "act-005",
+      "name": "post_status_page_update",
+      "description": "Post or update customer-facing incident communication after human approval.",
+      "risk": "approval_required",
+      "approval_status": "approved",
+      "estimated_latency_ms": 220,
+      "executed": true,
+      "result": "Simulated execution completed for post_status_page_update."
+    }
+  ],
+  "events": [
+    {
+      "timestamp": "2026-06-26T19:15:31+00:00",
+      "event_type": "incident_started",
+      "message": "Incident workflow started.",
+      "metadata": {
+        "requester": "ops@example.com"
+      }
+    },
+    {
+      "timestamp": "2026-06-26T19:15:31+00:00",
+      "event_type": "safe_action_executed",
+      "message": "Executed safe action: collect_diagnostics.",
+      "metadata": {}
+    },
+    {
+      "timestamp": "2026-06-26T19:15:31+00:00",
+      "event_type": "safe_action_executed",
+      "message": "Executed safe action: notify_oncall.",
+      "metadata": {}
+    },
+    {
+      "timestamp": "2026-06-26T19:15:31+00:00",
+      "event_type": "safe_action_executed",
+      "message": "Executed safe action: open_incident_channel.",
+      "metadata": {}
+    },
+    {
+      "timestamp": "2026-06-26T19:15:31+00:00",
+      "event_type": "approval_gate",
+      "message": "State-changing or customer-visible actions require human approval.",
+      "metadata": {
+        "pending_actions": "rollback_deploy,post_status_page_update"
+      }
+    },
+    {
+      "timestamp": "2026-06-26T19:15:31+00:00",
+      "event_type": "unsafe_action_approved",
+      "message": "incident-commander@example.com approved and executed: rollback_deploy.",
+      "metadata": {
+        "action_id": "act-004"
+      }
+    },
+    {
+      "timestamp": "2026-06-26T19:15:31+00:00",
+      "event_type": "unsafe_action_approved",
+      "message": "incident-commander@example.com approved and executed: post_status_page_update.",
+      "metadata": {
+        "action_id": "act-005"
+      }
+    },
+    {
+      "timestamp": "2026-06-26T19:15:31+00:00",
+      "event_type": "monitoring_started",
+      "message": "Workflow resumed into monitoring.",
+      "metadata": {}
+    },
+    {
+      "timestamp": "2026-06-26T19:15:31+00:00",
+      "event_type": "observation_recorded",
+      "message": "Checkout metrics are stable and the incident is resolved.",
+      "metadata": {
+        "actor": "incident-commander@example.com"
+      }
+    },
+    {
+      "timestamp": "2026-06-26T19:15:31+00:00",
+      "event_type": "incident_resolved",
+      "message": "Incident marked resolved from follow-up observation.",
+      "metadata": {}
+    }
+  ],
+  "created_at": "2026-06-26T19:15:31+00:00",
+  "updated_at": "2026-06-26T19:15:31+00:00",
+  "total_estimated_latency_ms": 1180,
+  "latency_budget_ms": 1500
+}

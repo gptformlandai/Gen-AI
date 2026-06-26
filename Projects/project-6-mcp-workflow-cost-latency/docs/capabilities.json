@@ -1,0 +1,43 @@
+{
+  "resources": [
+    {
+      "uri": "policy://change-management",
+      "name": "Change Management Policy",
+      "description": "Policy thresholds for change-ticket workflow.",
+      "content": {
+        "production_requires_approval": true,
+        "destructive_actions_require_approval": true,
+        "low_risk_staging_auto_allowed": true,
+        "notify_on_production": true,
+        "destructive_terms": [
+          "delete",
+          "drop",
+          "remove",
+          "purge"
+        ],
+        "emergency_terms": [
+          "outage",
+          "incident",
+          "emergency"
+        ]
+      }
+    }
+  ],
+  "tools": [
+    {
+      "name": "risk.assess_change",
+      "description": "Assess environment and summary to determine risk.",
+      "risky": false
+    },
+    {
+      "name": "ticket.create_change",
+      "description": "Create a change-management ticket.",
+      "risky": true
+    },
+    {
+      "name": "notify.stakeholders",
+      "description": "Notify stakeholders about a created change.",
+      "risky": false
+    }
+  ]
+}

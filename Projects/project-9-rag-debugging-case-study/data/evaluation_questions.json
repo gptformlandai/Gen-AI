@@ -1,0 +1,15 @@
+[
+  {"id": "q001", "question": "How do users reset a forgotten password?", "expected_doc_id": "password_reset", "expected_terms": ["reset link", "15 minutes", "MFA"], "category": "direct_match"},
+  {"id": "q002", "question": "What analytics export options are available?", "expected_doc_id": "analytics_export", "expected_terms": ["CSV", "PDF", "scheduled"], "category": "title_intent"},
+  {"id": "q003", "question": "How should operators triage an incident?", "expected_doc_id": "incident_response", "expected_terms": ["severity", "incident commander", "mitigation"], "category": "synonym_gap"},
+  {"id": "q004", "question": "How are failed webhook calls retried and verified?", "expected_doc_id": "webhook_delivery", "expected_terms": ["exponential backoff", "HMAC signature", "24 hours"], "category": "morphology_and_synonym"},
+  {"id": "q005", "question": "When is removed account information deleted?", "expected_doc_id": "data_deletion", "expected_terms": ["30 day", "deletion", "legal hold"], "category": "synonym_gap"},
+  {"id": "q006", "question": "Which identity protocols can be used for SSO?", "expected_doc_id": "sso_setup", "expected_terms": ["SAML", "OIDC", "domain verification"], "category": "direct_match"},
+  {"id": "q007", "question": "What is the TTL for search result cache entries?", "expected_doc_id": "cache_ttl", "expected_terms": ["10 minutes", "stale-while-revalidate"], "category": "direct_match"},
+  {"id": "q008", "question": "What happens when API traffic is throttled?", "expected_doc_id": "rate_limits", "expected_terms": ["HTTP 429", "Retry-After", "600 requests"], "category": "synonym_gap"},
+  {"id": "q009", "question": "How long do customers have for a duplicate charge refund?", "expected_doc_id": "refunds", "expected_terms": ["30 days", "duplicate charges"], "category": "direct_match"},
+  {"id": "q010", "question": "Who can export immutable audit reports?", "expected_doc_id": "audit_export", "expected_terms": ["Compliance administrators", "CSV", "audit"], "category": "direct_match"},
+  {"id": "q011", "question": "What happens to mobile drafts when the device is offline?", "expected_doc_id": "mobile_offline", "expected_terms": ["offline drafts", "sync", "connectivity"], "category": "direct_match"},
+  {"id": "q012", "question": "What should be checked before enabling company-wide single sign-on?", "expected_doc_id": "sso_setup", "expected_terms": ["pilot group", "domain verification"], "category": "multi_sentence"}
+]
+

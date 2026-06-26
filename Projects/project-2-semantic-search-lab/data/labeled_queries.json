@@ -1,0 +1,74 @@
+[
+  {
+    "id": "q001",
+    "query": "forgot login password reset account recovery",
+    "relevant_topics": ["password_reset"],
+    "filters": {"product": "identity"}
+  },
+  {
+    "id": "q002",
+    "query": "manager approve supplier onboarding tax verification",
+    "relevant_topics": ["vendor_onboarding"],
+    "filters": {"product": "procurement"}
+  },
+  {
+    "id": "q003",
+    "query": "support dashboard ticket volume sla breach categories",
+    "relevant_topics": ["support_dashboard"],
+    "filters": {"product": "support"}
+  },
+  {
+    "id": "q004",
+    "query": "appointment reminder sms email opt out delivery status",
+    "relevant_topics": ["appointment_reminders"],
+    "filters": {"product": "healthcare"}
+  },
+  {
+    "id": "q005",
+    "query": "find outdated knowledge base article owner review date",
+    "relevant_topics": ["knowledge_review"],
+    "filters": {"product": "knowledge_base"}
+  },
+  {
+    "id": "q006",
+    "query": "upload two csv files match transactions amount exception report",
+    "relevant_topics": ["csv_reconciliation"],
+    "filters": {"product": "finance"}
+  },
+  {
+    "id": "q007",
+    "query": "admins reviewers read only roles published records",
+    "relevant_topics": ["role_based_access"],
+    "filters": {"product": "admin"}
+  },
+  {
+    "id": "q008",
+    "query": "new hire checklist overdue reminders manager progress",
+    "relevant_topics": ["new_hire_onboarding"],
+    "filters": {"product": "hr"}
+  },
+  {
+    "id": "q009",
+    "query": "download csv report date range export analytics",
+    "relevant_topics": ["report_exports"],
+    "filters": {"doc_type": "reference"}
+  },
+  {
+    "id": "q010",
+    "query": "audit trail compliance status changes user action history",
+    "relevant_topics": ["audit_trail"],
+    "filters": {"doc_type": "policy"}
+  },
+  {
+    "id": "q011",
+    "query": "filter search articles by department and reviewed date",
+    "relevant_topics": ["knowledge_review"],
+    "filters": {"audience": "employees"}
+  },
+  {
+    "id": "q012",
+    "query": "notify requester when approval status changes",
+    "relevant_topics": ["vendor_onboarding", "new_hire_onboarding"],
+    "filters": {}
+  }
+]

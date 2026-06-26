@@ -1,0 +1,418 @@
+{
+  "baseline": {
+    "mode": "baseline",
+    "total": 12,
+    "passed": 7,
+    "pass_rate": 0.5833333333333334,
+    "top1_accuracy": 0.5833333333333334,
+    "top3_recall": 1.0,
+    "term_coverage": 0.5454545454545454,
+    "failure_counts": {
+      "retrieval": 5
+    },
+    "rows": [
+      {
+        "question_id": "q001",
+        "question": "How do users reset a forgotten password?",
+        "category": "direct_match",
+        "passed": true,
+        "expected_doc_id": "password_reset",
+        "actual_doc_id": "password_reset",
+        "top3_doc_ids": [
+          "password_reset",
+          "admin_permissions",
+          "account_access"
+        ],
+        "missing_terms": [],
+        "failure_layer": "none",
+        "answer": "Users reset forgotten passwords from Sign-in > Forgot password Admins can send a reset link from Identity > Users Reset links expire after 15 minutes and require MFA"
+      },
+      {
+        "question_id": "q002",
+        "question": "What analytics export options are available?",
+        "category": "title_intent",
+        "passed": true,
+        "expected_doc_id": "analytics_export",
+        "actual_doc_id": "analytics_export",
+        "top3_doc_ids": [
+          "analytics_export",
+          "refunds",
+          "audit_export"
+        ],
+        "missing_terms": [],
+        "failure_layer": "none",
+        "answer": "Reports may be saved as CSV or PDF Scheduled exports can email recipients daily or weekly Large report files are prepared asynchronously in the export center"
+      },
+      {
+        "question_id": "q003",
+        "question": "How should operators triage an incident?",
+        "category": "synonym_gap",
+        "passed": false,
+        "expected_doc_id": "incident_response",
+        "actual_doc_id": "admin_permissions",
+        "top3_doc_ids": [
+          "admin_permissions",
+          "incident_response",
+          "api_errors"
+        ],
+        "missing_terms": [
+          "severity",
+          "incident commander",
+          "mitigation"
+        ],
+        "failure_layer": "retrieval",
+        "answer": "Operators can view dashboards and audit logs Administrators can invite users, update roles, and revoke access tokens Incident dashboard access is read-only"
+      },
+      {
+        "question_id": "q004",
+        "question": "How are failed webhook calls retried and verified?",
+        "category": "morphology_and_synonym",
+        "passed": false,
+        "expected_doc_id": "webhook_delivery",
+        "actual_doc_id": "api_errors",
+        "top3_doc_ids": [
+          "api_errors",
+          "webhook_delivery"
+        ],
+        "missing_terms": [
+          "exponential backoff",
+          "HMAC signature",
+          "24 hours"
+        ],
+        "failure_layer": "retrieval",
+        "answer": "Failed API calls return structured JSON errors with code, message, and request id Clients should log the request id before contacting support"
+      },
+      {
+        "question_id": "q005",
+        "question": "When is removed account information deleted?",
+        "category": "synonym_gap",
+        "passed": false,
+        "expected_doc_id": "data_deletion",
+        "actual_doc_id": "account_access",
+        "top3_doc_ids": [
+          "account_access",
+          "data_deletion"
+        ],
+        "missing_terms": [
+          "30 day",
+          "deletion",
+          "legal hold"
+        ],
+        "failure_layer": "retrieval",
+        "answer": "Account owners can remove team members from workspace access Removed users lose access immediately but their audit events remain visible"
+      },
+      {
+        "question_id": "q006",
+        "question": "Which identity protocols can be used for SSO?",
+        "category": "direct_match",
+        "passed": false,
+        "expected_doc_id": "sso_setup",
+        "actual_doc_id": "password_reset",
+        "top3_doc_ids": [
+          "password_reset",
+          "sso_setup"
+        ],
+        "missing_terms": [
+          "SAML",
+          "OIDC",
+          "domain verification"
+        ],
+        "failure_layer": "retrieval",
+        "answer": "Users reset forgotten passwords from Sign-in > Forgot password Admins can send a reset link from Identity > Users Reset links expire after 15 minutes and require MFA"
+      },
+      {
+        "question_id": "q007",
+        "question": "What is the TTL for search result cache entries?",
+        "category": "direct_match",
+        "passed": true,
+        "expected_doc_id": "cache_ttl",
+        "actual_doc_id": "cache_ttl",
+        "top3_doc_ids": [
+          "cache_ttl"
+        ],
+        "missing_terms": [],
+        "failure_layer": "none",
+        "answer": "Search result cache entries expire after 10 minutes The service uses stale-while-revalidate for popular queries so users can receive a fast cached response while refresh runs"
+      },
+      {
+        "question_id": "q008",
+        "question": "What happens when API traffic is throttled?",
+        "category": "synonym_gap",
+        "passed": false,
+        "expected_doc_id": "rate_limits",
+        "actual_doc_id": "api_errors",
+        "top3_doc_ids": [
+          "api_errors",
+          "rate_limits"
+        ],
+        "missing_terms": [
+          "HTTP 429",
+          "Retry-After",
+          "600 requests"
+        ],
+        "failure_layer": "retrieval",
+        "answer": "Failed API calls return structured JSON errors with code, message, and request id Clients should log the request id before contacting support"
+      },
+      {
+        "question_id": "q009",
+        "question": "How long do customers have for a duplicate charge refund?",
+        "category": "direct_match",
+        "passed": true,
+        "expected_doc_id": "refunds",
+        "actual_doc_id": "refunds",
+        "top3_doc_ids": [
+          "refunds"
+        ],
+        "missing_terms": [],
+        "failure_layer": "none",
+        "answer": "Refunds are available for duplicate charges within 30 days Subscription cancellations take effect at the end of the billing period"
+      },
+      {
+        "question_id": "q010",
+        "question": "Who can export immutable audit reports?",
+        "category": "direct_match",
+        "passed": true,
+        "expected_doc_id": "audit_export",
+        "actual_doc_id": "audit_export",
+        "top3_doc_ids": [
+          "audit_export",
+          "analytics_export",
+          "admin_permissions"
+        ],
+        "missing_terms": [],
+        "failure_layer": "none",
+        "answer": "Audit logs can be filtered by actor, action, and date Compliance administrators can export immutable CSV audit reports for regulatory review"
+      },
+      {
+        "question_id": "q011",
+        "question": "What happens to mobile drafts when the device is offline?",
+        "category": "direct_match",
+        "passed": true,
+        "expected_doc_id": "mobile_offline",
+        "actual_doc_id": "mobile_offline",
+        "top3_doc_ids": [
+          "mobile_offline"
+        ],
+        "missing_terms": [],
+        "failure_layer": "none",
+        "answer": "The mobile app supports offline drafts Changes sync when connectivity returns; conflicts are resolved by the latest server version"
+      },
+      {
+        "question_id": "q012",
+        "question": "What should be checked before enabling company-wide single sign-on?",
+        "category": "multi_sentence",
+        "passed": true,
+        "expected_doc_id": "sso_setup",
+        "actual_doc_id": "sso_setup",
+        "top3_doc_ids": [
+          "sso_setup",
+          "password_reset",
+          "api_errors"
+        ],
+        "missing_terms": [],
+        "failure_layer": "none",
+        "answer": "Single sign-on supports SAML and OIDC Enforce domain verification before enabling SSO Test with a pilot group before company-wide rollout"
+      }
+    ]
+  },
+  "improved": {
+    "mode": "improved",
+    "total": 12,
+    "passed": 12,
+    "pass_rate": 1.0,
+    "top1_accuracy": 1.0,
+    "top3_recall": 1.0,
+    "term_coverage": 1.0,
+    "failure_counts": {},
+    "rows": [
+      {
+        "question_id": "q001",
+        "question": "How do users reset a forgotten password?",
+        "category": "direct_match",
+        "passed": true,
+        "expected_doc_id": "password_reset",
+        "actual_doc_id": "password_reset",
+        "top3_doc_ids": [
+          "password_reset",
+          "account_access",
+          "admin_permissions"
+        ],
+        "missing_terms": [],
+        "failure_layer": "none",
+        "answer": "Users reset forgotten passwords from Sign-in > Forgot password Admins can send a reset link from Identity > Users Reset links expire after 15 minutes and require MFA"
+      },
+      {
+        "question_id": "q002",
+        "question": "What analytics export options are available?",
+        "category": "title_intent",
+        "passed": true,
+        "expected_doc_id": "analytics_export",
+        "actual_doc_id": "analytics_export",
+        "top3_doc_ids": [
+          "analytics_export",
+          "audit_export",
+          "refunds"
+        ],
+        "missing_terms": [],
+        "failure_layer": "none",
+        "answer": "Reports may be saved as CSV or PDF Scheduled exports can email recipients daily or weekly Large report files are prepared asynchronously in the export center"
+      },
+      {
+        "question_id": "q003",
+        "question": "How should operators triage an incident?",
+        "category": "synonym_gap",
+        "passed": true,
+        "expected_doc_id": "incident_response",
+        "actual_doc_id": "incident_response",
+        "top3_doc_ids": [
+          "incident_response",
+          "admin_permissions",
+          "api_errors"
+        ],
+        "missing_terms": [],
+        "failure_layer": "none",
+        "answer": "Alert response starts by acknowledging the page, classifying severity, assigning an incident commander, checking recent deployments, and creating a mitigation task SEV1 outages require immediate escalation"
+      },
+      {
+        "question_id": "q004",
+        "question": "How are failed webhook calls retried and verified?",
+        "category": "morphology_and_synonym",
+        "passed": true,
+        "expected_doc_id": "webhook_delivery",
+        "actual_doc_id": "webhook_delivery",
+        "top3_doc_ids": [
+          "webhook_delivery",
+          "api_errors"
+        ],
+        "missing_terms": [],
+        "failure_layer": "none",
+        "answer": "Webhook delivery retries use exponential backoff for 24 hours Each request includes an HMAC signature header and a delivery id so receivers can verify authenticity"
+      },
+      {
+        "question_id": "q005",
+        "question": "When is removed account information deleted?",
+        "category": "synonym_gap",
+        "passed": true,
+        "expected_doc_id": "data_deletion",
+        "actual_doc_id": "data_deletion",
+        "top3_doc_ids": [
+          "data_deletion",
+          "account_access"
+        ],
+        "missing_terms": [],
+        "failure_layer": "none",
+        "answer": "After account closure, personal data enters a 30 day retention period before deletion unless a legal hold applies The deletion job records completion in the privacy ledger"
+      },
+      {
+        "question_id": "q006",
+        "question": "Which identity protocols can be used for SSO?",
+        "category": "direct_match",
+        "passed": true,
+        "expected_doc_id": "sso_setup",
+        "actual_doc_id": "sso_setup",
+        "top3_doc_ids": [
+          "sso_setup",
+          "password_reset"
+        ],
+        "missing_terms": [],
+        "failure_layer": "none",
+        "answer": "Single sign-on supports SAML and OIDC Enforce domain verification before enabling SSO Test with a pilot group before company-wide rollout"
+      },
+      {
+        "question_id": "q007",
+        "question": "What is the TTL for search result cache entries?",
+        "category": "direct_match",
+        "passed": true,
+        "expected_doc_id": "cache_ttl",
+        "actual_doc_id": "cache_ttl",
+        "top3_doc_ids": [
+          "cache_ttl",
+          "password_reset",
+          "rate_limits"
+        ],
+        "missing_terms": [],
+        "failure_layer": "none",
+        "answer": "Search result cache entries expire after 10 minutes The service uses stale-while-revalidate for popular queries so users can receive a fast cached response while refresh runs"
+      },
+      {
+        "question_id": "q008",
+        "question": "What happens when API traffic is throttled?",
+        "category": "synonym_gap",
+        "passed": true,
+        "expected_doc_id": "rate_limits",
+        "actual_doc_id": "rate_limits",
+        "top3_doc_ids": [
+          "rate_limits",
+          "api_errors",
+          "webhook_delivery"
+        ],
+        "missing_terms": [],
+        "failure_layer": "none",
+        "answer": "API clients are limited to 600 requests per minute When the limit is exceeded, responses include HTTP 429 and a Retry-After header"
+      },
+      {
+        "question_id": "q009",
+        "question": "How long do customers have for a duplicate charge refund?",
+        "category": "direct_match",
+        "passed": true,
+        "expected_doc_id": "refunds",
+        "actual_doc_id": "refunds",
+        "top3_doc_ids": [
+          "refunds"
+        ],
+        "missing_terms": [],
+        "failure_layer": "none",
+        "answer": "Refunds are available for duplicate charges within 30 days Subscription cancellations take effect at the end of the billing period"
+      },
+      {
+        "question_id": "q010",
+        "question": "Who can export immutable audit reports?",
+        "category": "direct_match",
+        "passed": true,
+        "expected_doc_id": "audit_export",
+        "actual_doc_id": "audit_export",
+        "top3_doc_ids": [
+          "audit_export",
+          "analytics_export",
+          "admin_permissions"
+        ],
+        "missing_terms": [],
+        "failure_layer": "none",
+        "answer": "Audit logs can be filtered by actor, action, and date Compliance administrators can export immutable CSV audit reports for regulatory review"
+      },
+      {
+        "question_id": "q011",
+        "question": "What happens to mobile drafts when the device is offline?",
+        "category": "direct_match",
+        "passed": true,
+        "expected_doc_id": "mobile_offline",
+        "actual_doc_id": "mobile_offline",
+        "top3_doc_ids": [
+          "mobile_offline"
+        ],
+        "missing_terms": [],
+        "failure_layer": "none",
+        "answer": "The mobile app supports offline drafts Changes sync when connectivity returns; conflicts are resolved by the latest server version"
+      },
+      {
+        "question_id": "q012",
+        "question": "What should be checked before enabling company-wide single sign-on?",
+        "category": "multi_sentence",
+        "passed": true,
+        "expected_doc_id": "sso_setup",
+        "actual_doc_id": "sso_setup",
+        "top3_doc_ids": [
+          "sso_setup",
+          "webhook_delivery",
+          "password_reset"
+        ],
+        "missing_terms": [],
+        "failure_layer": "none",
+        "answer": "Single sign-on supports SAML and OIDC Enforce domain verification before enabling SSO Test with a pilot group before company-wide rollout"
+      }
+    ]
+  },
+  "pass_rate_delta": 0.41666666666666663,
+  "top1_accuracy_delta": 0.41666666666666663,
+  "top3_recall_delta": 0.0
+}

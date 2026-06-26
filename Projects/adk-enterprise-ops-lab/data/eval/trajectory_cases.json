@@ -1,0 +1,15 @@
+[
+  {
+    "id": "trajectory-001",
+    "query": "Generate an incident report and save it as an artifact for database latency.",
+    "must_call_before": [["guardrail.input_check", "triage.extract_incident"], ["triage.extract_incident", "artifact.save_report"]],
+    "must_include": ["artifact.save_report", "workflow.sequential_investigation"]
+  },
+  {
+    "id": "trajectory-002",
+    "query": "Escalate if confidence is below threshold for search-service errors.",
+    "must_call_before": [["triage.extract_incident", "workflow.escalation_check"]],
+    "must_include": ["workflow.escalation_check", "mcp.get_oncall_owner"]
+  }
+]
+

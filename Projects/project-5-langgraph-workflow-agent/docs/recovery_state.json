@@ -1,0 +1,106 @@
+{
+  "request": "Simulate policy outage while routing a billing escalation.",
+  "status": "pending_human_approval",
+  "classification": {
+    "category": "billing",
+    "risk_level": "medium",
+    "approval_required": false,
+    "reason": "Billing requests route to finance operations."
+  },
+  "policy": {
+    "policy_id": "POL-FALLBACK-REVIEW",
+    "summary": "Fallback policy: require human approval and route through manual operations review.",
+    "requires_approval": true,
+    "source": "fallback"
+  },
+  "plan": {
+    "title": "Triage billing request",
+    "steps": [
+      "Confirm request scope and requester identity.",
+      "Apply policy POL-FALLBACK-REVIEW: Fallback policy: require human approval and route through manual operations review.",
+      "Create a traceable work item with owner and next action."
+    ],
+    "assignee_team": "Finance Operations",
+    "approval_required": true,
+    "risk_level": "medium"
+  },
+  "execution": null,
+  "trace": [
+    {
+      "node": "receive_request",
+      "message": "Request received.",
+      "data": {
+        "request": "Simulate policy outage while routing a billing escalation."
+      }
+    },
+    {
+      "node": "classify_request",
+      "message": "Request classified.",
+      "data": {
+        "category": "billing",
+        "risk_level": "medium",
+        "approval_required": false,
+        "reason": "Billing requests route to finance operations."
+      }
+    },
+    {
+      "node": "lookup_policy",
+      "message": "Policy lookup failed.",
+      "data": {
+        "attempts": 1,
+        "route": "retry_policy",
+        "error": "Policy service temporarily unavailable."
+      }
+    },
+    {
+      "node": "lookup_policy",
+      "message": "Policy lookup failed.",
+      "data": {
+        "attempts": 2,
+        "route": "recover_policy",
+        "error": "Policy service temporarily unavailable."
+      }
+    },
+    {
+      "node": "recover_policy",
+      "message": "Fallback policy applied after tool failures.",
+      "data": {
+        "policy_id": "POL-FALLBACK-REVIEW",
+        "summary": "Fallback policy: require human approval and route through manual operations review.",
+        "requires_approval": true,
+        "source": "fallback"
+      }
+    },
+    {
+      "node": "draft_plan",
+      "message": "Action plan drafted.",
+      "data": {
+        "title": "Triage billing request",
+        "steps": [
+          "Confirm request scope and requester identity.",
+          "Apply policy POL-FALLBACK-REVIEW: Fallback policy: require human approval and route through manual operations review.",
+          "Create a traceable work item with owner and next action."
+        ],
+        "assignee_team": "Finance Operations",
+        "approval_required": true,
+        "risk_level": "medium"
+      }
+    },
+    {
+      "node": "human_approval",
+      "message": "Workflow paused for human approval.",
+      "data": {}
+    },
+    {
+      "node": "finalize",
+      "message": "Workflow finalized.",
+      "data": {
+        "status": "pending_human_approval"
+      }
+    }
+  ],
+  "errors": [
+    "Policy service temporarily unavailable.",
+    "Policy service temporarily unavailable."
+  ]
+}

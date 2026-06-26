@@ -1,0 +1,104 @@
+{
+  "golden": {
+    "name": "golden",
+    "total": 3,
+    "passed": 3,
+    "pass_rate": 1.0,
+    "rows": [
+      {
+        "case_id": "golden-001",
+        "passed": true,
+        "checks": {
+          "service": true,
+          "severity": true,
+          "required_tools": true,
+          "required_terms": true
+        },
+        "notes": []
+      },
+      {
+        "case_id": "golden-002",
+        "passed": true,
+        "checks": {
+          "service": true,
+          "severity": true,
+          "required_tools": true,
+          "required_terms": true
+        },
+        "notes": []
+      },
+      {
+        "case_id": "golden-003",
+        "passed": true,
+        "checks": {
+          "service": true,
+          "severity": true,
+          "required_tools": true,
+          "required_terms": true
+        },
+        "notes": []
+      }
+    ]
+  },
+  "trajectory": {
+    "name": "trajectory",
+    "total": 2,
+    "passed": 2,
+    "pass_rate": 1.0,
+    "rows": [
+      {
+        "case_id": "trajectory-001",
+        "passed": true,
+        "checks": {
+          "must_include": true,
+          "must_call_before": true
+        },
+        "notes": []
+      },
+      {
+        "case_id": "trajectory-002",
+        "passed": true,
+        "checks": {
+          "must_include": true,
+          "must_call_before": true
+        },
+        "notes": []
+      }
+    ]
+  },
+  "rag_grounding": {
+    "name": "rag_grounding",
+    "total": 3,
+    "passed": 3,
+    "pass_rate": 1.0,
+    "rows": [
+      {
+        "case_id": "rag-001",
+        "passed": true,
+        "checks": {
+          "source": true,
+          "terms": true
+        },
+        "notes": []
+      },
+      {
+        "case_id": "rag-002",
+        "passed": true,
+        "checks": {
+          "source": true,
+          "terms": true
+        },
+        "notes": []
+      },
+      {
+        "case_id": "rag-003",
+        "passed": true,
+        "checks": {
+          "source": true,
+          "terms": true
+        },
+        "notes": []
+      }
+    ]
+  }
+}

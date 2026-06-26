@@ -1,0 +1,27 @@
+[
+  {
+    "id": "golden-001",
+    "query": "Investigate high latency in payments-api after last deployment.",
+    "expected_service": "payments-api",
+    "expected_severity": "sev1",
+    "required_tools": ["rag.search_runbooks", "mcp.get_service_health", "mcp.get_recent_deployments", "artifact.save_report"],
+    "required_terms": ["rollback", "payments-api", "latency"]
+  },
+  {
+    "id": "golden-002",
+    "query": "Search runbooks for Kafka consumer lag and suggest remediation.",
+    "expected_service": "kafka-consumers",
+    "expected_severity": "sev2",
+    "required_tools": ["rag.search_runbooks", "mcp.get_error_rate", "memory.search_resolution_notes"],
+    "required_terms": ["partitions", "consumer", "lag"]
+  },
+  {
+    "id": "golden-003",
+    "query": "Use MCP service health and RAG docs to diagnose search-service errors.",
+    "expected_service": "search-service",
+    "expected_severity": "sev2",
+    "required_tools": ["rag.search_runbooks", "mcp.get_service_health", "mcp.get_error_rate"],
+    "required_terms": ["index", "error", "search-service"]
+  }
+]
+

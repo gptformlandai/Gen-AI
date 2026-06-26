@@ -1,0 +1,148 @@
+[
+  {
+    "id": "case_001",
+    "name": "production deploy outage requires rollback approval",
+    "report": {
+      "summary": "Checkout is down after the latest production deploy.",
+      "service": "checkout",
+      "environment": "production",
+      "impact": "Customers cannot complete purchases.",
+      "observed_signals": ["HTTP 500 rate is 38 percent", "error budget burn is critical"],
+      "requester": "ops@example.com"
+    },
+    "expected_severity": "sev1",
+    "expected_initial_status": "waiting_for_human",
+    "expected_pending_approval": true,
+    "required_action_names": ["collect_diagnostics", "notify_oncall", "open_incident_channel", "rollback_deploy", "post_status_page_update"],
+    "approve_pending_actions": true,
+    "expected_final_status": "monitoring"
+  },
+  {
+    "id": "case_002",
+    "name": "stuck worker requires restart approval",
+    "report": {
+      "summary": "Billing worker is stuck and the team wants a restart.",
+      "service": "billing-worker",
+      "environment": "staging",
+      "impact": "Invoice generation is delayed.",
+      "observed_signals": ["queue depth is growing", "worker heartbeat is stale"],
+      "requester": "billing@example.com"
+    },
+    "expected_severity": "sev2",
+    "expected_initial_status": "waiting_for_human",
+    "expected_pending_approval": true,
+    "required_action_names": ["collect_diagnostics", "notify_oncall", "open_incident_channel", "restart_service"],
+    "approve_pending_actions": true,
+    "expected_final_status": "monitoring"
+  },
+  {
+    "id": "case_003",
+    "name": "ambiguous report asks for clarification",
+    "report": {
+      "summary": "Something looks weird.",
+      "service": "",
+      "environment": "production",
+      "impact": "",
+      "observed_signals": [],
+      "requester": "support@example.com"
+    },
+    "expected_severity": "sev4",
+    "expected_initial_status": "needs_clarification",
+    "expected_pending_approval": false,
+    "required_action_names": [],
+    "approve_pending_actions": false,
+    "expected_final_status": "needs_clarification"
+  },
+  {
+    "id": "case_004",
+    "name": "latency degradation can run safe actions",
+    "report": {
+      "summary": "Search latency is degraded for logged-in users.",
+      "service": "search",
+      "environment": "production",
+      "impact": "Users see slow search results.",
+      "observed_signals": ["p95 latency is 2400 ms", "timeouts increased"],
+      "requester": "search@example.com"
+    },
+    "expected_severity": "sev2",
+    "expected_initial_status": "monitoring",
+    "expected_pending_approval": false,
+    "required_action_names": ["collect_diagnostics", "notify_oncall", "open_incident_channel"],
+    "approve_pending_actions": false,
+    "expected_final_status": "monitoring"
+  },
+  {
+    "id": "case_005",
+    "name": "capacity pressure requires scale approval",
+    "report": {
+      "summary": "Recommendation service has high CPU during a traffic spike.",
+      "service": "recommendations",
+      "environment": "production",
+      "impact": "Homepage recommendations are intermittently unavailable.",
+      "observed_signals": ["CPU is 95 percent", "traffic spike started 20 minutes ago"],
+      "requester": "growth@example.com"
+    },
+    "expected_severity": "sev2",
+    "expected_initial_status": "waiting_for_human",
+    "expected_pending_approval": true,
+    "required_action_names": ["collect_diagnostics", "notify_oncall", "open_incident_channel", "scale_capacity"],
+    "approve_pending_actions": true,
+    "expected_final_status": "monitoring"
+  },
+  {
+    "id": "case_006",
+    "name": "customer-facing outage requires communication approval",
+    "report": {
+      "summary": "Authentication is unavailable for customers.",
+      "service": "auth",
+      "environment": "production",
+      "impact": "Customers cannot sign in.",
+      "observed_signals": ["login success rate is below 20 percent", "availability alert is firing"],
+      "requester": "identity@example.com"
+    },
+    "expected_severity": "sev1",
+    "expected_initial_status": "waiting_for_human",
+    "expected_pending_approval": true,
+    "required_action_names": ["collect_diagnostics", "notify_oncall", "open_incident_channel", "post_status_page_update"],
+    "approve_pending_actions": false,
+    "expected_final_status": "waiting_for_human"
+  },
+  {
+    "id": "case_007",
+    "name": "minor alert remains safe and low severity",
+    "report": {
+      "summary": "Nightly report job emitted a warning.",
+      "service": "reporting",
+      "environment": "production",
+      "impact": "No customer impact reported.",
+      "observed_signals": ["single warning alert", "next retry is scheduled"],
+      "requester": "analytics@example.com"
+    },
+    "expected_severity": "sev3",
+    "expected_initial_status": "monitoring",
+    "expected_pending_approval": false,
+    "required_action_names": ["collect_diagnostics"],
+    "approve_pending_actions": false,
+    "expected_final_status": "monitoring"
+  },
+  {
+    "id": "case_008",
+    "name": "recovered incident can be resolved after observation",
+    "report": {
+      "summary": "Payments API had elevated errors but is recovering.",
+      "service": "payments",
+      "environment": "production",
+      "impact": "Some payment attempts failed earlier.",
+      "observed_signals": ["5xx errors elevated", "success rate is improving"],
+      "requester": "payments@example.com"
+    },
+    "expected_severity": "sev2",
+    "expected_initial_status": "monitoring",
+    "expected_pending_approval": false,
+    "required_action_names": ["collect_diagnostics", "notify_oncall", "open_incident_channel"],
+    "approve_pending_actions": false,
+    "resolution_observation": "Metrics are stable and the incident is resolved.",
+    "expected_final_status": "resolved"
+  }
+]
+

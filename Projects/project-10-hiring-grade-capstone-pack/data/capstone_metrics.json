@@ -1,0 +1,25 @@
+{
+  "case_study": "RAG Reliability Engineering",
+  "source_projects": [
+    "Projects/project-4-advanced-rag-reranking-guardrails",
+    "Projects/project-9-rag-debugging-case-study"
+  ],
+  "metrics": {
+    "advanced_rag": {
+      "baseline_pass_rate": 0.76,
+      "advanced_pass_rate": 1.0,
+      "failures_fixed": 6,
+      "total_questions": 25
+    },
+    "debugging_case_study": {
+      "baseline_pass_rate": 0.5833,
+      "improved_pass_rate": 1.0,
+      "baseline_top1_accuracy": 0.5833,
+      "improved_top1_accuracy": 1.0,
+      "baseline_retrieval_failures": 5,
+      "improved_retrieval_failures": 0,
+      "total_questions": 12
+    }
+  }
+}
+
