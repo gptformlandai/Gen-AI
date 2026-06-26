@@ -7,13 +7,15 @@ This file links the GenAI learning system together so you can move between strat
 - [GenAI Mastery Canon](./GENAI_MASTERY_CANON.md): the full roadmap, module order, time model, and mastery definition
 - [GenAI 10-12 Hour Weekly Execution Plan](./GENAI_10_12H_WEEKLY_EXECUTION_PLAN.md): the realistic week-by-week study path for the hiring-ready track
 - [GenAI Mini-Project Specifications](./GENAI_MINI_PROJECT_SPECS.md): the build checkpoints and what each project is supposed to prove
+- [GenAI Interview-Ready Pack](../interview-ready/README.md): concepts, questions, production scenarios, answer frameworks, and project stories for interview prep
 
 ## How To Use These Together
 
 1. Start in [GenAI Mastery Canon](./GENAI_MASTERY_CANON.md) to understand the full structure.
 2. Use [GenAI 10-12 Hour Weekly Execution Plan](./GENAI_10_12H_WEEKLY_EXECUTION_PLAN.md) as the working schedule.
 3. Open [GenAI Mini-Project Specifications](./GENAI_MINI_PROJECT_SPECS.md) whenever you hit a build checkpoint.
-4. Return here whenever you want quick jumps between modules, topics, weeks, and projects.
+4. Use the [GenAI Interview-Ready Pack](../interview-ready/README.md) when you want to convert learning and projects into interview answers.
+5. Return here whenever you want quick jumps between modules, topics, weeks, projects, and interview prep.
 
 ## Canon Quick Links
 
@@ -91,3 +93,13 @@ This file links the GenAI learning system together so you can move between strat
 - [Project 9: Optimization Or Debugging Case Study](./GENAI_MINI_PROJECT_SPECS.md#project-9-optimization-or-debugging-case-study)
 - [Project 10: Hiring-Grade Capstone Asset Pack](./GENAI_MINI_PROJECT_SPECS.md#project-10-hiring-grade-capstone-asset-pack)
 - [If You Only Build Three Projects](./GENAI_MINI_PROJECT_SPECS.md#if-you-only-build-three-projects)
+
+## Interview Prep Quick Links
+
+- [Interview-Ready Pack Home](../interview-ready/README.md)
+- [Top Concepts](../interview-ready/TOP_CONCEPTS.md)
+- [Interview Questions](../interview-ready/INTERVIEW_QUESTIONS.md)
+- [Production Scenarios](../interview-ready/PRODUCTION_SCENARIOS.md)
+- [Answer Frameworks](../interview-ready/ANSWER_FRAMEWORKS.md)
+- [Portfolio Stories](../interview-ready/PORTFOLIO_STORIES.md)
+- [Quick Review Cards](../interview-ready/QUICK_REVIEW_CARDS.md)
