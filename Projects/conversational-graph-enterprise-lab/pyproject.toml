@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "conversational-graph-enterprise-lab"
+version = "0.1.0"
+description = "Production-style reference lab for conversational graph systems, graph execution, memory, tools, agents, evaluation, and observability."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.7.0",
+]
+
+[project.optional-dependencies]
+api = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+]
+dev = [
+    "pytest>=8.2.0",
+]
+
+[project.scripts]
+convgraph-lab = "convo_graph_lab.cli.commands:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -75,6 +75,7 @@ This file links the GenAI learning system together so you can move between strat
 - [Module 23: Knowledge Graphs And GraphRAG Systems](<../../modules/Module 23 - Knowledge Graphs And GraphRAG Systems.md>)
 - [Module 24: Conversational Graphs And Dialogue State Systems](<../../modules/Module 24 - Conversational Graphs And Dialogue State Systems.md>)
 - [Knowledge Graph Enterprise Lab](../../Projects/knowledge-graph-enterprise-lab/README.md): end-to-end property graph, RDF, GraphRAG, ontology, governance, API, CLI, and evaluation project
+- [Conversational Graph Enterprise Lab](../../Projects/conversational-graph-enterprise-lab/README.md): executable conversational graph engine with nodes, transitions, memory, tools, agents, resume, API, CLI, visualization, and evals
 
 ## Weekly Plan Quick Links
 
@@ -99,6 +100,7 @@ This file links the GenAI learning system together so you can move between strat
 - [Project 9: Optimization Or Debugging Case Study](./GENAI_MINI_PROJECT_SPECS.md#project-9-optimization-or-debugging-case-study)
 - [Project 10: Hiring-Grade Capstone Asset Pack](./GENAI_MINI_PROJECT_SPECS.md#project-10-hiring-grade-capstone-asset-pack)
 - [Knowledge Graph Enterprise Lab](../../Projects/knowledge-graph-enterprise-lab/README.md)
+- [Conversational Graph Enterprise Lab](../../Projects/conversational-graph-enterprise-lab/README.md)
 - [If You Only Build Three Projects](./GENAI_MINI_PROJECT_SPECS.md#if-you-only-build-three-projects)
 
 ## Interview Prep Quick Links

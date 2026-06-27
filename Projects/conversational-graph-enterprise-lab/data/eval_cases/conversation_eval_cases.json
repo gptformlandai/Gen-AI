@@ -1,0 +1,20 @@
+[
+  {
+    "id": "eval-incident-path",
+    "inputs": ["Investigate INC-1001 latency"],
+    "expected_path_contains": ["input", "intent_router", "incident_agent", "incident_lookup", "memory_write", "decision", "summary", "end"],
+    "expected_slots": {"intent": "incident", "incident_id": "INC-1001"}
+  },
+  {
+    "id": "eval-clarification-loop",
+    "inputs": ["help", "account unlock please"],
+    "expected_path_contains": ["clarify", "collect_slot"],
+    "expected_slots": {"intent": "workflow"}
+  },
+  {
+    "id": "eval-developer-tool",
+    "inputs": ["Search docs for provider-search-service timeout"],
+    "expected_path_contains": ["developer_agent", "search", "memory_write"],
+    "expected_slots": {"intent": "developer"}
+  }
+]

@@ -1,0 +1,28 @@
+[
+  {
+    "id": "conversation-incident",
+    "user_id": "user-100",
+    "turns": [
+      "Investigate INC-1001 and tell me likely owner impact.",
+      "Also summarize what changed after the latest deployment."
+    ],
+    "expected_intent": "incident"
+  },
+  {
+    "id": "conversation-clarification",
+    "user_id": "user-101",
+    "turns": [
+      "I need help.",
+      "It is an account unlock workflow for user-101."
+    ],
+    "expected_intent": "workflow"
+  },
+  {
+    "id": "conversation-developer",
+    "user_id": "user-102",
+    "turns": [
+      "How should I debug provider-search-service latency?"
+    ],
+    "expected_intent": "developer"
+  }
+]

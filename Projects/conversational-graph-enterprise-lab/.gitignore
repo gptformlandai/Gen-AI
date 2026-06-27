@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+data/exports/*.json
+data/exports/*.md
+data/exports/*.dot
+data/exports/cli_sessions/
+!data/exports/.gitkeep
