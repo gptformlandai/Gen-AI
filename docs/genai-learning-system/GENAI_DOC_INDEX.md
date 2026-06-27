@@ -70,6 +70,12 @@ This file links the GenAI learning system together so you can move between strat
 - [Module 19: Capstones And Mastery Loops](./GENAI_MASTERY_CANON.md#module-19-capstones-and-mastery-loops)
 - [Module 22: Portfolio Packaging And Hiring Signal Design](./GENAI_MASTERY_CANON.md#module-22-portfolio-packaging-and-hiring-signal-design)
 
+## Graph Specialization Module Links
+
+- [Module 23: Knowledge Graphs And GraphRAG Systems](<../../modules/Module 23 - Knowledge Graphs And GraphRAG Systems.md>)
+- [Module 24: Conversational Graphs And Dialogue State Systems](<../../modules/Module 24 - Conversational Graphs And Dialogue State Systems.md>)
+- [Knowledge Graph Enterprise Lab](../../Projects/knowledge-graph-enterprise-lab/README.md): end-to-end property graph, RDF, GraphRAG, ontology, governance, API, CLI, and evaluation project
+
 ## Weekly Plan Quick Links
 
 - [Core Rules](./GENAI_10_12H_WEEKLY_EXECUTION_PLAN.md#core-rules)
@@ -92,6 +98,7 @@ This file links the GenAI learning system together so you can move between strat
 - [Project 8: Long-Lived Multimodal Or Human-In-The-Loop System](./GENAI_MINI_PROJECT_SPECS.md#project-8-long-lived-multimodal-or-human-in-the-loop-system)
 - [Project 9: Optimization Or Debugging Case Study](./GENAI_MINI_PROJECT_SPECS.md#project-9-optimization-or-debugging-case-study)
 - [Project 10: Hiring-Grade Capstone Asset Pack](./GENAI_MINI_PROJECT_SPECS.md#project-10-hiring-grade-capstone-asset-pack)
+- [Knowledge Graph Enterprise Lab](../../Projects/knowledge-graph-enterprise-lab/README.md)
 - [If You Only Build Three Projects](./GENAI_MINI_PROJECT_SPECS.md#if-you-only-build-three-projects)
 
 ## Interview Prep Quick Links

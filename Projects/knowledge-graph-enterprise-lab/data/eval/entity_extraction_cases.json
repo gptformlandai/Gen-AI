@@ -1,0 +1,12 @@
+[
+  {
+    "id": "entity-case-1",
+    "text": "provider-search-service reads provider-db and publishes kafka-topic-provider-search-events.",
+    "expected_entities": ["provider-search-service", "provider-db", "kafka-topic-provider-search-events"]
+  },
+  {
+    "id": "entity-case-2",
+    "text": "INC-1001 is mitigated by the Provider Search Latency runbook.",
+    "expected_entities": ["INC-1001", "Provider Search Latency"]
+  }
+]

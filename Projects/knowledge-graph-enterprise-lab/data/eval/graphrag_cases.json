@@ -1,0 +1,7 @@
+[
+  {
+    "id": "graphrag-case-1",
+    "question": "Use GraphRAG to explain why provider-search-service may be slow.",
+    "must_include": ["INC-1001", "provider-db", "runbook-provider-latency"]
+  }
+]

@@ -1,0 +1,8 @@
+[
+  {"id": "team-digital-experience", "name": "Digital Experience", "slack": "#team-digital-exp", "pager": "digital-primary"},
+  {"id": "team-provider-platform", "name": "Provider Platform", "slack": "#team-provider-platform", "pager": "provider-primary"},
+  {"id": "team-payments", "name": "Payments", "slack": "#team-payments", "pager": "payments-primary"},
+  {"id": "team-eligibility", "name": "Eligibility", "slack": "#team-eligibility", "pager": "eligibility-primary"},
+  {"id": "team-communications", "name": "Communications", "slack": "#team-comms", "pager": "comms-primary"},
+  {"id": "team-claims", "name": "Claims", "slack": "#team-claims", "pager": "claims-primary"}
+]

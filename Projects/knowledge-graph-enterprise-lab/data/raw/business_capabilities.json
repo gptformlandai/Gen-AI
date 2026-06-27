@@ -1,0 +1,7 @@
+[
+  {"id": "cap-member-care", "name": "member-care", "description": "Customer self-service, notifications, and mobile workflows."},
+  {"id": "cap-provider-discovery", "name": "provider-discovery", "description": "Provider search, network status, and availability lookup."},
+  {"id": "cap-payments", "name": "payments", "description": "Billing, authorization, settlement, and ledger operations."},
+  {"id": "cap-eligibility", "name": "eligibility", "description": "Benefit and eligibility decisions."},
+  {"id": "cap-claims", "name": "claims", "description": "Claims intake and orchestration."}
+]

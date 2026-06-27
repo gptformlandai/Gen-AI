@@ -1,0 +1,86 @@
+version: 1.0.0
+node_labels:
+  - Service
+  - API
+  - Database
+  - Table
+  - KafkaTopic
+  - Team
+  - Owner
+  - Incident
+  - Deployment
+  - Runbook
+  - BusinessCapability
+  - Environment
+  - Schema
+  - Endpoint
+  - ErrorCode
+  - DataEntity
+relationship_types:
+  - DEPENDS_ON
+  - CALLS
+  - EXPOSES_API
+  - READS_FROM
+  - WRITES_TO
+  - PUBLISHES_TO
+  - CONSUMES_FROM
+  - OWNED_BY
+  - MAINTAINED_BY
+  - HAS_INCIDENT
+  - CAUSED_BY
+  - MITIGATED_BY
+  - DOCUMENTED_BY
+  - DEPLOYED_TO
+  - SUPPORTS
+  - HAS_SCHEMA
+  - HAS_ENDPOINT
+  - RETURNS_ERROR
+  - SIMILAR_TO
+  - IMPACTS
+  - HAS_LINEAGE_TO
+required_properties:
+  Service: [name, description]
+  API: [name, version]
+  Database: [name, engine]
+  Incident: [title, severity]
+  Team: [name, pager]
+cardinality_rules:
+  Service:
+    OWNED_BY:
+      min: 1
+      target_label: Team
+  Incident:
+    DOCUMENTED_BY:
+      min: 1
+      target_label: Runbook
+relationship_shapes:
+  - relationship_type: DEPENDS_ON
+    source_labels: [Service]
+    target_labels: [Service, Database]
+  - relationship_type: CALLS
+    source_labels: [Service]
+    target_labels: [Service]
+  - relationship_type: EXPOSES_API
+    source_labels: [Service]
+    target_labels: [API]
+  - relationship_type: READS_FROM
+    source_labels: [Service]
+    target_labels: [Table]
+  - relationship_type: WRITES_TO
+    source_labels: [Service]
+    target_labels: [Table]
+  - relationship_type: PUBLISHES_TO
+    source_labels: [Service]
+    target_labels: [KafkaTopic]
+  - relationship_type: CONSUMES_FROM
+    source_labels: [Service]
+    target_labels: [KafkaTopic]
+  - relationship_type: OWNED_BY
+    source_labels: [Service]
+    target_labels: [Team]
+  - relationship_type: DOCUMENTED_BY
+    source_labels: [Service, Incident]
+    target_labels: [Runbook]
+  - relationship_type: HAS_LINEAGE_TO
+    source_labels: [Service, KafkaTopic]
+    target_labels: [Service, Table, DataEntity]

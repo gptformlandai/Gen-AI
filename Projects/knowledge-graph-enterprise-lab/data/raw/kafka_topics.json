@@ -1,0 +1,8 @@
+[
+  {"id": "topic-user-request-events", "name": "kafka-topic-user-request-events", "data_entity_ids": ["entity-user-request"], "schema_id": "schema-user-request-event"},
+  {"id": "topic-provider-search-events", "name": "kafka-topic-provider-search-events", "data_entity_ids": ["entity-provider-search"], "schema_id": "schema-provider-search-event"},
+  {"id": "topic-provider-directory-updates", "name": "kafka-topic-provider-directory-updates", "data_entity_ids": ["entity-provider"], "schema_id": "schema-provider-directory-event"},
+  {"id": "topic-payment-events", "name": "kafka-topic-payment-events", "data_entity_ids": ["entity-payment"], "schema_id": "schema-payment-event"},
+  {"id": "topic-claim-events", "name": "kafka-topic-claim-events", "data_entity_ids": ["entity-claim"], "schema_id": "schema-claim-event"},
+  {"id": "topic-pre-ng-latency", "name": "kafka-topic-pre-ng-latency", "data_entity_ids": ["entity-provider-latency"], "schema_id": "schema-provider-latency-event"}
+]

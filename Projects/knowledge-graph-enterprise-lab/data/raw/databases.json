@@ -1,0 +1,30 @@
+[
+  {
+    "id": "svc-provider-db",
+    "name": "provider-db",
+    "engine": "postgres",
+    "schema_ids": ["schema-provider"],
+    "table_ids": ["table-providers", "table-provider-locations", "table-provider-contracts", "table-provider-search-cache"]
+  },
+  {
+    "id": "svc-payments-db",
+    "name": "payments-db",
+    "engine": "postgres",
+    "schema_ids": ["schema-payments"],
+    "table_ids": ["table-payment-methods", "table-payment-ledger"]
+  },
+  {
+    "id": "svc-eligibility-db",
+    "name": "eligibility-db",
+    "engine": "aurora-postgres",
+    "schema_ids": ["schema-eligibility"],
+    "table_ids": ["table-member-eligibility"]
+  },
+  {
+    "id": "db-ops",
+    "name": "ops-db",
+    "engine": "postgres",
+    "schema_ids": ["schema-ops"],
+    "table_ids": ["table-claims", "table-notification-log"]
+  }
+]

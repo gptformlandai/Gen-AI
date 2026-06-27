@@ -1,0 +1,4 @@
+[
+  {"id": "env-prod", "name": "production", "region": "us-east-1", "tier": "prod"},
+  {"id": "env-stage", "name": "staging", "region": "us-east-1", "tier": "nonprod"}
+]

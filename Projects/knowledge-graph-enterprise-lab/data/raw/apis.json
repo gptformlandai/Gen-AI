@@ -1,0 +1,8 @@
+[
+  {"id": "api-mobile-bff", "name": "Mobile BFF API", "version": "v1", "endpoint_ids": ["endpoint-mobile-search", "endpoint-mobile-pay"], "error_code_ids": ["err-504", "err-429"]},
+  {"id": "api-provider-search", "name": "Provider Search API", "version": "v2", "endpoint_ids": ["endpoint-provider-search", "endpoint-provider-details"], "error_code_ids": ["err-504", "err-db-timeout"]},
+  {"id": "api-payments", "name": "Payments API", "version": "v1", "endpoint_ids": ["endpoint-payment-authorize", "endpoint-payment-refund"], "error_code_ids": ["err-402", "err-503"]},
+  {"id": "api-eligibility", "name": "Eligibility API", "version": "v3", "endpoint_ids": ["endpoint-eligibility-check"], "error_code_ids": ["err-403", "err-cache-stale"]},
+  {"id": "api-notifications", "name": "Notifications API", "version": "v1", "endpoint_ids": ["endpoint-notify"], "error_code_ids": ["err-429"]},
+  {"id": "api-claims", "name": "Claims API", "version": "v1", "endpoint_ids": ["endpoint-claims-submit"], "error_code_ids": ["err-503"]}
+]

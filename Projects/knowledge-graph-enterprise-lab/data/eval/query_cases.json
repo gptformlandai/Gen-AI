@@ -1,0 +1,12 @@
+[
+  {
+    "id": "query-case-1",
+    "question": "What services depend on provider-search-service?",
+    "must_include": ["mobile-app"]
+  },
+  {
+    "id": "query-case-2",
+    "question": "Show blast radius for payments-api.",
+    "must_include": ["mobile-app", "claims-orchestrator", "notification-service"]
+  }
+]

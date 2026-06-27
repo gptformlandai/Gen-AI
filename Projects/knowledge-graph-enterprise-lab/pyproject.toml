@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "knowledge-graph-enterprise-lab"
+version = "0.1.0"
+description = "Enterprise knowledge graph reference lab covering property graphs, RDF, GraphRAG, governance, evaluation, API, and CLI workflows."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.7.0",
+]
+
+[project.optional-dependencies]
+api = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+]
+graphdb = [
+    "neo4j>=5.20.0",
+]
+dev = [
+    "pytest>=8.2.0",
+]
+
+[project.scripts]
+kg-lab = "kg_enterprise_lab.cli.commands:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

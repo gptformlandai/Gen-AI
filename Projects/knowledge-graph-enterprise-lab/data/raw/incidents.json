@@ -1,0 +1,35 @@
+[
+  {
+    "id": "INC-1001",
+    "title": "Provider search latency after provider directory import",
+    "severity": "SEV2",
+    "service_ids": ["svc-provider-search"],
+    "topic_ids": ["topic-provider-directory-updates", "topic-pre-ng-latency"],
+    "runbook_ids": ["runbook-provider-latency", "runbook-db-latency"],
+    "caused_by": "table-provider-contracts lock contention",
+    "mitigation": "Reduce import batch size and warm provider search cache.",
+    "symptoms": ["p95 latency above 1800ms", "database timeout", "504 from Provider Search API"]
+  },
+  {
+    "id": "INC-1002",
+    "title": "Payments API timeout causing checkout failures",
+    "severity": "SEV1",
+    "service_ids": ["svc-payments-api", "svc-notification-service"],
+    "topic_ids": ["topic-payment-events"],
+    "runbook_ids": ["runbook-payments-errors"],
+    "caused_by": "notification callback retries exhausted connection pool",
+    "mitigation": "Throttle notifications and scale payments-api workers.",
+    "symptoms": ["503 from Payments API", "payment ledger lag", "notification retry storm"]
+  },
+  {
+    "id": "INC-1003",
+    "title": "Claims backlog due to eligibility cache staleness",
+    "severity": "SEV2",
+    "service_ids": ["svc-claims-orchestrator", "svc-eligibility-api"],
+    "topic_ids": ["topic-claim-events"],
+    "runbook_ids": ["runbook-claims-backlog", "runbook-eligibility-cache"],
+    "caused_by": "eligibility cache invalidation delayed",
+    "mitigation": "Force cache refresh and replay stuck claim events.",
+    "symptoms": ["claims queue depth high", "eligibility stale response", "503 in Claims API"]
+  }
+]

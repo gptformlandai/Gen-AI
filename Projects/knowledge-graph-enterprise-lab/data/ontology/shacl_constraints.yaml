@@ -1,0 +1,17 @@
+version: 1.0.0
+rules:
+  - id: service-has-owner
+    label: Service
+    relationship: OWNED_BY
+    min_count: 1
+    severity: error
+  - id: service-has-environment
+    label: Service
+    relationship: DEPLOYED_TO
+    min_count: 1
+    severity: warning
+  - id: incident-has-runbook
+    label: Incident
+    relationship: DOCUMENTED_BY
+    min_count: 1
+    severity: error

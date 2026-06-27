@@ -1,0 +1,12 @@
+[
+  {
+    "id": "relationship-case-1",
+    "text": "mobile-app calls provider-search-service.",
+    "expected_relationships": [["mobile-app", "CALLS", "provider-search-service"]]
+  },
+  {
+    "id": "relationship-case-2",
+    "text": "payments-api publishes kafka-topic-payment-events.",
+    "expected_relationships": [["payments-api", "PUBLISHES_TO", "kafka-topic-payment-events"]]
+  }
+]

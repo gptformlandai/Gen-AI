@@ -1,0 +1,17 @@
+@prefix ent: <https://example.com/enterprise#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+
+ent:Service a owl:Class ; rdfs:label "Service" .
+ent:API a owl:Class ; rdfs:label "API" .
+ent:Database a owl:Class ; rdfs:label "Database" .
+ent:KafkaTopic a owl:Class ; rdfs:label "KafkaTopic" .
+ent:Incident a owl:Class ; rdfs:label "Incident" .
+ent:Team a owl:Class ; rdfs:label "Team" .
+
+ent:DEPENDS_ON a owl:ObjectProperty ; rdfs:domain ent:Service ; rdfs:range ent:Service .
+ent:CALLS a owl:ObjectProperty ; rdfs:domain ent:Service ; rdfs:range ent:Service .
+ent:OWNED_BY a owl:ObjectProperty ; rdfs:domain ent:Service ; rdfs:range ent:Team .
+ent:READS_FROM a owl:ObjectProperty ; rdfs:domain ent:Service ; rdfs:range ent:Table .
+ent:PUBLISHES_TO a owl:ObjectProperty ; rdfs:domain ent:Service ; rdfs:range ent:KafkaTopic .

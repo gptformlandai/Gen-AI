@@ -1,0 +1,9 @@
+[
+  {"id": "runbook-provider-latency", "title": "Provider Search Latency", "keywords": ["provider", "latency", "database timeout", "504"], "url": "https://runbooks.example/provider-latency", "steps": ["Check provider-db locks", "Inspect provider-directory topic lag", "Warm search cache"]},
+  {"id": "runbook-db-latency", "title": "Database Latency Triage", "keywords": ["database", "slow query", "lock", "pool"], "url": "https://runbooks.example/db-latency", "steps": ["Check active transactions", "Review connection pool", "Compare p95 query latency"]},
+  {"id": "runbook-payments-errors", "title": "Payments API Errors", "keywords": ["payments", "503", "ledger", "connection pool"], "url": "https://runbooks.example/payments-errors", "steps": ["Check payment ledger write lag", "Disable notification callbacks", "Scale worker pool"]},
+  {"id": "runbook-mobile-latency", "title": "Mobile App Latency", "keywords": ["mobile", "BFF", "downstream"], "url": "https://runbooks.example/mobile-latency", "steps": ["Check downstream Provider Search and Payments", "Inspect BFF cache", "Compare region latency"]},
+  {"id": "runbook-eligibility-cache", "title": "Eligibility Cache Staleness", "keywords": ["eligibility", "cache", "stale"], "url": "https://runbooks.example/eligibility-cache", "steps": ["Check invalidation lag", "Refresh cache", "Replay blocked requests"]},
+  {"id": "runbook-claims-backlog", "title": "Claims Backlog", "keywords": ["claims", "queue", "backlog"], "url": "https://runbooks.example/claims-backlog", "steps": ["Check claim topic lag", "Scale orchestrator", "Replay failed claims"]},
+  {"id": "runbook-notification-delays", "title": "Notification Delays", "keywords": ["notification", "retry", "rate limit"], "url": "https://runbooks.example/notification-delays", "steps": ["Check provider rate limits", "Throttle retries", "Inspect delivery queue"]}
+]
