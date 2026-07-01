@@ -30,10 +30,11 @@ Before starting this track, you should have completed (or be comfortable with):
 | P4 - Caching & Model Gateway Architecture | Cost/latency infra, multi-provider resilience | 20, 1.1.c |
 | P5 - Data Flywheel & Continuous Improvement | Compounding data advantage, distill loop | 8, 18 |
 | P6 - Distributed Systems For GenAI | The infra substrate the canon excluded | cross-cutting |
+| P7 - AWS GenAI Agent Deployment To Production | AWS release path, build/test gates, prod operations | 2, 8, 9, 10, 12, 13, P2, P3, P6 |
 
 ## Time Model
 
-- Pro Extension Track total: about **150 hours** of first-pass learning plus notes.
+- Pro Extension Track total: about **180 hours** of first-pass learning plus notes.
 - Add 25% to 40% if you build alongside (strongly recommended for this track).
 - At 10-12 hours per week, roughly **3 to 4 months** on top of the canon.
 
@@ -44,6 +45,7 @@ These builds turn the track into demonstrable senior-level evidence.
 - After [P1](#pro-module-p1-llm-inference-and-serving-at-scale) and [P4](#pro-module-p4-caching-and-model-gateway-architecture): Build a **self-hosted inference service** with a model gateway, semantic cache, and a measured cost/latency report vs a hosted baseline.
 - After [P2](#pro-module-p2-llmops-and-deployment-lifecycle) and [P5](#pro-module-p5-data-flywheel-and-continuous-improvement): Build a **prompt/model CI/CD pipeline** with offline eval gates, canary rollout, automated rollback, and a data-capture-to-eval-set loop.
 - After [P3](#pro-module-p3-security-and-responsible-ai-deep) and [P6](#pro-module-p6-distributed-systems-for-genai): Build a **hardened, multi-tenant GenAI service** with defense-in-depth against the OWASP LLM Top 10, audit logging, and a documented scaling/failure design.
+- After [P7](#pro-module-p7-aws-genai-agent-deployment-to-production): Build an **AWS production deployment package** for an AI agent with IaC, CI/CD, eval gates, guardrail/security tests, canary or alias rollout, dashboards, alarms, rollback, and a production readiness review.
 
 ---
 
@@ -288,6 +290,59 @@ These builds turn the track into demonstrable senior-level evidence.
 
 ---
 
+## Pro Module P7: AWS GenAI Agent Deployment To Production
+
+**Module time:** 30h
+
+**Deep module file:** [Pro Module P7 - AWS GenAI Agent Deployment To Production](<../../modules/Pro Module P7 - AWS GenAI Agent Deployment To Production.md>)
+
+**Why this module matters:** A GenAI agent is not production-ready because it works in a notebook or a demo. Production means the exact behavior bundle can be built, tested, secured, deployed, observed, rolled back, audited, and improved under real traffic. This module turns the earlier Pro track into a concrete AWS source-to-prod release path.
+
+### Topic P7.1: AWS deployment architecture for GenAI agents
+
+**Topic time:** 8h
+
+- AWS service map for GenAI agents: Bedrock, Bedrock Agents, Bedrock Knowledge Bases, Guardrails, Prompt Management, Flows, AgentCore, Lambda, ECS, EKS, SageMaker AI, S3, OpenSearch Serverless, Aurora pgvector, CloudWatch, CloudTrail, KMS, Secrets Manager, WAF, and CodePipeline - 2h
+- Choosing managed Bedrock Agents vs Bedrock Flows vs AgentCore Runtime vs custom LangGraph/LlamaIndex service on ECS/Lambda/EKS - 2h
+- Multi-account and multi-environment architecture: dev, staging, prod, shared services, security/logging, IAM roles, network boundaries, and secrets - 2h
+- Release manifest design for code, prompt, model, agent graph, tool policy, knowledge base snapshot, guardrail version, eval set, and rollback target - 2h
+
+### Topic P7.2: Build steps and test gates before deployment
+
+**Topic time:** 8h
+
+- Build pipeline: dependency pinning, lint/type checks, unit tests, schema tests, prompt render tests, tool contract tests, image/package build, SBOM, vulnerability scan, IaC validation, and immutable artifacts - 2h
+- Eval gates: retrieval recall/precision, generation faithfulness/correctness, structured output validity, refusal behavior, agent trajectory, tool recovery, and LLM-as-judge controls - 2h
+- Security gates: direct and indirect prompt injection, PII leakage, permission bypass, tenant isolation, secret exfiltration, tool abuse, output handling, and guardrail regression tests - 2h
+- Operational gates: load, latency, cost, throttling, chaos, DLQ behavior, rollback proof, and emergency disable paths - 2h
+
+### Topic P7.3: AWS deployment pipeline from dev to prod
+
+**Topic time:** 8h
+
+- CodePipeline/CodeBuild/CDK or CloudFormation pipeline design with source, build, test, package, deploy-to-dev, staging eval, approval, prod rollout, and post-deploy verification - 2h
+- Deployment paths for Bedrock Agents, Bedrock Flows, AgentCore Runtime, Lambda, ECS Fargate, EKS, and SageMaker AI endpoints - 2h
+- RAG deployment: S3 data snapshots, Bedrock Knowledge Bases, OpenSearch Serverless, Aurora PostgreSQL/pgvector, Neptune for graph-heavy retrieval, ingestion jobs, ACLs, and freshness checks - 2h
+- Release strategies: canary, shadow, blue-green, Bedrock agent aliases, flow aliases, feature flags, model fallback, and automated rollback - 2h
+
+### Topic P7.4: Production operations on AWS
+
+**Topic time:** 6h
+
+- Observability with CloudWatch, OpenTelemetry, traces, spans, logs, metrics, dashboards, SLOs, alarms, and GenAI-specific quality/cost/safety signals - 1.5h
+- Runtime security with Cognito/IAM, AgentCore Identity/Gateway, KMS, Secrets Manager, CloudTrail, WAF, VPC endpoints, PrivateLink, and least-privilege tool access - 1.5h
+- Incident response: runbooks, paging, DLQs, replay, audit evidence, trace sampling, data retention, approval logs, and post-incident eval updates - 1.5h
+- Production readiness review: launch checklist, go/no-go criteria, rollback drill, on-call ownership, and compliance evidence - 1.5h
+
+**Module checkpoint:**
+
+- Design an AWS architecture for a production AI agent and justify Bedrock Agents vs AgentCore/custom service.
+- Define the full build/test/eval/security/performance gate set required before prod.
+- Explain how the release flows from git commit to production traffic through CodePipeline or equivalent CI/CD.
+- Produce a production readiness checklist with observability, rollback, audit, cost, and incident-response requirements.
+
+---
+
 ## Pro Completion Definition
 
 You can claim the **MAANG-level / staff GenAI systems** identity when, in addition to the canon's completion definition, you can do all of the following without bluffing:
@@ -298,9 +353,10 @@ You can claim the **MAANG-level / staff GenAI systems** identity when, in additi
 - Cut cost and improve resilience with caching and a model gateway, and prove the impact.
 - Run a privacy-safe data flywheel that turns production usage into measurable improvement.
 - Reason about every scaling and reliability decision as a distributed-systems decision.
+- Deploy an AWS-hosted AI agent to production through CI/CD with build artifacts, eval gates, guardrails, security controls, observability, canary/alias rollout, and rollback evidence.
 
 ## Final Outcome
 
 If you complete the canon **and** this Pro Extension Track properly, your market identity becomes:
 
-**A GenAI systems engineer who can not only design and build retrieval, orchestration, evaluation, and agent systems, but also serve them at scale, deploy them safely, secure them against real threats, run them affordably, and improve them continuously, with the distributed-systems judgment to defend every decision in a senior design review.**
+**A GenAI systems engineer who can not only design and build retrieval, orchestration, evaluation, and agent systems, but also serve them at scale, deploy them safely on AWS, secure them against real threats, run them affordably, and improve them continuously, with the distributed-systems judgment to defend every decision in a senior design review.**

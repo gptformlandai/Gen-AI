@@ -5,6 +5,7 @@ This file links the GenAI learning system together so you can move between strat
 ## Documents
 
 - [GenAI Mastery Canon](./GENAI_MASTERY_CANON.md): the full roadmap, module order, time model, and mastery definition
+- [GenAI Pro Extension Track](./GENAI_PRO_EXTENSION_TRACK.md): the staff-level serving, deployment, security, cost, data flywheel, distributed systems, and AWS production layer
 - [GenAI 10-12 Hour Weekly Execution Plan](./GENAI_10_12H_WEEKLY_EXECUTION_PLAN.md): the realistic week-by-week study path for the hiring-ready track
 - [GenAI Mini-Project Specifications](./GENAI_MINI_PROJECT_SPECS.md): the build checkpoints and what each project is supposed to prove
 - [GenAI Interview-Ready Pack](../interview-ready/README.md): concepts, questions, production scenarios, answer frameworks, and project stories for interview prep
@@ -24,6 +25,7 @@ This file links the GenAI learning system together so you can move between strat
 - [Time Model](./GENAI_MASTERY_CANON.md#time-model)
 - [Mandatory Build Cadence](./GENAI_MASTERY_CANON.md#mandatory-build-cadence)
 - [Phase Map](./GENAI_MASTERY_CANON.md#phase-map)
+- [Pro Extension Track](./GENAI_PRO_EXTENSION_TRACK.md)
 - [Permanent Weekly Loops](./GENAI_MASTERY_CANON.md#permanent-weekly-loops-to-run-alongside-the-modules)
 - [Completion Definition For True Mastery](./GENAI_MASTERY_CANON.md#completion-definition-for-true-mastery)
 - [Execution Order](./GENAI_MASTERY_CANON.md#what-we-cover-first-when-we-start-executing-this-canon)
@@ -69,6 +71,17 @@ This file links the GenAI learning system together so you can move between strat
 - [Module 18: DSPy, Fine-Tuning, Distillation, And Optimization](./GENAI_MASTERY_CANON.md#module-18-dspy-fine-tuning-distillation-and-optimization)
 - [Module 19: Capstones And Mastery Loops](./GENAI_MASTERY_CANON.md#module-19-capstones-and-mastery-loops)
 - [Module 22: Portfolio Packaging And Hiring Signal Design](./GENAI_MASTERY_CANON.md#module-22-portfolio-packaging-and-hiring-signal-design)
+
+## Pro Extension Module Links
+
+- [Pro Extension Track Overview](./GENAI_PRO_EXTENSION_TRACK.md)
+- [Pro Module P1: LLM Inference And Serving At Scale](<../../modules/Pro Module P1 - LLM Inference And Serving At Scale.md>)
+- [Pro Module P2: LLMOps And Deployment Lifecycle](<../../modules/Pro Module P2 - LLMOps And Deployment Lifecycle.md>)
+- [Pro Module P3: Security And Responsible AI Deep](<../../modules/Pro Module P3 - Security And Responsible AI Deep.md>)
+- [Pro Module P4: Caching And Model Gateway Architecture](<../../modules/Pro Module P4 - Caching And Model Gateway Architecture.md>)
+- [Pro Module P5: Data Flywheel And Continuous Improvement](<../../modules/Pro Module P5 - Data Flywheel And Continuous Improvement.md>)
+- [Pro Module P6: Distributed Systems For GenAI](<../../modules/Pro Module P6 - Distributed Systems For GenAI.md>)
+- [Pro Module P7: AWS GenAI Agent Deployment To Production](<../../modules/Pro Module P7 - AWS GenAI Agent Deployment To Production.md>)
 
 ## Graph Specialization Module Links
 
