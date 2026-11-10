@@ -4980,6 +4980,116 @@ That's the bridge into the final subtopic of Topic 3.3: **prompt chaining, pipel
 
 ---
 
+## Cross-Cutting Synthesis: How R-O-C-E, Example Strategy, Role Boundaries, and Retrieved Docs Relate
+
+> **Why this section exists:** 3.1.a (Role/Objective/Constraints/Examples), 3.1.b (Zero-shot/Few-shot/CoT), and 3.3.d (System/Developer/User/Assistant roles) are frequently mistaken for competing or overlapping frameworks. They are not alternatives — they answer three different questions and stack as layers on the same prompt. This section makes the stack explicit.
+
+**The three questions, mapped to subtopics:**
+
+| Question | Framework | Subtopic |
+|---|---|---|
+| "What content do I write into the prompt?" | Role / Objective / Constraint / Examples (R-O-C-E) | 3.1.a |
+| "How much demonstration/reasoning do I give, specifically for the Examples piece?" | Zero-shot / Few-shot / Chain-of-Thought | 3.1.b |
+| "Which API message channel does each piece of content go into, and with how much trust?" | System / Developer / User / Assistant role | 3.3.d |
+| "Where does RAG content specifically sit?" | Retrieved docs — a *content type*, not its own framework, governed by both 3.3.d (trust) and 3.3.b (position) | 3.3.d + 3.3.b |
+
+```mermaid
+flowchart TD
+    subgraph L1["Layer 1 — Content Design (what to say) — 3.1.a"]
+        R["Role"]
+        O["Objective"]
+        C["Constraints"]
+        E["Examples"]
+    end
+
+    E -->|"zoomed in: HOW to demonstrate"| L2
+
+    subgraph L2["Layer 2 — Example Strategy (how much scaffolding) — 3.1.b"]
+        ZS["Zero-shot"]
+        FS["Few-shot"]
+        COT["Chain-of-Thought"]
+    end
+
+    subgraph L3["Layer 3 — Transport / Trust (which channel, how much authority) — 3.3.d"]
+        SYS["system role\nfixed, highest trust"]
+        DEV["developer role\nvariable, mid trust"]
+        USR["user role\nuntrusted, lowest trust"]
+        AST["assistant role\nprior turns / prefill"]
+    end
+
+    R -->|"written into"| SYS
+    O -->|"written into"| SYS
+    C -->|"written into"| SYS
+    FS -->|"as turn pairs"| USR
+    FS -->|"as turn pairs"| AST
+    RD["Retrieved Docs\n(RAG content)"] -->|"NEVER system —\nalways user/developer,\ndelimited"| USR
+    RD -->|"NEVER system —\nalways user/developer,\ndelimited"| DEV
+
+    style SYS fill:#d4edda,stroke:#28a745
+    style USR fill:#f8d7da,stroke:#842029
+    style DEV fill:#cce5ff,stroke:#004085
+    style RD fill:#fff3cd,stroke:#856404
+```
+
+**Reading the diagram:** Layer 1 decides *what* to write. Layer 2 is a zoom-in on just the "Examples" block from Layer 1 — deciding how many examples and whether to include reasoning traces (3.1.b states this directly: *"From the previous subtopic, you know how to structure what to ask. This subtopic is about how much context and reasoning scaffolding to give the model."*). Layer 3 is a completely different axis — not content, but *transport and trust*: once you know what to write, you still have to decide which API message channel carries it, because the model's RLHF training treats each channel at a different authority level. Retrieved docs are not a fourth parallel framework; they are a content type (like Examples or history) that must obey Layer 3's placement rule (never `system`) and Layer 3.3.b's positional rule (primacy/recency, not the attention dead zone).
+
+**Worked example — RAG support bot, all layers assembled:**
+
+```python
+messages = [
+    # ── LAYER 1 (3.1.a): Role + Objective + Constraints → system role (fixed, cacheable) ──
+    {"role": "system", "content": SYSTEM_PROMPT},  # R-O-C-E block; byte-stable across all calls
+
+    # ── LAYER 2 (3.1.b): Few-shot examples → user/assistant alternating turn pairs, NOT system prose ──
+    {"role": "user",      "content": "What's your refund window?"},
+    {"role": "assistant", "content": "Refunds are available within 30 days of purchase. Let me know if you'd like to start one."},
+    {"role": "user",      "content": "Do you support SSO?"},
+    {"role": "assistant", "content": "Yes — SAML and OIDC are supported on the Business and Enterprise plans."},
+
+    # ── conversation history (real, not fabricated) → alternating user/assistant ──
+    {"role": "user",      "content": "I'm on the Pro plan, can I upgrade mid-cycle?"},
+    {"role": "assistant", "content": "Yes, upgrades take effect immediately and you're billed the prorated difference."},
+
+    # ── LAYER 3 (3.3.d) + context packing (3.3.b): retrieved docs → user role, delimited, NEVER system — sandwiched for primacy/recency ──
+    {"role": "user", "content": f"""
+<retrieved_document source="billing-faq" trust="external" rank="1">
+{most_relevant_doc}
+</retrieved_document>
+
+<retrieved_document source="plan-comparison" trust="external" rank="2">
+{second_most_relevant_doc}
+</retrieved_document>
+
+<retrieved_document source="legacy-notes" trust="external" rank="3">
+{least_relevant_doc}
+</retrieved_document>
+
+Current question: Will upgrading mid-cycle affect my renewal date?
+"""},
+]
+```
+
+**What breaks if you collapse a layer:**
+
+| Mistake | Which layer violated | Consequence |
+|---|---|---|
+| Put retrieved docs in `system` instead of `user` | Layer 3 (trust) | Adversarial text embedded in a doc runs at **system authority** — indirect injection (3.3.d, Hands-On Lab Part 3) |
+| Write few-shot examples as prose inside the system message | Layer 2 → 3 handoff | Model doesn't treat them as real turns — weaker format anchoring than genuine turn pairs (3.3.d, Hands-On Lab Part 4) |
+| Skip Objective decomposition, just say "answer the question" | Layer 1 | Model satisfices — drops constraints (e.g. "say I don't know") under token pressure (3.1.a, Mistake 2) |
+| Put per-tenant config in `user` because "it changes per request" | Layer 3 | A crafted user message overrides config at equal trust level (3.3.d, Scenario A) |
+| Don't reserve system-prompt tokens | Layer 3.3.b | Naive truncation under context pressure can eat into the system prompt first (3.3.b) |
+
+**Which one do you "follow"? All of them, in sequence — they are not mutually exclusive:**
+
+1. Design the content (R-O-C-E) — 3.1.a.
+2. Decide the Example strategy for the Examples slot — zero-shot, few-shot, or CoT — 3.1.b.
+3. Place each piece into the correct message role by trust level — 3.3.d.
+4. Order variable content (retrieved docs, history) within the context window for primacy/recency — 3.3.b.
+
+The unifying rule across all four: **role trust is structural, not cosmetic.** The `system`, `developer`, `user`, and `assistant` labels map to distinct trust levels the model was fine-tuned to respect — content in the wrong role runs at the wrong authority level regardless of how well-designed its content is at Layer 1 or Layer 2.
+
+---
+
 ## Module 3 Checkpoint
 
 > **What this section is for:** This is the synthesis layer for the entire module. It takes the three guiding principles from the canon and shows exactly how the 11 subtopics you covered map onto them. Use this section for interview prep, periodic revision, and self-assessment before moving to Module 4.
